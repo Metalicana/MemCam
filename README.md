@@ -1,65 +1,52 @@
 <div align="center">
-  <br>
-  <img src="https://img.shields.io/badge/Status-Code%20Coming%20Soon-FF6B6B?style=for-the-badge&logo=github&logoColor=white" alt="Status">
-  <img src="https://img.shields.io/badge/License-Apache--2.0-4ECDC4?style=for-the-badge" alt="License">
-  <img src="https://img.shields.io/badge/IJCNN-2026-FFE66D?style=for-the-badge" alt="Conference">
-  <br><br>
-  <h1>
-    🔥 MemCam
-  </h1>
-  <h2>
-    Memory-Augmented Camera Control for Consistent Video Generation
-  </h2>
-  <h3>
-    <em>IJCNN 2026</em>
-  </h3>
+  <h1>📸 MemCam</h1>
+  <h3>Memory-Augmented Camera Control for Consistent Video Generation</h3>
+  <p><strong>IJCNN 2026</strong></p>
   <br>
   <p>
-    <a href="https://arxiv.org/abs/xxxx.xxxxx">
-      <img src="https://img.shields.io/badge/arXiv-2603.xxxxx-b31b1b.svg?style=flat-square" alt="arXiv">
-    </a>
-    <a href="#">
-      <img src="https://img.shields.io/badge/Project-Website-9B59B6?style=flat-square" alt="Project Page">
-    </a>
-    <a href="#">
-      <img src="https://img.shields.io/badge/🤗-Demo-FFD21E?style=flat-square" alt="Demo">
-    </a>
+    <img src="https://img.shields.io/badge/status-coming%20soon-blue?style=for-the-badge&logo=github" alt="Status">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-green?style=for-the-badge" alt="License">
+    <img src="https://img.shields.io/badge/paper-IJCNN%202026-red?style=for-the-badge&logo=arxiv" alt="Paper">
   </p>
   <br>
+  <p>
+    <i>🎥 Coming soon — stay tuned for the official code release! 🎥</i>
+  </p>
 </div>
 
 ---
 
-## 📸 Overview
+## 🚀 Overview
 
-**MemCam** is a memory-augmented framework for **consistent video generation with camera control**. By treating historical frames as external memory and leveraging co-visibility-based retrieval, MemCam enables long-term scene consistency even under large camera rotations.
+**MemCam** introduces a novel memory-augmented camera control mechanism for **consistent video generation**. By integrating long-term temporal memory with spatial-aware camera motion, our method enables smooth, coherent, and controllable video synthesis across varying camera trajectories.
 
-> 🚀 **Code will be released soon — stay tuned!**
+This repository will contain the official implementation of the paper accepted at **IJCNN 2026**.
 
 ---
 
-## ✨ Highlights
+## ✨ Key Features
 
-- 🧠 **Memory-Augmented Generation** – Explicitly maintains historical frames as contextual memory
-- 🎥 **Camera-Aware Control** – Supports precise camera trajectory (pan, rotation, zoom)
-- 🔁 **Long-Term Consistency** – Faithfully reconstructs scenes after complex camera motions
-- ⚡ **Context Compression** – Reduces computational overhead while enriching contextual information
+- 🧠 **Memory-Augmented Control** – Leverages temporal memory to maintain consistency across frames.
+- 🎥 **Camera-Aware Generation** – Explicit control over camera motion (pan, zoom, rotation, etc.).
+- 🔁 **Long-Term Coherence** – Reduces flickering and drift in generated videos.
+- ⚡ **Lightweight & Modular** – Easy to integrate into existing video diffusion frameworks.
 
 ---
 
 ## 📄 Paper
 
-**MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
-*Xinhang Gao, Junlin Guan, Shuhan Luo, Wenzhuo Li, Guanghuan Tan, Jiacheng Wang*  
-*International Joint Conference on Neural Networks (IJCNN), 2026*
+> **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
+> *Xinhang Gao, et al.*  
+> *International Joint Conference on Neural Networks (IJCNN), 2026*
 
-[![arXiv](https://img.shields.io/badge/arXiv-2603.xxxxx-b31b1b.svg)](https://arxiv.org/abs/xxxx.xxxxx) *(coming soon)*
+[![arXiv](https://img.shields.io/badge/arXiv-2603.xxxxx-b31b1b.svg)](https://arxiv.org/abs/xxxx.xxxxx) *(coming soon)*  
+[![IJCNN](https://img.shields.io/badge/IJCNN-2026-0077b5)](https://www.ijcnn.org/)
 
 ---
 
-## 🧪 Demo & Results
+## 🧪 Demo & Examples
 
-> 🎬 *Demo videos and qualitative results will be added upon code release.*
+> 🎬 *Demo videos and visual results will be added after the code release.*
 
 <p align="center">
   <img src="https://via.placeholder.com/800x400?text=Demo+Coming+Soon" width="80%">
@@ -68,6 +55,8 @@
 ---
 
 ## 🛠️ Installation
+
+The code will be made publicly available soon. Installation instructions will be provided upon release.
 
 ```bash
 # Coming soon
