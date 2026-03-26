@@ -3,15 +3,9 @@
   <h3>Memory-Augmented Camera Control for Consistent Video Generation</h3>
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <br>
-  <a href="#">
-    <img src="https://img.shields.io/badge/Paper-arXiv-b31b1b?style=flat-square" alt="arXiv">
-  </a>
-  <a href="https://newhorizon2005.github.io/MemCam/">
-    <img src="https://img.shields.io/badge/Project_Page-MemCam-4CAF50?style=flat-square" alt="Project Page">
-  </a>
-  <a href="#">
-    <img src="https://img.shields.io/badge/Dataset-HuggingFace-FFD21E?style=flat-square" alt="HuggingFace">
-  </a>
+  <a href='#'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
+  <a href='https://newhorizon2005.github.io/MemCam/'><img src='https://img.shields.io/badge/Project_Page-MemCam-1b6db4.svg'></a> &nbsp;&nbsp;
+  <a href='#'><img src='https://img.shields.io/badge/Dataset-HuggingFace-FFD21E.svg'></a> &nbsp;&nbsp;
   <br><br>
 </div>
 
