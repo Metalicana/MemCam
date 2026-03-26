@@ -17,7 +17,6 @@
 > **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
 > *Xinhang Gao, et al.*  
 > *International Joint Conference on Neural Networks (IJCNN), 2026*  
-> \[[arXiv](#)\]
 
 ---
 
