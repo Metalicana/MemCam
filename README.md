@@ -16,6 +16,16 @@
 
 ---
 
+## 📄 Paper
+
+> **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
+> *Xinhang Gao, et al.*  
+> *International Joint Conference on Neural Networks (IJCNN), 2026*
+
+[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](https://arxiv.org/) *(link will be updated upon release)*  
+
+---
+
 ## 🚀 Overview
 
 Existing interactive video generation methods struggle to maintain scene consistency under large camera rotations over long time horizons — they either rely on fixed-length context windows that cannot cover distant viewpoints (e.g., DFoT), or introduce 3D reconstruction that inevitably accumulates errors (e.g., GeometryForcing).
@@ -37,17 +47,6 @@ Existing interactive video generation methods struggle to maintain scene consist
 - 🎯 **Co-Visibility Retrieval** – Dynamically selects context frames based on camera FOV overlap, ensuring each predicted frame is conditioned on the most relevant history.
 - ⚡ **Efficient Context Compression** – Compresses historical frame tokens to 1/4 via spatial downsampling, achieving ~5× speedup over uncompressed baselines at comparable quality.
 - 📊 **Strong Results** – ~80% FVD reduction over the strongest baseline on 360° round-trip benchmarks; significant zero-shot gains on RealEstate10K.
-
----
-
-## 📄 Paper
-
-> **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
-> *Xinhang Gao, et al.*  
-> *International Joint Conference on Neural Networks (IJCNN), 2026*
-
-[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](https://arxiv.org/) *(link will be updated upon release)*  
-[![IJCNN](https://img.shields.io/badge/IJCNN-2026-0077b5)](https://www.ijcnn.org/)
 
 ---
 
