@@ -9,8 +9,8 @@
     <img src="https://img.shields.io/badge/conference-IJCNN%202026-red?swtyle=for-the-badge" alt="Conference">
   </p>
   <br>
-  <p>
-    <i> Code Coming Soon... </i>
+  <p align="center">
+   <img src="assets/teaser.png" width="100%" alt="MemCam Teaser">
   </p>
 </div>
 
