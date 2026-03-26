@@ -9,9 +9,6 @@
     <img src="https://img.shields.io/badge/conference-IJCNN%202026-red?swtyle=for-the-badge" alt="Conference">
   </p>
   <br>
-  <p align="center">
-   <img src="assets/teaser.png" width="100%" alt="MemCam Teaser">
-  </p>
 </div>
 
 ---
@@ -23,6 +20,10 @@
 > *International Joint Conference on Neural Networks (IJCNN), 2026*
 
 [![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](https://arxiv.org/) *(link will be updated upon release)*  
+
+<p align="center">
+   <img src="assets/teaser.png" width="100%" alt="MemCam Teaser">
+</p>
 
 ---
 
