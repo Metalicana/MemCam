@@ -24,6 +24,10 @@ Existing interactive video generation methods struggle to maintain scene consist
 
 - A **Context Compression Module** that encodes historical frames into compact representations via spatial 2× downsampling, reducing token count to 1/4 and achieving ~5× inference speedup with minimal quality loss.
 - A **Co-Visibility-Based Context Retrieval** strategy that uses Monte Carlo FOV overlap estimation to dynamically select the most viewpoint-relevant historical frames for each predicted frame, rather than simply using the most recent ones.
+- 
+<p align="center">
+  <img src="assets/overview.jpg" width="90%" alt="MemCam Overview">
+</p>
 
 ---
 
