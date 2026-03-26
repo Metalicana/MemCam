@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🧠MemCam🎥</h1>
+  <h1>🎥MemCam🎥</h1>
   <h3>Memory-Augmented Camera Control for Consistent Video Generation</h3>
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <a href='#'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
