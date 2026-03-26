@@ -4,15 +4,18 @@
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <br>
   <p>
-    <img src="https://img.shields.io/badge/status-coming%20soon-blue?style=for-the-badge&logo=github" alt="Status">
+    <a href="https://newhorizon2005.github.io/MemCam/">
+      <img src="https://img.shields.io/badge/Project-Page-blue?style=for-the-badge&logo=github" alt="Project Page">
+    </a>
     <img src="https://img.shields.io/badge/license-Apache--2.0-green?style=for-the-badge" alt="License">
-    <img src="https://img.shields.io/badge/conference-IJCNN%202026-red?swtyle=for-the-badge" alt="Conference">
+    <a href="#">
+      <img src="https://img.shields.io/badge/🤗-HuggingFace-yellow?style=for-the-badge" alt="HuggingFace">
+    </a>
   </p>
   <br>
 </div>
 
 ## 📄 Paper
-
 > **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
 > *Xinhang Gao, et al.*  
 > *International Joint Conference on Neural Networks (IJCNN), 2026*
@@ -49,20 +52,9 @@ Existing interactive video generation methods struggle to maintain scene consist
 
 ---
 
-## 🧪 Demo & Examples
-
-> 🎬 *Demo videos and visual results will be added after the code release.*
-
-<p align="center">
-  <img src="https://via.placeholder.com/800x400?text=Demo+Coming+Soon" width="80%">
-</p>
-
----
-
 ## 🛠️ Installation
 
 The code will be made publicly available soon. Installation instructions will be provided upon release.
-
 ```bash
 # Coming soon
 git clone https://github.com/newhorizon2005/MemCam.git
