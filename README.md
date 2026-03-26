@@ -4,7 +4,7 @@
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <a href='#'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
   <a href='https://newhorizon2005.github.io/MemCam/'><img src='https://img.shields.io/badge/Project_Page-MemCam-1b6db4.svg'></a> &nbsp;&nbsp;
-  <a href='#'><img src='https://img.shields.io/badge/Dataset-HuggingFace-FFD21E.svg'></a> &nbsp;&nbsp;
+  <a href='https://huggingface.co/newhorizon2005/MemCam'><img src='https://img.shields.io/badge/Model-HuggingFace-FFD21E.svg'></a> &nbsp;&nbsp;
 </div>
 
 ## 📄 Paper
