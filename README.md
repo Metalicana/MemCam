@@ -1,16 +1,16 @@
 <div align="center">
-  <h1>🧠MemCam📸</h1>
+  <h1>🧠MemCam🎥</h1>
   <h3>Memory-Augmented Camera Control for Consistent Video Generation</h3>
-  <p><strong>IJCNN 2026</strong></p>
+  <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <br>
   <p>
     <img src="https://img.shields.io/badge/status-coming%20soon-blue?style=for-the-badge&logo=github" alt="Status">
     <img src="https://img.shields.io/badge/license-Apache--2.0-green?style=for-the-badge" alt="License">
-    <img src="https://img.shields.io/badge/conference-IJCNN%202026-red?style=for-the-badge" alt="Conference">
+    <img src="https://img.shields.io/badge/conference-IJCNN%202026-red?swtyle=for-the-badge" alt="Conference">
   </p>
   <br>
   <p>
-    <i>🎥 Coming soon — stay tuned for the official code release! 🎥</i>
+    <i> Code Coming Soon... </i>
   </p>
 </div>
 
