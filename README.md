@@ -4,21 +4,25 @@
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
   <br>
   <p>
-    <a href="https://newhorizon2005.github.io/MemCam/">
-      <img src="https://img.shields.io/badge/Project-Page-blue?style=for-the-badge&logo=github" alt="Project Page">
+    <a href="https://newhorizon2005.github.io/MemCam/" style="text-decoration:none">
+      <img src="https://img.shields.io/badge/Project-Page-blue?style=flat-square&logo=github" alt="Project Page">
     </a>
-    <img src="https://img.shields.io/badge/license-Apache--2.0-green?style=for-the-badge" alt="License">
-    <a href="#">
-      <img src="https://img.shields.io/badge/🤗-HuggingFace-yellow?style=for-the-badge" alt="HuggingFace">
+    &nbsp;
+    <img src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square" alt="License">
+    &nbsp;
+    <a href="#" style="text-decoration:none">
+      <img src="https://img.shields.io/badge/🤗-HuggingFace-yellow?style=flat-square" alt="HuggingFace">
     </a>
   </p>
   <br>
 </div>
 
 ## 📄 Paper
+
 > **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
 > *Xinhang Gao, et al.*  
-> *International Joint Conference on Neural Networks (IJCNN), 2026*
+> *International Joint Conference on Neural Networks (IJCNN), 2026*  
+> [![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b?style=flat-square)](https://arxiv.org/)
 
 ---
 
