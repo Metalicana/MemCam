@@ -1,0 +1,111 @@
+import torch
+import torch.nn as nn
+from PIL import Image
+
+from dataset.poses import load_c2ws_from_json
+from utils.camera_rotation_utils import rotate_c2w_z_swing, rotate_c2w_z_360
+
+from diffsynth import ModelManager, save_video
+from diffsynth.pipelines.wan_video_memcam import WanVideoMemCamPipeline
+
+
+def setup_pipeline(
+    dit_path, 
+    text_encoder_path, 
+    vae_path, 
+    dit_ckpt_path, 
+    device="cuda"
+):
+    # 1. 加载 Wan2.1 预训练模型
+    model_manager = ModelManager(torch_dtype=torch.bfloat16, device="cpu")
+    model_manager.load_models([dit_path, text_encoder_path, vae_path])
+    pipe = WanVideoMemCamPipeline.from_model_manager(model_manager, device=device)
+
+    # 2. 添加 camera control 和 context_compressor
+    dim=pipe.dit.blocks[0].self_attn.q.weight.shape[0] # 1536
+    for block in pipe.dit.blocks:
+        block.cam_encoder = nn.Linear(12, dim)
+        block.projector = nn.Linear(dim, dim)
+        block.cam_encoder.weight.data.zero_()
+        block.cam_encoder.bias.data.zero_()
+        block.projector.weight = nn.Parameter(torch.eye(dim))
+        block.projector.bias = nn.Parameter(torch.zeros(dim))
+    pipe.dit.context_compressor = nn.Conv3d(16, dim, kernel_size=(1, 4, 4), stride=(1, 4, 4))
+    
+    # 3. 加载 checkpoints
+    dit_state_dict = torch.load(dit_ckpt_path, map_location="cpu", weights_only=False)
+    pipe.dit.load_state_dict(dit_state_dict, strict=True)
+    pipe.to(device=device, dtype=torch.bfloat16)
+    pipe.device = device; pipe.torch_dtype = torch.bfloat16
+    print(f"Loaded DiT checkpoint from {dit_ckpt_path}")
+    return pipe
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dit_path", type=str, default="models/Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors")
+    parser.add_argument("--text_encoder_path", type=str, default="models/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth")
+    parser.add_argument("--vae_path", type=str, default="models/Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth")
+    parser.add_argument("--dit_ckpt_path", type=str, default="output/tensorboard_logs/cameractrl/version_3/checkpoints/dit_step20000.ckpt")
+
+    parser.add_argument("--input_image", type=str, default="image.jpg")
+    parser.add_argument("--pose_path", type=str, default="jsons/AnimeCitySuburbs_0.json")
+    parser.add_argument("--prompt", type=str, default="An ultra-realistic video presents a tranquil campus scene, featuring buildings, lush green trees, a square, and distant mountains. The camera slowly pans or orbits, revealing the details and panoramic view of the setting. The visuals are clean and serene, with natural and authentic lighting that emphasizes texture and a sense of space.")
+    
+    parser.add_argument("--height", type=int, default=352)
+    parser.add_argument("--width", type=int, default=640)
+    parser.add_argument("--cfg_scale", type=float, default=5.0)
+    parser.add_argument("--num_frames", type=int, default=4*76+1)
+    parser.add_argument("--num_inference_steps", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", type=str, default="cuda:1")
+
+    parser.add_argument("--frame_interval", type=int, default=1, choices=[1, 2, 4],
+                        help="context帧间隔: 1(76帧context,默认), 2(38帧context), 4(19帧context)")
+    args = parser.parse_args()
+
+    # 设置 pipeline
+    pipe = setup_pipeline(
+        dit_path=args.dit_path,
+        text_encoder_path=args.text_encoder_path,
+        vae_path=args.vae_path,
+        dit_ckpt_path=args.dit_ckpt_path,
+        device=args.device
+    )
+        
+    # 加载输入
+    input_image = Image.open(args.input_image).convert("RGB").resize((args.width, args.height), resample=Image.BICUBIC)
+    c2ws = load_c2ws_from_json(json_path=str(args.pose_path), num_frames=args.num_frames)
+    #c2ws = rotate_c2w_z_swing(c2ws[0], num_frames=args.num_frames, max_angle_deg=360.0)
+    c2ws = rotate_c2w_z_360(c2ws[0], num_frames=args.num_frames)
+    
+    # 加载 prompt
+    if args.prompt.endswith('.txt'):
+        with open(args.prompt, "r", encoding="utf-8") as f:
+            prompt_text = f.read().strip()
+    else:
+        prompt_text = args.prompt
+
+    # 打印配置信息
+    print(f"输入图像: {args.input_image}")
+    print(f"姿态文件: {args.pose_path}")
+    print(f"Prompt: {prompt_text[:100]}...")
+    print(f"帧间隔: {args.frame_interval} -> context长度: {76 // args.frame_interval}")
+    print()
+
+    # 生成视频
+    video = pipe(
+        prompt=prompt_text,
+        negative_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，畸形的，静止不动的画面，杂乱的背景",
+        input_image=input_image,
+        c2ws=c2ws,
+        height=args.height,
+        width=args.width,
+        cfg_scale=args.cfg_scale,
+        num_inference_steps=args.num_inference_steps,
+        seed=args.seed,
+        tiled=False,
+        frame_interval=args.frame_interval,
+    )
+    save_video(video, "output_video.mp4", fps=30, quality=5)
