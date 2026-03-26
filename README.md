@@ -36,7 +36,7 @@ Existing interactive video generation methods struggle to maintain scene consist
 - A **Co-Visibility-Based Context Retrieval** strategy that uses Monte Carlo FOV overlap estimation to dynamically select the most viewpoint-relevant historical frames for each predicted frame, rather than simply using the most recent ones.
 
 <p align="center">
-  <img src="assets/overview.jpg" width="100%" alt="MemCam Overview">
+  <img src="assets/overview.png" width="100%" alt="MemCam Overview">
 </p>
 
 ---
