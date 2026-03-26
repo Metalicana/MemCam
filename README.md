@@ -11,8 +11,6 @@
   <br>
 </div>
 
----
-
 ## 📄 Paper
 
 > **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  
