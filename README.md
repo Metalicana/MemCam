@@ -60,18 +60,18 @@ conda activate memcam
 ```
 
 ### 3. Install DiffSynth-Studio
+
+MemCam is built on a modified version of DiffSynth-Studio, which is included in this repository.
 ```bash
-git clone https://github.com/modelscope/DiffSynth-Studio.git
-cd DiffSynth-Studio
 pip install -e .
-cd ..
 ```
 
 ### 4. Download Wan2.1 base model
 ```bash
-# Download from HuggingFace
-huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir models/Wan2.1-T2V-1.3B
+python scripts/download_models.py
 ```
+
+This will download the Wan2.1-T2V-1.3B base model to `models/Wan-AI/Wan2.1-T2V-1.3B`.
 
 ### 5. Download MemCam weights
 ```bash
