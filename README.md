@@ -59,10 +59,10 @@ conda create -n memcam python=3.10 -y
 conda activate memcam
 ```
 
-### 3. Install DiffSynth-Studio
-
-MemCam is built on a modified version of DiffSynth-Studio, which is included in this repository.
+### 3. Install Requirements
 ```bash
+pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
 pip install -e .
 ```
 
