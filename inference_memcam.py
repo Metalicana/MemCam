@@ -46,9 +46,9 @@ if __name__ == "__main__":
     parser.add_argument("--vae_path", type=str, default="models/Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth")
     parser.add_argument("--dit_ckpt_path", type=str, default="models/MemCam/dit_step20000.ckpt")
 
-    parser.add_argument("--input_image", type=str, required=True)
-    parser.add_argument("--pose_path", type=str, required=True)
-    parser.add_argument("--prompt", type=str, required=True)
+    parser.add_argument("--input_image", type=str, default="assets/test.png")
+    parser.add_argument("--pose_path", type=str, default="assets/test.json")
+    parser.add_argument("--prompt", type=str, default="The video begins with a scene where sunlight filters through an unseen source, creating a hazy atmosphere over a rocky landscape. As the video progresses, the haze gradually clears to reveal more of the environment, including greenery and rocks that suggest a natural setting, possibly near a water body given the presence of reflections on the surface. The light continues to play a significant role in altering the visibility and mood of the scene.As time passes, the clarity improves significantly, allowing for a detailed view of the lush vegetation and various rock formations within what appears to be a serene outdoor area. The camera's subtle movements offer different perspectives of this tranquil setting, emphasizing the textures and colors of the environment under changing lighting conditions.Towards the latter part of the video, the focus shifts slightly to include architectural elements like columns or structures, hinting at human influence or historical significance in the otherwise untouched natural surroundings. This new addition suggests a blend of nature and civilization, enhancing the narrative depth of the location being showcased.Throughout the video, there is no visible movement of objects or characters, indicating a static observation of the environment. The consistent quality of light and the gradual unveiling of details create a sense of progression and discovery, culminating in a richer understanding of the setting without any discernible action or dynamic change occurring.")
     
     parser.add_argument("--height", type=int, default=352)
     parser.add_argument("--width", type=int, default=640)
