@@ -47,10 +47,117 @@ Existing interactive video generation methods struggle to maintain scene consist
 
 ## 🛠️ Installation
 
-The code will be made publicly available soon. Installation instructions will be provided upon release.
+### 1. Clone the repository
 ```bash
-# Coming soon
 git clone https://github.com/newhorizon2005/MemCam.git
 cd MemCam
-pip install -r requirements.txt
+```
+
+### 2. Create conda environment
+```bash
+conda create -n memcam python=3.10 -y
+conda activate memcam
+```
+
+### 3. Install DiffSynth-Studio
+```bash
+git clone https://github.com/modelscope/DiffSynth-Studio.git
+cd DiffSynth-Studio
+pip install -e .
+cd ..
+```
+
+### 4. Download Wan2.1 base model
+```bash
+# Download from HuggingFace
+huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir models/Wan2.1-T2V-1.3B
+```
+
+### 5. Download MemCam weights
+```bash
+huggingface-cli download newhorizon2005/MemCam --local-dir models/MemCam
+```
+
+---
+
+## 🎬 Inference
+
+### Quick Start
+
+We provide a demo script for quick inference:
+```bash
+python demo.py
+```
+
+### Manual Inference
+```bash
+# Example command (fill in your actual arguments)
+python inference.py \
+    --model_path models/MemCam \
+    --base_model_path models/Wan2.1-T2V-1.3B \
+    --input_image path/to/image.png \
+    --camera_traj path/to/camera.json \
+    --output_path outputs/
+```
+
+Key arguments:
+
+| Argument | Description |
+|---|---|
+| `--model_path` | Path to MemCam checkpoint |
+| `--base_model_path` | Path to Wan2.1 base model |
+| `--input_image` | Input reference image |
+| `--camera_traj` | Camera trajectory file |
+| `--output_path` | Output directory |
+
+---
+
+## 🏋️ Training
+
+### 1. Download dataset
+
+We train on the [Context-as-Memory](https://github.com/hehao13/CaM) dataset.
+```bash
+# Download and extract
+huggingface-cli download <dataset_repo> --local-dir data/context-as-memory --repo-type dataset
+```
+
+### 2. Preprocess dataset
+```bash
+python scripts/preprocess.py \
+    --data_dir data/context-as-memory \
+    --output_dir data/processed
+```
+
+### 3. Train
+```bash
+python train.py \
+    --data_dir data/processed \
+    --base_model_path models/Wan2.1-T2V-1.3B \
+    --output_dir checkpoints/ \
+    --batch_size 16 \
+    --lr 1e-5 \
+    --max_steps 20000
+```
+
+---
+
+## 🙏 Acknowledgements
+
+This work is supported by the **National Innovation Training Program for College Students** of Guilin University of Electronic Technology (Grant No. 202510595051).
+
+We thank the authors of [Wan2.1](https://github.com/Wan-Video/Wan2.1), [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio), [Context-as-Memory](https://github.com/hehao13/CaM), [DFoT](https://github.com/kwsong0113/diffusion-forcing-transformer), and [GeometryForcing](https://github.com/wuhaozhe/geometry-forcing) for their excellent work.
+
+---
+
+## 📝 Citation
+
+If you find this work useful, please consider citing:
+```bibtex
+@inproceedings{gao2026memcam,
+  title     = {MemCam: Memory-Augmented Camera Control for Consistent Video Generation},
+  author    = {Gao, Xinhang and Guan, Junlin and Luo, Shuhan and Li, Wenzhuo and Tan, Guanghuan and Wang, Jiacheng},
+  booktitle = {International Joint Conference on Neural Networks (IJCNN)},
+  year      = {2026}
+}
 ```
