@@ -68,7 +68,7 @@ pip install -e .
 
 ### 4. Download Wan2.1 base model
 ```bash
-python scripts/download_models.py
+python utils/download_wan2.1.py
 ```
 
 This will download the Wan2.1-T2V-1.3B base model to `models/Wan-AI/Wan2.1-T2V-1.3B`.
