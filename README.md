@@ -91,24 +91,11 @@ python demo.py
 
 ### Manual Inference
 ```bash
-# Example command (fill in your actual arguments)
-python inference.py \
-    --model_path models/MemCam \
-    --base_model_path models/Wan2.1-T2V-1.3B \
-    --input_image path/to/image.png \
-    --camera_traj path/to/camera.json \
-    --output_path outputs/
+python inference_memcam.py \
+    --input_image \
+    --pose_path \
+    --prompt 
 ```
-
-Key arguments:
-
-| Argument | Description |
-|---|---|
-| `--model_path` | Path to MemCam checkpoint |
-| `--base_model_path` | Path to Wan2.1 base model |
-| `--input_image` | Input reference image |
-| `--camera_traj` | Camera trajectory file |
-| `--output_path` | Output directory |
 
 ---
 
@@ -116,7 +103,7 @@ Key arguments:
 
 ### 1. Download dataset
 
-We train on the [Context-as-Memory](https://github.com/hehao13/CaM) dataset.
+We train on the [Context-as-Memory](https://github.com) dataset.
 ```bash
 # Download and extract
 huggingface-cli download <dataset_repo> --local-dir data/context-as-memory --repo-type dataset
