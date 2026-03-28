@@ -29,12 +29,6 @@ ANCHOR_LENGTH = 1   # anchor 4f 1l or 1f 1l
 PREDICT_FRAMES = 76 # 76 frames to predict per section
 FRAMES_PER_SECTION = 77 # section 77f 20l
 
-# Frame interval modes for context selection
-# interval=4: 76/4=19 context frames
-# interval=2: 76/2=38 context frames
-# interval=1: 76/1=76 context frames
-VALID_FRAME_INTERVALS = [1, 2, 4]
-
 FOV_HALF_H = 45.0    # 水平半视场角（度）增大→更宽松的重叠判定
 FOV_HALF_V = 30.0    # 垂直半视场角（度）增大→更宽松的重叠判定
 FOV_SAMPLES = 5000   # 采样点数 增大→更准确但更慢
@@ -228,9 +222,6 @@ class WanVideoMemCamPipeline(BasePipeline):
         # ========== Context as Memory Style RoPE ==========
         # Target: positions 0-19 (preserve pretrained positions)
         # Context: positions starting from 20 (sequential assignment)
-        # interval=1: positions 20-95 (76 frames)
-        # interval=2: positions 20-57 (38 frames)
-        # interval=4: positions 20-38 (19 frames)
         context_freqs = compute_context_rope(
             dit=dit,
             f_ctx=f_ctx,
@@ -281,26 +272,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         tiled=False,
         tile_size=(30, 52),
         tile_stride=(15, 26),
-        progress_bar_cmd=tqdm,
-        # Frame interval for context selection (ablation study)
-        frame_interval=1,  # 1: 76 context (default for cameractrl), 2: 38 context, 4: 19 context
+        progress_bar_cmd=tqdm
     ):
-        """
-        Args:
-            frame_interval: context 帧间隔 (1/2/4)
-                - 1: 每1帧选1帧，context_length = 76/1 = 76 (默认，与训练一致)
-                - 2: 每2帧选1帧，context_length = 76/2 = 38
-                - 4: 每4帧选1帧，context_length = 76/4 = 19
-        """
-        # Validate frame_interval
-        if frame_interval not in VALID_FRAME_INTERVALS:
-            raise ValueError(f"frame_interval must be one of {VALID_FRAME_INTERVALS}, got {frame_interval}")
-        
-        # Calculate context_length based on frame_interval
-        context_length = PREDICT_FRAMES // frame_interval  # 76/1=76, 76/2=38, 76/4=19
-        
-        print(f"Frame interval: {frame_interval} -> context_length: {context_length}")
-        
         # Tiler parameters
         tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
         
@@ -379,32 +352,24 @@ class WanVideoMemCamPipeline(BasePipeline):
                 # predict 覆盖的帧范围 (frames 77-152)
                 predict_frame_range = list(range(section_start_frame + 1, section_start_frame + FRAMES_PER_SECTION))
             
-            # ============ 构建 Context (根据 frame_interval 选择 context_length 个 context) ============
+            # ============ 构建 Context ============
             context_latent_list = []
             context_frame_indices = []
             
             # 要排除的帧: anchor + predict 覆盖的所有帧
             exclude_frames = set(anchor_frame_range) | set(predict_frame_range)
-            
-            # 根据 frame_interval 生成 context_target_frames
-            # interval=1: [1, 2, 3, ..., 76] (76个)
-            # interval=2: [1, 3, 5, ..., 75] (38个)
-            # interval=4: [1, 5, 9, ..., 73] = predict_latent_frames (19个)
-            if frame_interval == 4:
-                context_target_frames = predict_latent_frames  # 复用 predict_latent_frames
-            else:
-                context_target_frames = [section_start_frame + 1 + i * frame_interval for i in range(context_length)]
+            context_target_frames = [section_start_frame + 1 + i * 1 for i in range(PREDICT_FRAMES)]
             
             if section_idx == 0:
                 # Section 0: context全零 (与训练drop_context一致)
-                for _ in range(context_length):
+                for _ in range(PREDICT_FRAMES):
                     context_latent_list.append(torch.zeros(latent_C, 1, latent_H, latent_W, dtype=anchor_latent.dtype, device=anchor_latent.device))
                     context_frame_indices.append(anchor_pose_frame)
             else:
                 # Section > 0: 按 context_target_frames 选择，每个目标帧选1个最佳重叠 context
                 candidate_frame_indices = [fidx for fidx in all_generated_frames.keys() if fidx not in exclude_frames]
                 
-                print(f"  Selecting context frames (1 per target, {context_length} targets)...")
+                print(f"  Selecting context frames (1 per target, {PREDICT_FRAMES} targets)...")
                 print(f"  Excluding frames: anchor={anchor_frame_range}, predict={predict_frame_range[0]}-{predict_frame_range[-1]}")
                 
                 self.load_models_to_device(['vae'])
