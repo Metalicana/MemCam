@@ -94,7 +94,7 @@ python inference_memcam.py \
 
 ### 1. Download dataset
 
-We train on the [Context-as-Memory](https://huggingface.co/datasets/KlingTeam/Context-as-Memory-Dataset) dataset.
+We train on the [Context-as-Memor](https://huggingface.co/datasets/KlingTeam/Context-as-Memory-Dataset) dataset.
 ```bash
 # Download and extract
 hf download KlingTeam/Context-as-Memory-Dataset --repo-type=dataset
