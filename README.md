@@ -120,14 +120,6 @@ python dataset/singles.py
 
 ---
 
-## 🙏 Acknowledgements
-
-This work is supported by the **National Innovation Training Program for College Students** of Guilin University of Electronic Technology (Grant No. 202510595051).
-
-We thank the authors of [Wan2.1](https://github.com/Wan-Video/Wan2.1), [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio), [Context-as-Memory](https://github.com/hehao13/CaM), [DFoT](https://github.com/kwsong0113/diffusion-forcing-transformer), and [GeometryForcing](https://github.com/wuhaozhe/geometry-forcing) for their excellent work.
-
----
-
 ## 📝 Citation
 
 If you find this work useful, please consider citing:
