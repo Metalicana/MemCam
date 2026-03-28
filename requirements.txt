@@ -16,3 +16,7 @@ safetensors
 tensorboard
 datasets
 psutil
+imageio
+modelscope
+ftfy
+lightning
