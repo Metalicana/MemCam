@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from train_memcam import TARGET_LENGTH
+TARGET_LENGTH = 76
 
 
 def pad_for_3d_conv(x, kernel_size):
