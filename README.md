@@ -81,15 +81,6 @@ huggingface-cli download newhorizon2005/MemCam --local-dir models/MemCam
 ---
 
 ## 🎬 Inference
-
-### Quick Start
-
-We provide a demo script for quick inference:
-```bash
-python demo.py
-```
-
-### Manual Inference
 ```bash
 python inference_memcam.py \
     --input_image assets/test.png \
@@ -103,28 +94,28 @@ python inference_memcam.py \
 
 ### 1. Download dataset
 
-We train on the [Context-as-Memory](https://github.com) dataset.
+We train on the [Context-as-Memory](https://huggingface.co/datasets/KlingTeam/Context-as-Memory-Dataset) dataset.
 ```bash
 # Download and extract
-huggingface-cli download <dataset_repo> --local-dir data/context-as-memory --repo-type dataset
+hf download KlingTeam/Context-as-Memory-Dataset --repo-type=dataset
+cat Context-as-Memory-Dataset_* > Context-as-Memory-Dataset.zip
 ```
 
 ### 2. Preprocess dataset
 ```bash
-python scripts/preprocess.py \
-    --data_dir data/context-as-memory \
-    --output_dir data/processed
+# convert frames to videos
+python dataset/videos.py
+
+# preprocess context frame latents
+python dataset/singles.py
+
+# preprocess main dataset
+./process.sh
 ```
 
 ### 3. Train
 ```bash
-python train.py \
-    --data_dir data/processed \
-    --base_model_path models/Wan2.1-T2V-1.3B \
-    --output_dir checkpoints/ \
-    --batch_size 16 \
-    --lr 1e-5 \
-    --max_steps 20000
+./train.sh
 ```
 
 ---
