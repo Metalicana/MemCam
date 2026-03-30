@@ -2,8 +2,8 @@
   <h1>🎥MemCam🎥</h1>
   <h3>Memory-Augmented Camera Control for Consistent Video Generation</h3>
   <p>🎉<strong>IJCNN 2026</strong>🎉</p>
-  <a href='#'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
-  <a href='https://newhorizon2005.github.io/MemCam/'><img src='https://img.shields.io/badge/Project_Page-MemCam-1b6db4.svg'></a> &nbsp;&nbsp;
+  <a href='https://arxiv.org/abs/2603.26193'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
+  <a href='https://newhorizon2005.github.io/MemCam'><img src='https://img.shields.io/badge/Project_Page-MemCam-1b6db4.svg'></a> &nbsp;&nbsp;
   <a href='https://huggingface.co/newhorizon2005/MemCam'><img src='https://img.shields.io/badge/Model-HuggingFace-FFD21E.svg'></a> &nbsp;&nbsp;
 </div>
 
@@ -124,10 +124,13 @@ python dataset/singles.py
 
 If you find this work useful, please consider citing:
 ```bibtex
-@inproceedings{gao2026memcam,
-  title     = {MemCam: Memory-Augmented Camera Control for Consistent Video Generation},
-  author    = {Gao, Xinhang and Guan, Junlin and Luo, Shuhan and Li, Wenzhuo and Tan, Guanghuan and Wang, Jiacheng},
-  booktitle = {International Joint Conference on Neural Networks (IJCNN)},
-  year      = {2026}
+@misc{gao2026memcammemoryaugmentedcameracontrol,
+      title={MemCam: Memory-Augmented Camera Control for Consistent Video Generation}, 
+      author={Xinhang Gao and Junlin Guan and Shuhan Luo and Wenzhuo Li and Guanghuan Tan and Jiacheng Wang},
+      year={2026},
+      eprint={2603.26193},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2603.26193}, 
 }
 ```
