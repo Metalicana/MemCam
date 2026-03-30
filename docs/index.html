@@ -346,7 +346,7 @@
     </p>
     <p class="affil">Guilin University of Electronic Technology</p>
     <div class="btn-group">
-      <a href="https://arxiv.org/" class="btn btn-primary">
+      <a href="https://arxiv.org/abs/2603.26193" class="btn btn-primary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Paper
       </a>
@@ -514,11 +514,14 @@
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
   function copyCitation() {
-    const text = `@inproceedings{gao2026memcam,
-  title     = {MemCam: Memory-Augmented Camera Control for Consistent Video Generation},
-  author    = {Gao, Xinhang and Guan, Junlin and Luo, Shuhan and Li, Wenzhuo and Tan, Guanghuan and Wang, Jiacheng},
-  booktitle = {International Joint Conference on Neural Networks (IJCNN)},
-  year      = {2026}
+    const text = `@misc{gao2026memcammemoryaugmentedcameracontrol,
+      title={MemCam: Memory-Augmented Camera Control for Consistent Video Generation}, 
+      author={Xinhang Gao and Junlin Guan and Shuhan Luo and Wenzhuo Li and Guanghuan Tan and Jiacheng Wang},
+      year={2026},
+      eprint={2603.26193},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2603.26193}, 
 }`;
     navigator.clipboard.writeText(text).then(() => {
       const btn = document.querySelector('.copy-btn');
