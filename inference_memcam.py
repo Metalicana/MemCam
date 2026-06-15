@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 from PIL import Image
 
 from dataset.poses import load_c2ws_from_json
@@ -48,6 +49,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--input_image", type=str, default="assets/test.png")
     parser.add_argument("--pose_path", type=str, default="assets/test.json")
+    parser.add_argument("--start_frame", type=int, default=0)
+    parser.add_argument("--pose_scale", type=float, default=100.0)
     parser.add_argument("--prompt", type=str, default="The video begins with a scene where sunlight filters through an unseen source, creating a hazy atmosphere over a rocky landscape. As the video progresses, the haze gradually clears to reveal more of the environment, including greenery and rocks that suggest a natural setting, possibly near a water body given the presence of reflections on the surface. The light continues to play a significant role in altering the visibility and mood of the scene.As time passes, the clarity improves significantly, allowing for a detailed view of the lush vegetation and various rock formations within what appears to be a serene outdoor area. The camera's subtle movements offer different perspectives of this tranquil setting, emphasizing the textures and colors of the environment under changing lighting conditions.Towards the latter part of the video, the focus shifts slightly to include architectural elements like columns or structures, hinting at human influence or historical significance in the otherwise untouched natural surroundings. This new addition suggests a blend of nature and civilization, enhancing the narrative depth of the location being showcased.Throughout the video, there is no visible movement of objects or characters, indicating a static observation of the environment. The consistent quality of light and the gradual unveiling of details create a sense of progression and discovery, culminating in a richer understanding of the setting without any discernible action or dynamic change occurring.")
     
     parser.add_argument("--height", type=int, default=352)
@@ -57,6 +60,15 @@ if __name__ == "__main__":
     parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--trajectory_mode",
+        type=str,
+        default="both",
+        choices=["both", "swing", "360", "custom"],
+        help="Use generated swing/360 camera paths, or use c2ws loaded directly from --pose_path.",
+    )
+    parser.add_argument("--output_dir", type=str, default=".")
+    parser.add_argument("--output_prefix", type=str, default="")
     args = parser.parse_args()
 
     pipe = setup_pipeline(
@@ -68,32 +80,44 @@ if __name__ == "__main__":
     )
         
     input_image = Image.open(args.input_image).convert("RGB").resize((args.width, args.height), resample=Image.BICUBIC)
-    c2ws = load_c2ws_from_json(json_path=str(args.pose_path), num_frames=args.num_frames)
-
-    video = pipe(
-        prompt=args.prompt,
-        negative_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，畸形的，静止不动的画面，杂乱的背景",
-        input_image=input_image,
-        c2ws=rotate_c2w_z_swing(c2ws[0], num_frames=args.num_frames, max_angle_deg=360.0),
-        height=args.height,
-        width=args.width,
-        cfg_scale=args.cfg_scale,
-        num_inference_steps=args.num_inference_steps,
-        seed=args.seed,
-        tiled=False
+    c2ws = load_c2ws_from_json(
+        json_path=str(args.pose_path),
+        start_frame=args.start_frame,
+        num_frames=args.num_frames,
+        scale=args.pose_scale,
     )
-    save_video(video, "swing.mp4", fps=30, quality=5)
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    video = pipe(
-        prompt=args.prompt,
-        negative_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，畸形的，静止不动的画面，杂乱的背景",
-        input_image=input_image,
-        c2ws=rotate_c2w_z_360(c2ws[0], num_frames=args.num_frames),
-        height=args.height,
-        width=args.width,
-        cfg_scale=args.cfg_scale,
-        num_inference_steps=args.num_inference_steps,
-        seed=args.seed,
-        tiled=False
-    )
-    save_video(video, "360.mp4", fps=30, quality=5)
+    def output_path(name):
+        filename = f"{args.output_prefix}{name}.mp4"
+        return os.path.join(args.output_dir, filename)
+
+    def run_generation(name, trajectory):
+        video = pipe(
+            prompt=args.prompt,
+            negative_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，畸形的，静止不动的画面，杂乱的背景",
+            input_image=input_image,
+            c2ws=trajectory,
+            height=args.height,
+            width=args.width,
+            cfg_scale=args.cfg_scale,
+            num_inference_steps=args.num_inference_steps,
+            seed=args.seed,
+            tiled=False
+        )
+        save_video(video, output_path(name), fps=30, quality=5)
+
+    if args.trajectory_mode in ["both", "swing"]:
+        run_generation(
+            "swing",
+            rotate_c2w_z_swing(c2ws[0], num_frames=args.num_frames, max_angle_deg=360.0),
+        )
+
+    if args.trajectory_mode in ["both", "360"]:
+        run_generation(
+            "360",
+            rotate_c2w_z_360(c2ws[0], num_frames=args.num_frames),
+        )
+
+    if args.trajectory_mode == "custom":
+        run_generation("custom", c2ws)
