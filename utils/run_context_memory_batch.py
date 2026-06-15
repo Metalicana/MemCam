@@ -111,6 +111,29 @@ def main():
     if not selected:
         raise RuntimeError("No manifest rows selected.")
 
+    pending = []
+    for item in selected:
+        row = item["_row"]
+        save_path = output_path(output_dir, item)
+        if save_path.exists() and not args.overwrite:
+            print(f"[row {row}] skip existing: {save_path}")
+            append_jsonl(
+                status_path,
+                {
+                    "row": row,
+                    "status": "skipped",
+                    "output": str(save_path),
+                    "reason": "exists",
+                    "time_sec": 0,
+                },
+            )
+        else:
+            pending.append(item)
+
+    if not pending:
+        print("No pending rows.")
+        return
+
     # Import after CUDA_VISIBLE_DEVICES is set.
     from PIL import Image
 
@@ -127,27 +150,14 @@ def main():
     )
 
     print(f"Selected rows: {len(selected)}")
+    print(f"Pending rows: {len(pending)}")
     print(f"GPU: {args.gpu}")
     print(f"Steps: {num_inference_steps}")
     print(f"Output dir: {output_dir}")
 
-    for item in selected:
+    for item in pending:
         row = item["_row"]
         save_path = output_path(output_dir, item)
-        if save_path.exists() and not args.overwrite:
-            print(f"[row {row}] skip existing: {save_path}")
-            append_jsonl(
-                status_path,
-                {
-                    "row": row,
-                    "status": "skipped",
-                    "output": str(save_path),
-                    "reason": "exists",
-                    "time_sec": 0,
-                },
-            )
-            continue
-
         print(
             f"[row {row}] {item['scene']} start={item['start_frame']} "
             f"frames={item['num_frames']} duration={item['duration_sec']}s"
