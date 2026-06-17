@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from dataset.poses import compute_relative_pose
 
 from .base import BasePipeline
-from .memory_policies import FrameMemoryBuffer
+from .memory_policies import FrameMemoryBuffer, compute_rarity_irreplaceability_scores
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
 
@@ -305,11 +305,19 @@ class WanVideoMemCamPipeline(BasePipeline):
         latent_C = start_latent.shape[0]  # 16
         latent_H = start_latent.shape[2]  # H // 8
         latent_W = start_latent.shape[3]  # W // 8
+
+        if memory_policy == "rarity_irreplaceability" and memory_budget is not None and memory_budget < 2:
+            raise ValueError("rarity_irreplaceability requires memory_budget >= 2")
         
         # ============ 存储结构 ============
         all_section_latents = []  # (0:start_latent, else:1+19latents)
         all_generated_frames = {} # {frame_idx:frame_tensor}
-        memory_buffer = FrameMemoryBuffer(policy=memory_policy, budget=memory_budget)
+        pinned_memory_frames = {0} if memory_policy == "rarity_irreplaceability" else set()
+        memory_buffer = FrameMemoryBuffer(
+            policy=memory_policy,
+            budget=memory_budget,
+            pinned_frames=pinned_memory_frames,
+        )
         section_start_frames = [i * (FRAMES_PER_SECTION - 1) for i in range(total_sections)]
         
         # 初始化: section 0 的 anchor 来自输入图片
@@ -399,6 +407,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                     
                     # 选择重叠度最高的1帧
                     if best_idx is not None and best_idx in all_generated_frames:
+                        memory_buffer.record_selection(best_idx, best_iou)
                         chosen_frame = all_generated_frames[best_idx]
                         chosen_frame = chosen_frame.to(dtype=self.torch_dtype, device=self.device)
                         chosen_latent = self.encode_video(chosen_frame, **tiler_kwargs)[0]
@@ -483,9 +492,38 @@ class WanVideoMemCamPipeline(BasePipeline):
                 global_frame_idx = section_start_frame + local_frame_idx
                 frame_tensor = section_frames_cpu[:, :, local_frame_idx:local_frame_idx+1, :, :]  # (1, C, 1, H, W)
                 all_generated_frames[global_frame_idx] = frame_tensor
-            evicted_frames = memory_buffer.update(range(section_start_frame, section_start_frame + section_frames_cpu.shape[2]))
+
+            new_frame_indices = range(section_start_frame, section_start_frame + section_frames_cpu.shape[2])
+            eviction_scores = None
+            section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
+            protected_frames = {section_end_frame}
+            if memory_policy == "rarity_irreplaceability":
+                future_start = section_end_frame + 1
+                future_end = min(total_frames, future_start + 2 * PREDICT_FRAMES)
+                future_frame_indices = list(range(future_start, future_end, 4))
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores = compute_rarity_irreplaceability_scores(
+                    c2ws=c2ws,
+                    memory_frame_indices=prospective_memory,
+                    memory_buffer=memory_buffer,
+                    future_frame_indices=future_frame_indices,
+                    pinned_frames=pinned_memory_frames,
+                )
+
+            evicted_frames = memory_buffer.update(
+                new_frame_indices,
+                eviction_scores=eviction_scores,
+                protected_frames=protected_frames,
+            )
             for evicted_frame_idx in evicted_frames:
                 all_generated_frames.pop(evicted_frame_idx, None)
+            if evicted_frames:
+                print(f"Evicted frames: {evicted_frames}")
             print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")
             print(f"Section {section_idx} completed.")
 

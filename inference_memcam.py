@@ -69,7 +69,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output_dir", type=str, default=".")
     parser.add_argument("--output_prefix", type=str, default="")
-    parser.add_argument("--memory_policy", type=str, default="unbounded", choices=["unbounded", "fifo"])
+    parser.add_argument(
+        "--memory_policy",
+        type=str,
+        default="unbounded",
+        choices=["unbounded", "fifo", "rarity_irreplaceability"],
+    )
     parser.add_argument("--memory_budget", type=int, default=None)
     args = parser.parse_args()
 

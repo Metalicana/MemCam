@@ -30,11 +30,19 @@ cd ~/MemCam
 bash scripts/run_current_cluster_10s.sh
 ```
 
+Evaluate only the 10s rows for a completed policy run:
+
+```bash
+cd ~/MemCam
+RUN_NAME=baseline bash scripts/evaluate_context_memory_10s.sh
+RUN_NAME=fifo_b32 bash scripts/evaluate_context_memory_10s.sh
+```
+
 Use separate output folders per memory policy:
 
 ```bash
-POLICY=fifo bash scripts/run_current_cluster_10s.sh
-POLICY=fifo sbatch slurm/newton_memcam_h100_20s_array.sbatch
+POLICY=baseline MEMORY_POLICY=unbounded bash scripts/run_current_cluster_10s.sh
+POLICY=fifo_b32 MEMORY_POLICY=fifo MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
 ```
 
 FIFO requires an explicit memory budget:
@@ -42,6 +50,13 @@ FIFO requires an explicit memory budget:
 ```bash
 POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
 POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
+```
+
+Rarity x irreplaceability also requires an explicit memory budget:
+
+```bash
+POLICY=ri_b32 MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
+POLICY=ri_b32 MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
 ```
 
 Baseline/unbounded:
@@ -82,4 +97,16 @@ python utils/create_context_memory_testbed.py \
   --seeds 0 \
   --scenes_per_split 15 \
   --durations 10,20,40,60,120
+```
+
+If you keep an old manifest, pass the Newton dataset root during evaluation:
+
+```bash
+python utils/evaluate_context_memory.py \
+  --manifest testbeds/context_memory/manifest.jsonl \
+  --model_output_dir /scratch/$USER/MemCam/outputs/context_memory/fifo_b32 \
+  --dataset_root /path/on/newton/Context-as-Memory-Dataset/Context-as-Memory-Dataset \
+  --metrics_dir /scratch/$USER/MemCam/eval/context_memory \
+  --run_name fifo_b32 \
+  --durations 20
 ```

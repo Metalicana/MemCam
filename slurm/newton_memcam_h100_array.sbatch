@@ -30,8 +30,8 @@ MEMORY_BUDGET="${MEMORY_BUDGET:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-/scratch/$USER/MemCam/outputs/context_memory/$POLICY}"
 STEPS="${STEPS:-50}"
 
-if [ "$MEMORY_POLICY" = "fifo" ] && [ -z "$MEMORY_BUDGET" ]; then
-  echo "MEMORY_BUDGET is required when MEMORY_POLICY=fifo" >&2
+if { [ "$MEMORY_POLICY" = "fifo" ] || [ "$MEMORY_POLICY" = "rarity_irreplaceability" ]; } && [ -z "$MEMORY_BUDGET" ]; then
+  echo "MEMORY_BUDGET is required when MEMORY_POLICY=$MEMORY_POLICY" >&2
   exit 2
 fi
 

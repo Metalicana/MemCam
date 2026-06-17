@@ -92,7 +92,12 @@ def main():
     parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--memory_policy", type=str, default="unbounded", choices=["unbounded", "fifo"])
+    parser.add_argument(
+        "--memory_policy",
+        type=str,
+        default="unbounded",
+        choices=["unbounded", "fifo", "rarity_irreplaceability"],
+    )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
