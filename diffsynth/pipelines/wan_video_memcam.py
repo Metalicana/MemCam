@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from dataset.poses import compute_relative_pose
 
 from .base import BasePipeline
+from .memory_policies import FrameMemoryBuffer
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
 
@@ -272,6 +273,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         tiled=False,
         tile_size=(30, 52),
         tile_stride=(15, 26),
+        memory_policy="unbounded",
+        memory_budget=None,
         progress_bar_cmd=tqdm
     ):
         # Tiler parameters
@@ -306,11 +309,14 @@ class WanVideoMemCamPipeline(BasePipeline):
         # ============ 存储结构 ============
         all_section_latents = []  # (0:start_latent, else:1+19latents)
         all_generated_frames = {} # {frame_idx:frame_tensor}
+        memory_buffer = FrameMemoryBuffer(policy=memory_policy, budget=memory_budget)
         section_start_frames = [i * (FRAMES_PER_SECTION - 1) for i in range(total_sections)]
         
         # 初始化: section 0 的 anchor 来自输入图片
         all_section_latents.append(start_latent)  # (C, 1, H, W) 作为 section -1 的 "latent"
         all_generated_frames[0] = input_image_tensor.cpu()  # 帧0
+        memory_buffer.add(0)
+        print(f"Memory policy: {memory_policy}, budget: {memory_budget}, stored frames: {len(memory_buffer)}")
         
         # Vanilla Sampling
         for section_idx in range(total_sections):
@@ -367,10 +373,11 @@ class WanVideoMemCamPipeline(BasePipeline):
                     context_frame_indices.append(anchor_pose_frame)
             else:
                 # Section > 0: 按 context_target_frames 选择，每个目标帧选1个最佳重叠 context
-                candidate_frame_indices = [fidx for fidx in all_generated_frames.keys() if fidx not in exclude_frames]
+                candidate_frame_indices = memory_buffer.candidates(exclude_frames=exclude_frames)
                 
                 print(f"  Selecting context frames (1 per target, {PREDICT_FRAMES} targets)...")
                 print(f"  Excluding frames: anchor={anchor_frame_range}, predict={predict_frame_range[0]}-{predict_frame_range[-1]}")
+                print(f"  Candidate memory frames: {len(candidate_frame_indices)} / stored={len(memory_buffer)}")
                 
                 self.load_models_to_device(['vae'])
                 for frame_idx in context_target_frames:  # 按 frame_interval 选择的目标帧
@@ -476,6 +483,10 @@ class WanVideoMemCamPipeline(BasePipeline):
                 global_frame_idx = section_start_frame + local_frame_idx
                 frame_tensor = section_frames_cpu[:, :, local_frame_idx:local_frame_idx+1, :, :]  # (1, C, 1, H, W)
                 all_generated_frames[global_frame_idx] = frame_tensor
+            evicted_frames = memory_buffer.update(range(section_start_frame, section_start_frame + section_frames_cpu.shape[2]))
+            for evicted_frame_idx in evicted_frames:
+                all_generated_frames.pop(evicted_frame_idx, None)
+            print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")
             print(f"Section {section_idx} completed.")
 
         # ============ Decode ============

@@ -29,6 +29,8 @@ def main():
     parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--memory_policy", type=str, default="unbounded", choices=["unbounded", "fifo"])
+    parser.add_argument("--memory_budget", type=int, default=None)
     args = parser.parse_args()
 
     item = read_manifest_row(args.manifest, args.row)
@@ -59,6 +61,8 @@ def main():
         str(num_inference_steps),
         "--seed",
         str(args.seed),
+        "--memory_policy",
+        args.memory_policy,
         "--device",
         "cuda",
         "--output_dir",
@@ -66,6 +70,8 @@ def main():
         "--output_prefix",
         item["output_prefix"],
     ]
+    if args.memory_budget is not None:
+        command.extend(["--memory_budget", str(args.memory_budget)])
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -75,6 +81,7 @@ def main():
     print(f"Start frame: {item['start_frame']}")
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")
     print(f"Steps: {num_inference_steps}")
+    print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
     print(f"Output dir: {output_dir}")
     print(f"Caption key: {item['caption_key']}")
     subprocess.run(command, check=True, env=env)

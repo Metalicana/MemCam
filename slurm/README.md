@@ -37,6 +37,20 @@ POLICY=fifo bash scripts/run_current_cluster_10s.sh
 POLICY=fifo sbatch slurm/newton_memcam_h100_20s_array.sbatch
 ```
 
+FIFO requires an explicit memory budget:
+
+```bash
+POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
+POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
+```
+
+Baseline/unbounded:
+
+```bash
+POLICY=baseline MEMORY_POLICY=unbounded bash scripts/run_current_cluster_10s.sh
+POLICY=baseline MEMORY_POLICY=unbounded sbatch slurm/newton_memcam_h100_20s_array.sbatch
+```
+
 The array script defaults to rows `0-74` with at most 8 concurrent jobs:
 
 ```bash

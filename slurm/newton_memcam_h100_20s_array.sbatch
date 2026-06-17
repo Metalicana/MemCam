@@ -22,8 +22,18 @@ export HF_HUB_DISABLE_SYMLINKS_WARNING=1
 MEMCAM_ROOT="${MEMCAM_ROOT:-$HOME/MemCam}"
 MANIFEST="${MANIFEST:-$MEMCAM_ROOT/testbeds/context_memory/manifest.jsonl}"
 POLICY="${POLICY:-baseline}"
+MEMORY_POLICY="${MEMORY_POLICY:-$POLICY}"
+if [ "$MEMORY_POLICY" = "baseline" ]; then
+  MEMORY_POLICY="unbounded"
+fi
+MEMORY_BUDGET="${MEMORY_BUDGET:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-/scratch/$USER/MemCam/outputs/context_memory/$POLICY}"
 STEPS="${STEPS:-50}"
+
+if [ "$MEMORY_POLICY" = "fifo" ] && [ -z "$MEMORY_BUDGET" ]; then
+  echo "MEMORY_BUDGET is required when MEMORY_POLICY=fifo" >&2
+  exit 2
+fi
 
 # Manifest order is scene-major with durations [10, 20, 40, 60, 120].
 # Therefore 20s rows are 1, 6, 11, ..., 71.
@@ -32,9 +42,18 @@ ROW=$((SLURM_ARRAY_TASK_ID * 5 + 1))
 mkdir -p "$MEMCAM_ROOT/logs" "$OUTPUT_DIR"
 cd "$MEMCAM_ROOT"
 
-python utils/run_context_memory_batch.py \
-  --manifest "$MANIFEST" \
-  --gpu 0 \
-  --rows "$ROW" \
-  --output_dir "$OUTPUT_DIR" \
+cmd=(
+  python utils/run_context_memory_batch.py
+  --manifest "$MANIFEST"
+  --gpu 0
+  --rows "$ROW"
+  --output_dir "$OUTPUT_DIR"
   --num_inference_steps "$STEPS"
+  --memory_policy "$MEMORY_POLICY"
+)
+
+if [ -n "$MEMORY_BUDGET" ]; then
+  cmd+=(--memory_budget "$MEMORY_BUDGET")
+fi
+
+"${cmd[@]}"

@@ -69,6 +69,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output_dir", type=str, default=".")
     parser.add_argument("--output_prefix", type=str, default="")
+    parser.add_argument("--memory_policy", type=str, default="unbounded", choices=["unbounded", "fifo"])
+    parser.add_argument("--memory_budget", type=int, default=None)
     args = parser.parse_args()
 
     pipe = setup_pipeline(
@@ -103,6 +105,8 @@ if __name__ == "__main__":
             cfg_scale=args.cfg_scale,
             num_inference_steps=args.num_inference_steps,
             seed=args.seed,
+            memory_policy=args.memory_policy,
+            memory_budget=args.memory_budget,
             tiled=False
         )
         save_video(video, output_path(name), fps=30, quality=5)

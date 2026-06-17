@@ -92,6 +92,8 @@ def main():
     parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--memory_policy", type=str, default="unbounded", choices=["unbounded", "fifo"])
+    parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -125,6 +127,8 @@ def main():
                     "output": str(save_path),
                     "reason": "exists",
                     "time_sec": 0,
+                    "memory_policy": args.memory_policy,
+                    "memory_budget": args.memory_budget,
                 },
             )
         else:
@@ -153,6 +157,7 @@ def main():
     print(f"Pending rows: {len(pending)}")
     print(f"GPU: {args.gpu}")
     print(f"Steps: {num_inference_steps}")
+    print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
     print(f"Output dir: {output_dir}")
 
     for item in pending:
@@ -183,6 +188,8 @@ def main():
                 cfg_scale=5.0,
                 num_inference_steps=num_inference_steps,
                 seed=args.seed,
+                memory_policy=args.memory_policy,
+                memory_budget=args.memory_budget,
                 tiled=False,
             )
             save_video(video, str(save_path), fps=item["fps"], quality=5)
@@ -196,6 +203,8 @@ def main():
                     "output": str(save_path),
                     "error": repr(exc),
                     "time_sec": elapsed,
+                    "memory_policy": args.memory_policy,
+                    "memory_budget": args.memory_budget,
                 },
             )
             raise
@@ -211,6 +220,8 @@ def main():
                 "num_frames": item["num_frames"],
                 "duration_sec": item["duration_sec"],
                 "steps": num_inference_steps,
+                "memory_policy": args.memory_policy,
+                "memory_budget": args.memory_budget,
             },
         )
         print(f"[row {row}] completed in {elapsed}s -> {save_path}")
