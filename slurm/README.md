@@ -73,7 +73,7 @@ python utils/analyze_memory_policies.py \
   --dataset_root /data/ab575577/Context-as-Memory-Dataset/Context-as-Memory-Dataset \
   --durations 10 \
   --budgets 32 \
-  --policies unbounded,fifo,ri,belady
+  --policies unbounded,fifo,ri,belady,coverage_oracle
 ```
 
 Main outputs:
@@ -82,6 +82,42 @@ Main outputs:
 /data/ab575577/MemCam/analysis/context_memory/policy_aggregate.csv
 /data/ab575577/MemCam/analysis/context_memory/policy_summary.csv
 /data/ab575577/MemCam/analysis/context_memory/policy_traces.jsonl
+/data/ab575577/MemCam/analysis/context_memory/frame_usefulness.csv
+/data/ab575577/MemCam/analysis/context_memory/ri_frame_scores.jsonl
+```
+
+Inspect the highest ground-truth-usefulness frames:
+
+```bash
+python - <<'PY'
+import csv
+from pathlib import Path
+
+p = Path("/data/ab575577/MemCam/analysis/context_memory/frame_usefulness.csv")
+rows = sorted(csv.DictReader(p.open()), key=lambda r: int(r["future_use_count"]), reverse=True)
+for r in rows[:20]:
+    print(r["row"], r["scene"], r["frame_idx"], r["global_frame_idx"], r["future_use_count"], r["next_use_distance"])
+PY
+```
+
+Inspect RI score versus ground-truth future usefulness at eviction points:
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+p = Path("/data/ab575577/MemCam/analysis/context_memory/ri_frame_scores.jsonl")
+rows = [json.loads(line) for line in p.open()]
+rows = sorted(rows, key=lambda r: (r["row"], r["section_idx"], -(r["gt_future_use_count"] or 0)))
+for r in rows[:30]:
+    print(
+        "row", r["row"], "sec", r["section_idx"], "f", r["frame_idx"],
+        "gt", r["gt_future_use_count"], "ri", round(r["ri_score"], 4),
+        "ri_rank", r["ri_rank"], "gt_rank", r["gt_future_rank"],
+        "kept", r["kept_after"], "evicted", r["evicted"],
+    )
+PY
 ```
 
 Use separate output folders per memory policy:

@@ -23,22 +23,33 @@ def main():
     for target_frame in range(77, 153):
         overlap_map[target_frame] = {0, 10, 76}
 
-    fifo_summary, _ = analysis.simulate_row(
+    fifo_summary, _, _ = analysis.simulate_row(
         item=item,
         policy="fifo",
         budget=2,
         overlap_map=overlap_map,
     )
-    belady_summary, _ = analysis.simulate_row(
+    belady_summary, _, _ = analysis.simulate_row(
         item=item,
         policy="belady",
         budget=2,
         overlap_map=overlap_map,
     )
+    coverage_summary, _, _ = analysis.simulate_row(
+        item=item,
+        policy="coverage_oracle",
+        budget=2,
+        overlap_map=overlap_map,
+    )
 
     assert belady_summary["coverage"] == 1.0
+    assert coverage_summary["coverage"] == 1.0
     assert belady_summary["coverage"] > fifo_summary["coverage"]
     assert belady_summary["oracle_recall"] >= fifo_summary["oracle_recall"]
+
+    usefulness = analysis.compute_frame_usefulness_rows(item, overlap_map)
+    assert usefulness[0]["future_use_count"] == 76
+    assert usefulness[10]["future_use_count"] == 76
 
     print("memory policy analysis checks passed")
 

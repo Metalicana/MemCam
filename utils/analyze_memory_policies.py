@@ -17,6 +17,7 @@ memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
+pose_distances = memory_policies.pose_distances
 
 
 FRAMES_PER_SECTION = 77
@@ -164,6 +165,52 @@ def next_use_distance(frame_idx, future_targets, useful_by_target):
     return math.inf
 
 
+def safe_div(numerator, denominator):
+    return numerator / denominator if denominator else 0.0
+
+
+def frame_future_use(frame_idx, target_frames, overlap_map):
+    target_frames = list(target_frames)
+    hits = [target for target in target_frames if frame_idx in overlap_map.get(target, set())]
+    if hits:
+        next_use = hits[0]
+        next_use_distance_value = next_use - frame_idx
+        last_use = hits[-1]
+    else:
+        next_use = None
+        next_use_distance_value = math.inf
+        last_use = None
+
+    return {
+        "future_use_count": len(hits),
+        "future_use_fraction": safe_div(len(hits), len(target_frames)),
+        "next_use_frame": next_use,
+        "next_use_distance": next_use_distance_value,
+        "last_use_frame": last_use,
+    }
+
+
+def compute_frame_usefulness_rows(item, overlap_map):
+    num_frames = int(item["num_frames"])
+    rows = []
+    for frame_idx in range(num_frames):
+        future_targets = range(frame_idx + 1, num_frames)
+        usefulness = frame_future_use(frame_idx, future_targets, overlap_map)
+        rows.append(
+            {
+                "row": item["_row"],
+                "scene": item["scene"],
+                "start_frame": item["start_frame"],
+                "duration_sec": item["duration_sec"],
+                "frame_idx": frame_idx,
+                "global_frame_idx": int(item["start_frame"]) + frame_idx,
+                "section_idx": frame_idx // PREDICT_FRAMES,
+                **usefulness,
+            }
+        )
+    return rows
+
+
 def belady_evict(memory, budget, protected_frames, future_targets, useful_by_target):
     evicted = []
     protected_frames = set(protected_frames or [])
@@ -183,6 +230,59 @@ def belady_evict(memory, budget, protected_frames, future_targets, useful_by_tar
     return evicted
 
 
+def coverage_oracle_evict(memory, budget, protected_frames, future_targets, useful_by_target):
+    protected_frames = set(protected_frames or []) & memory
+    selected = set(protected_frames)
+    uncovered_targets = set(future_targets)
+
+    for target_frame in list(uncovered_targets):
+        if useful_by_target.get(target_frame, set()) & selected:
+            uncovered_targets.remove(target_frame)
+
+    while len(selected) < budget:
+        candidates = sorted(memory - selected)
+        if not candidates:
+            break
+
+        def candidate_key(frame_idx):
+            covered = {
+                target
+                for target in uncovered_targets
+                if frame_idx in useful_by_target.get(target, set())
+            }
+            total_future_use = sum(
+                1 for target in future_targets if frame_idx in useful_by_target.get(target, set())
+            )
+            return (len(covered), total_future_use, -frame_idx)
+
+        best_frame = max(candidates, key=candidate_key)
+        if candidate_key(best_frame)[0] == 0 and len(selected) >= len(protected_frames):
+            # Fill spare budget with highest total-use frames even if all remaining targets are covered.
+            best_frame = max(
+                candidates,
+                key=lambda frame_idx: (
+                    sum(
+                        1
+                        for target in future_targets
+                        if frame_idx in useful_by_target.get(target, set())
+                    ),
+                    -frame_idx,
+                ),
+            )
+        selected.add(best_frame)
+        for target_frame in list(uncovered_targets):
+            if best_frame in useful_by_target.get(target_frame, set()):
+                uncovered_targets.remove(target_frame)
+
+    # If protected frames already exceeded the budget, keep them and accept overflow.
+    if len(selected) > budget:
+        selected = set(protected_frames)
+
+    evicted = sorted(memory - selected)
+    memory.intersection_update(selected)
+    return evicted
+
+
 def fifo_evict(memory, budget, protected_frames):
     evicted = []
     protected_frames = set(protected_frames or [])
@@ -194,6 +294,25 @@ def fifo_evict(memory, budget, protected_frames):
         memory.remove(evict_idx)
         evicted.append(evict_idx)
     return evicted
+
+
+def record_ri_accesses(memory_buffer, memory, predict_range, overlap_map, generated_until, exclude_frames, c2ws):
+    if c2ws is None:
+        return
+
+    for target_frame in predict_range:
+        useful = available_useful_frames(
+            target_frame=target_frame,
+            overlap_map=overlap_map,
+            generated_until=generated_until,
+            exclude_frames=exclude_frames,
+        )
+        candidates = sorted(memory & useful)
+        if not candidates:
+            continue
+        distances = pose_distances(c2ws, candidates, [target_frame])[:, 0]
+        best_idx = candidates[int(distances.argmin())]
+        memory_buffer.record_selection(best_idx, overlap=1.0)
 
 
 def ri_evict(memory_buffer, c2ws, total_frames, section_end_frame, protected_frames, pinned_frames):
@@ -253,6 +372,81 @@ def evaluate_memory_for_section(memory, predict_range, overlap_map, generated_un
     }
 
 
+def rank_desc(values_by_key):
+    sorted_keys = sorted(
+        values_by_key,
+        key=lambda key: (
+            values_by_key[key] if values_by_key[key] is not None else -math.inf,
+            -key,
+        ),
+        reverse=True,
+    )
+    return {key: rank + 1 for rank, key in enumerate(sorted_keys)}
+
+
+def make_ri_score_rows(
+    item,
+    section_idx,
+    decision_frame,
+    budget,
+    memory_before,
+    new_frames,
+    evicted_frames,
+    memory_after,
+    protected_frames,
+    pinned_frames,
+    ri_scores,
+    overlap_map,
+):
+    num_frames = int(item["num_frames"])
+    future_targets = list(range(decision_frame + 1, num_frames))
+    horizon_targets = list(range(decision_frame + 1, min(num_frames, decision_frame + 1 + 2 * PREDICT_FRAMES)))
+    gt_scores = {
+        frame_idx: frame_future_use(frame_idx, future_targets, overlap_map)["future_use_count"]
+        for frame_idx in memory_before
+    }
+    ri_ranks = rank_desc(ri_scores)
+    gt_ranks = rank_desc(gt_scores)
+
+    rows = []
+    for frame_idx in sorted(memory_before):
+        future_use = frame_future_use(frame_idx, future_targets, overlap_map)
+        horizon_use = frame_future_use(frame_idx, horizon_targets, overlap_map)
+        ri_score = ri_scores.get(frame_idx)
+        rows.append(
+            {
+                "row": item["_row"],
+                "scene": item["scene"],
+                "start_frame": item["start_frame"],
+                "duration_sec": item["duration_sec"],
+                "policy": "ri",
+                "budget": budget,
+                "section_idx": section_idx,
+                "decision_frame": decision_frame,
+                "decision_global_frame": int(item["start_frame"]) + decision_frame,
+                "frame_idx": frame_idx,
+                "global_frame_idx": int(item["start_frame"]) + frame_idx,
+                "age": decision_frame - frame_idx,
+                "is_new": frame_idx in new_frames,
+                "is_protected": frame_idx in protected_frames,
+                "is_pinned": frame_idx in pinned_frames,
+                "kept_after": frame_idx in memory_after,
+                "evicted": frame_idx in evicted_frames,
+                "ri_score": ri_score,
+                "ri_rank": ri_ranks.get(frame_idx),
+                "gt_future_rank": gt_ranks.get(frame_idx),
+                "gt_future_use_count": future_use["future_use_count"],
+                "gt_future_use_fraction": future_use["future_use_fraction"],
+                "gt_next_use_frame": future_use["next_use_frame"],
+                "gt_next_use_distance": future_use["next_use_distance"],
+                "gt_last_use_frame": future_use["last_use_frame"],
+                "gt_horizon_use_count": horizon_use["future_use_count"],
+                "gt_horizon_use_fraction": horizon_use["future_use_fraction"],
+            }
+        )
+    return rows
+
+
 def sum_metrics(metric_rows):
     keys = [
         "targets",
@@ -298,6 +492,7 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
 
     section_metrics = []
     trace_rows = []
+    score_rows = []
 
     for section_idx in range(total_sections):
         section_start, anchor_range, predict_range = section_ranges(section_idx)
@@ -315,6 +510,16 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
             )
             metrics["section_idx"] = section_idx
             section_metrics.append(metrics)
+            if policy == "ri":
+                record_ri_accesses(
+                    memory_buffer=memory_buffer,
+                    memory=memory,
+                    predict_range=predict_range,
+                    overlap_map=overlap_map,
+                    generated_until=generated_until,
+                    exclude_frames=exclude_frames,
+                    c2ws=c2ws,
+                )
             trace_rows.append(
                 {
                     "row": item["_row"],
@@ -329,7 +534,7 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
                 }
             )
 
-        new_frames = range(section_start, section_end + 1)
+        new_frames = set(range(section_start, section_end + 1))
         protected_frames = {section_end}
         if policy == "unbounded":
             memory.update(new_frames)
@@ -356,6 +561,25 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
                 future_targets=future_targets,
                 useful_by_target=useful_by_target,
             )
+        elif policy == "coverage_oracle":
+            memory.update(new_frames)
+            future_targets = list(range(section_end + 1, total_frames))
+            useful_by_target = {
+                target: available_useful_frames(
+                    target_frame=target,
+                    overlap_map=overlap_map,
+                    generated_until=section_end,
+                    exclude_frames=set(),
+                )
+                for target in future_targets
+            }
+            evicted = coverage_oracle_evict(
+                memory=memory,
+                budget=budget,
+                protected_frames=protected_frames,
+                future_targets=future_targets,
+                useful_by_target=useful_by_target,
+            )
         elif policy == "ri":
             for frame_idx in new_frames:
                 memory_buffer.add(frame_idx, evict=False)
@@ -367,8 +591,25 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
                 pinned_frames=pinned_frames,
             )
             memory_buffer.set_scores(scores)
+            memory_before_eviction = set(memory_buffer.candidates())
             evicted = memory_buffer.evict_to_budget(protected_frames=protected_frames)
             memory = set(memory_buffer.candidates())
+            score_rows.extend(
+                make_ri_score_rows(
+                    item=item,
+                    section_idx=section_idx,
+                    decision_frame=section_end,
+                    budget=budget,
+                    memory_before=memory_before_eviction,
+                    new_frames=new_frames,
+                    evicted_frames=set(evicted),
+                    memory_after=memory,
+                    protected_frames=protected_frames,
+                    pinned_frames=pinned_frames,
+                    ri_scores=scores,
+                    overlap_map=overlap_map,
+                )
+            )
         else:
             raise ValueError(f"Unsupported policy: {policy}")
 
@@ -388,7 +629,7 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
             "final_memory_size": len(memory),
         }
     )
-    return summary, trace_rows
+    return summary, trace_rows, score_rows
 
 
 def write_csv(path, rows):
@@ -440,7 +681,7 @@ def main():
     parser.add_argument("--rows", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--budgets", type=str, default="32")
-    parser.add_argument("--policies", type=str, default="unbounded,fifo,ri,belady")
+    parser.add_argument("--policies", type=str, default="unbounded,fifo,ri,belady,coverage_oracle")
     args = parser.parse_args()
 
     items = load_manifest(args.manifest)
@@ -459,6 +700,8 @@ def main():
 
     summary_rows = []
     trace_rows = []
+    frame_usefulness_rows = []
+    score_rows = []
     for item in selected:
         print(
             f"[analysis row {item['_row']}] {item['scene']} "
@@ -469,6 +712,7 @@ def main():
             start_frame=int(item["start_frame"]),
             num_frames=int(item["num_frames"]),
         )
+        frame_usefulness_rows.extend(compute_frame_usefulness_rows(item, overlap_map))
         c2ws = None
         if "ri" in policies:
             c2ws = load_c2ws_from_json(
@@ -480,7 +724,7 @@ def main():
         for policy in policies:
             policy_budgets = [None] if policy == "unbounded" else budgets
             for budget in policy_budgets:
-                summary, traces = simulate_row(
+                summary, traces, scores = simulate_row(
                     item=item,
                     policy=policy,
                     budget=budget,
@@ -489,6 +733,7 @@ def main():
                 )
                 summary_rows.append(summary)
                 trace_rows.extend(traces)
+                score_rows.extend(scores)
                 print(
                     f"  {policy} b={summary['budget']} "
                     f"coverage={summary['coverage']:.4f} "
@@ -499,7 +744,9 @@ def main():
     aggregate_summary_rows = aggregate_rows(summary_rows)
     write_csv(args.output_dir / "policy_summary.csv", summary_rows)
     write_csv(args.output_dir / "policy_aggregate.csv", aggregate_summary_rows)
+    write_csv(args.output_dir / "frame_usefulness.csv", frame_usefulness_rows)
     write_jsonl(args.output_dir / "policy_traces.jsonl", trace_rows)
+    write_jsonl(args.output_dir / "ri_frame_scores.jsonl", score_rows)
 
     with (args.output_dir / "policy_aggregate.json").open("w", encoding="utf-8") as handle:
         json.dump(aggregate_summary_rows, handle, indent=2, ensure_ascii=False)
@@ -508,7 +755,9 @@ def main():
     print(f"Wrote: {args.output_dir / 'policy_summary.csv'}")
     print(f"Wrote: {args.output_dir / 'policy_aggregate.csv'}")
     print(f"Wrote: {args.output_dir / 'policy_aggregate.json'}")
+    print(f"Wrote: {args.output_dir / 'frame_usefulness.csv'}")
     print(f"Wrote: {args.output_dir / 'policy_traces.jsonl'}")
+    print(f"Wrote: {args.output_dir / 'ri_frame_scores.jsonl'}")
 
 
 if __name__ == "__main__":
