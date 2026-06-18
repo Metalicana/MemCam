@@ -38,6 +38,31 @@ RUN_NAME=baseline bash scripts/evaluate_context_memory_10s.sh
 RUN_NAME=fifo_b32 bash scripts/evaluate_context_memory_10s.sh
 ```
 
+Run perceptual/semantic metrics for a completed 10s policy run:
+
+```bash
+RUN_NAME=ri_b32 \
+LEARNED_METRICS=dino,clip \
+FRAME_STRIDE=4 \
+bash scripts/evaluate_context_memory_10s.sh
+```
+
+LPIPS is also supported, but needs the extra package in the active env:
+
+```bash
+pip install lpips
+
+RUN_NAME=ri_b32 \
+LEARNED_METRICS=lpips,dino,clip \
+FRAME_STRIDE=4 \
+bash scripts/evaluate_context_memory_10s.sh
+```
+
+Metric direction:
+
+- Higher is better: `psnr_db`, `ssim`, `dino_cosine`, `clip_image_cosine`.
+- Lower is better: `mae`, `rmse`, `lpips_alex`, `dino_distance`, `clip_image_distance`, temporal delta errors.
+
 Use separate output folders per memory policy:
 
 ```bash

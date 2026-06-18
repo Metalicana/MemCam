@@ -13,7 +13,7 @@ except ImportError:
     cv2 = None
 
 
-METRIC_FIELDS = [
+BASE_METRIC_FIELDS = [
     "mae",
     "mse",
     "rmse",
@@ -22,6 +22,12 @@ METRIC_FIELDS = [
     "temporal_delta_mae",
     "temporal_delta_rmse",
 ]
+LEARNED_METRIC_FIELDS = {
+    "lpips": ["lpips_alex"],
+    "dino": ["dino_cosine", "dino_distance"],
+    "clip": ["clip_image_cosine", "clip_image_distance"],
+}
+SUPPORTED_LEARNED_METRICS = tuple(LEARNED_METRIC_FIELDS.keys())
 
 
 def get_imageio():
@@ -118,6 +124,14 @@ def normalize_video_frame(frame):
     return frame
 
 
+def resize_for_metric(frame, image_size):
+    if image_size is None:
+        return frame
+    image = Image.fromarray(frame)
+    image = image.resize((image_size, image_size), resample=Image.BICUBIC)
+    return np.asarray(image, dtype=np.uint8)
+
+
 def rgb_to_luma(frame):
     frame = frame.astype(np.float64)
     return 0.299 * frame[..., 0] + 0.587 * frame[..., 1] + 0.114 * frame[..., 2]
@@ -196,6 +210,137 @@ def temporal_delta_metrics(gen_frame, gt_frame, prev_gen_frame, prev_gt_frame):
     }
 
 
+def parse_learned_metrics(value):
+    if value is None or value.lower() in {"", "none"}:
+        return []
+    metrics = [part.strip().lower() for part in value.split(",") if part.strip()]
+    unknown = sorted(set(metrics) - set(SUPPORTED_LEARNED_METRICS))
+    if unknown:
+        raise ValueError(
+            f"Unsupported learned metrics {unknown}. "
+            f"Expected comma-separated values from {SUPPORTED_LEARNED_METRICS}."
+        )
+    return metrics
+
+
+class LearnedMetricRunner:
+    def __init__(self, metric_names, device="cuda", batch_size=8, image_size=224):
+        self.metric_names = list(metric_names)
+        self.batch_size = batch_size
+        self.image_size = image_size
+        self.fields = [
+            field
+            for metric_name in self.metric_names
+            for field in LEARNED_METRIC_FIELDS[metric_name]
+        ]
+        self.torch = None
+        self.device = None
+        self.lpips_model = None
+        self.dino_processor = None
+        self.dino_model = None
+        self.clip_processor = None
+        self.clip_model = None
+
+        if self.metric_names:
+            self._setup(device)
+
+    def _setup(self, requested_device):
+        import torch
+
+        self.torch = torch
+        if requested_device.startswith("cuda") and not torch.cuda.is_available():
+            print("CUDA requested for metrics but unavailable; using CPU.")
+            requested_device = "cpu"
+        self.device = torch.device(requested_device)
+
+        if "lpips" in self.metric_names:
+            try:
+                import lpips
+            except ImportError as exc:
+                raise RuntimeError(
+                    "LPIPS metric requested but package 'lpips' is not installed. "
+                    "Install it in the memcam env with: pip install lpips"
+                ) from exc
+            self.lpips_model = lpips.LPIPS(net="alex").eval().to(self.device)
+
+        if "dino" in self.metric_names:
+            from transformers import AutoImageProcessor, AutoModel
+
+            self.dino_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+            self.dino_model = AutoModel.from_pretrained("facebook/dinov2-base").eval().to(self.device)
+
+        if "clip" in self.metric_names:
+            from transformers import CLIPImageProcessor, CLIPVisionModel
+
+            self.clip_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            self.clip_model = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32").eval().to(self.device)
+
+    def _pil_batch(self, frames):
+        return [Image.fromarray(resize_for_metric(frame, self.image_size)) for frame in frames]
+
+    def _lpips_tensor(self, frames):
+        arrays = [resize_for_metric(frame, self.image_size) for frame in frames]
+        tensor = self.torch.from_numpy(np.stack(arrays)).permute(0, 3, 1, 2).float()
+        tensor = tensor / 127.5 - 1.0
+        return tensor.to(self.device)
+
+    def _encode_vision_batch(self, processor, model, frames):
+        inputs = processor(images=self._pil_batch(frames), return_tensors="pt")
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+        outputs = model(**inputs)
+        features = getattr(outputs, "pooler_output", None)
+        if features is None:
+            features = outputs.last_hidden_state[:, 0]
+        return self.torch.nn.functional.normalize(features.float(), dim=-1)
+
+    def compute_batch(self, gen_frames, gt_frames):
+        if not self.metric_names:
+            return [{} for _ in gen_frames]
+
+        results = [{} for _ in gen_frames]
+        with self.torch.inference_mode():
+            if "lpips" in self.metric_names:
+                gen_tensor = self._lpips_tensor(gen_frames)
+                gt_tensor = self._lpips_tensor(gt_frames)
+                values = self.lpips_model(gen_tensor, gt_tensor).flatten().detach().cpu().numpy()
+                for result, value in zip(results, values):
+                    result["lpips_alex"] = float(value)
+
+            if "dino" in self.metric_names:
+                gen_features = self._encode_vision_batch(
+                    self.dino_processor,
+                    self.dino_model,
+                    gen_frames,
+                )
+                gt_features = self._encode_vision_batch(
+                    self.dino_processor,
+                    self.dino_model,
+                    gt_frames,
+                )
+                cosines = (gen_features * gt_features).sum(dim=-1).detach().cpu().numpy()
+                for result, cosine in zip(results, cosines):
+                    result["dino_cosine"] = float(cosine)
+                    result["dino_distance"] = float(1.0 - cosine)
+
+            if "clip" in self.metric_names:
+                gen_features = self._encode_vision_batch(
+                    self.clip_processor,
+                    self.clip_model,
+                    gen_frames,
+                )
+                gt_features = self._encode_vision_batch(
+                    self.clip_processor,
+                    self.clip_model,
+                    gt_frames,
+                )
+                cosines = (gen_features * gt_features).sum(dim=-1).detach().cpu().numpy()
+                for result, cosine in zip(results, cosines):
+                    result["clip_image_cosine"] = float(cosine)
+                    result["clip_image_distance"] = float(1.0 - cosine)
+
+        return results
+
+
 def mean_or_none(values):
     values = [value for value in values if value is not None]
     if not values:
@@ -203,7 +348,16 @@ def mean_or_none(values):
     return float(sum(values) / len(values))
 
 
-def evaluate_video(item, model_output_dir, dataset_root, frame_stride, max_frames, frame_metrics_handle):
+def evaluate_video(
+    item,
+    model_output_dir,
+    dataset_root,
+    frame_stride,
+    max_frames,
+    frame_metrics_handle,
+    learned_runner,
+    metric_fields,
+):
     row = item["_row"]
     video_path = output_path(model_output_dir, item)
     if not video_path.exists():
@@ -223,7 +377,8 @@ def evaluate_video(item, model_output_dir, dataset_root, frame_stride, max_frame
     if max_frames is not None:
         expected_frames = min(expected_frames, max_frames)
 
-    frame_values = {field: [] for field in METRIC_FIELDS}
+    frame_values = {field: [] for field in metric_fields}
+    pending_learned = []
     prev_gen_frame = None
     prev_gt_frame = None
     frames_seen = 0
@@ -232,6 +387,26 @@ def evaluate_video(item, model_output_dir, dataset_root, frame_stride, max_frame
 
     imageio = get_imageio()
     reader = imageio.get_reader(str(video_path))
+
+    def finalize_metrics(metrics, payload):
+        for field in metric_fields:
+            frame_values[field].append(metrics.get(field))
+
+        if frame_metrics_handle is not None:
+            payload = {**payload, **metrics}
+            frame_metrics_handle.write(json.dumps(payload) + "\n")
+
+    def flush_learned():
+        if not pending_learned:
+            return
+        gen_frames = [item["gen_frame"] for item in pending_learned]
+        gt_frames = [item["gt_frame"] for item in pending_learned]
+        learned_results = learned_runner.compute_batch(gen_frames, gt_frames)
+        for pending_item, learned_metrics in zip(pending_learned, learned_results):
+            pending_item["metrics"].update(learned_metrics)
+            finalize_metrics(pending_item["metrics"], pending_item["payload"])
+        pending_learned.clear()
+
     try:
         for frame_index, gen_frame in enumerate(reader):
             if frame_index >= expected_frames:
@@ -258,23 +433,33 @@ def evaluate_video(item, model_output_dir, dataset_root, frame_stride, max_frame
                 metrics["temporal_delta_mae"] = None
                 metrics["temporal_delta_rmse"] = None
 
-            for field in METRIC_FIELDS:
-                frame_values[field].append(metrics[field])
+            payload = {
+                "row": row,
+                "scene": item["scene"],
+                "duration_sec": item["duration_sec"],
+                "frame_index": frame_index,
+                "gt_frame_index": gt_index,
+            }
 
-            if frame_metrics_handle is not None:
-                payload = {
-                    "row": row,
-                    "scene": item["scene"],
-                    "duration_sec": item["duration_sec"],
-                    "frame_index": frame_index,
-                    "gt_frame_index": gt_index,
-                    **metrics,
-                }
-                frame_metrics_handle.write(json.dumps(payload) + "\n")
+            if learned_runner is None:
+                finalize_metrics(metrics, payload)
+            else:
+                pending_learned.append(
+                    {
+                        "metrics": metrics,
+                        "payload": payload,
+                        "gen_frame": gen_frame,
+                        "gt_frame": gt_frame,
+                    }
+                )
+                if len(pending_learned) >= learned_runner.batch_size:
+                    flush_learned()
 
             prev_gen_frame = gen_frame
             prev_gt_frame = gt_frame
             frames_evaluated += 1
+
+        flush_learned()
     finally:
         reader.close()
 
@@ -300,7 +485,7 @@ def evaluate_video(item, model_output_dir, dataset_root, frame_stride, max_frame
         "width": size[0] if size else None,
         "height": size[1] if size else None,
     }
-    for field in METRIC_FIELDS:
+    for field in metric_fields:
         result[field] = mean_or_none(frame_values[field])
     return result
 
@@ -311,7 +496,7 @@ def write_jsonl(path, rows):
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def write_csv(path, rows):
+def write_csv(path, rows, metric_fields):
     fieldnames = [
         "run_name",
         "row",
@@ -325,7 +510,7 @@ def write_csv(path, rows):
         "frame_stride",
         "width",
         "height",
-        *METRIC_FIELDS,
+        *metric_fields,
         "output",
         "caption_key",
     ]
@@ -336,7 +521,7 @@ def write_csv(path, rows):
             writer.writerow(row)
 
 
-def summarize_group(rows):
+def summarize_group(rows, metric_fields):
     completed = [row for row in rows if row["status"] in {"completed", "short_video"}]
     summary = {
         "videos": len(rows),
@@ -345,21 +530,21 @@ def summarize_group(rows):
         "failed": sum(row["status"] == "failed" for row in rows),
         "frames_evaluated": int(sum(row.get("frames_evaluated") or 0 for row in completed)),
     }
-    for field in METRIC_FIELDS:
+    for field in metric_fields:
         summary[field] = mean_or_none([row.get(field) for row in completed])
     return summary
 
 
-def build_summary(rows):
+def build_summary(rows, metric_fields):
     by_duration = {}
     for row in rows:
         duration = str(row["duration_sec"])
         by_duration.setdefault(duration, []).append(row)
 
     return {
-        "overall": summarize_group(rows),
+        "overall": summarize_group(rows, metric_fields),
         "by_duration": {
-            duration: summarize_group(duration_rows)
+            duration: summarize_group(duration_rows, metric_fields)
             for duration, duration_rows in sorted(by_duration.items(), key=lambda item: int(item[0]))
         },
     }
@@ -392,12 +577,36 @@ def main():
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--frame_stride", type=int, default=1)
     parser.add_argument("--max_frames", type=int, default=None)
+    parser.add_argument(
+        "--learned_metrics",
+        type=str,
+        default="none",
+        help="Optional comma list: lpips,dino,clip. Default: none.",
+    )
+    parser.add_argument("--metric_device", type=str, default="cuda")
+    parser.add_argument("--metric_batch_size", type=int, default=8)
+    parser.add_argument("--learned_image_size", type=int, default=224)
     parser.add_argument("--write_frame_metrics", action="store_true")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
 
     if args.frame_stride < 1:
         raise ValueError("--frame_stride must be >= 1")
+    if args.metric_batch_size < 1:
+        raise ValueError("--metric_batch_size must be >= 1")
+
+    learned_metric_names = parse_learned_metrics(args.learned_metrics)
+    learned_runner = None
+    if learned_metric_names:
+        learned_runner = LearnedMetricRunner(
+            metric_names=learned_metric_names,
+            device=args.metric_device,
+            batch_size=args.metric_batch_size,
+            image_size=args.learned_image_size,
+        )
+    metric_fields = BASE_METRIC_FIELDS + (
+        learned_runner.fields if learned_runner is not None else []
+    )
 
     run_name = args.run_name or args.model_output_dir.name
     metrics_dir = args.metrics_dir / run_name
@@ -438,6 +647,8 @@ def main():
                     frame_stride=args.frame_stride,
                     max_frames=args.max_frames,
                     frame_metrics_handle=frame_metrics_handle,
+                    learned_runner=learned_runner,
+                    metric_fields=metric_fields,
                 )
             except Exception as exc:
                 if args.strict:
@@ -463,6 +674,10 @@ def main():
                     f" psnr={result['psnr_db']:.3f} "
                     f"ssim={result['ssim']:.4f} frames={result['frames_evaluated']}"
                 )
+                if result.get("dino_cosine") is not None:
+                    metric_text += f" dino={result['dino_cosine']:.4f}"
+                if result.get("lpips_alex") is not None:
+                    metric_text += f" lpips={result['lpips_alex']:.4f}"
             print(f"[eval row {row}] {status}{metric_text}")
     finally:
         if frame_metrics_handle is not None:
@@ -473,8 +688,16 @@ def main():
     summary_json = metrics_dir / "summary.json"
 
     write_jsonl(metrics_jsonl, results)
-    write_csv(metrics_csv, results)
-    summary = build_summary(results)
+    write_csv(metrics_csv, results, metric_fields)
+    summary = build_summary(results, metric_fields)
+    summary["metric_config"] = {
+        "learned_metrics": learned_metric_names,
+        "metric_device": args.metric_device,
+        "metric_batch_size": args.metric_batch_size,
+        "learned_image_size": args.learned_image_size,
+        "frame_stride": args.frame_stride,
+        "max_frames": args.max_frames,
+    }
     with summary_json.open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, ensure_ascii=False)
         handle.write("\n")

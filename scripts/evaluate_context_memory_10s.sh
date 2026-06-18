@@ -8,6 +8,10 @@ MODEL_OUTPUT_DIR="${MODEL_OUTPUT_DIR:-/data/ab575577/MemCam/outputs/context_memo
 METRICS_DIR="${METRICS_DIR:-/data/ab575577/MemCam/eval/context_memory}"
 DATASET_ROOT="${DATASET_ROOT:-}"
 FRAME_STRIDE="${FRAME_STRIDE:-1}"
+LEARNED_METRICS="${LEARNED_METRICS:-none}"
+METRIC_DEVICE="${METRIC_DEVICE:-cuda}"
+METRIC_BATCH_SIZE="${METRIC_BATCH_SIZE:-8}"
+LEARNED_IMAGE_SIZE="${LEARNED_IMAGE_SIZE:-224}"
 
 cd "$MEMCAM_ROOT"
 
@@ -19,6 +23,10 @@ cmd=(
   --run_name "$RUN_NAME"
   --durations 10
   --frame_stride "$FRAME_STRIDE"
+  --learned_metrics "$LEARNED_METRICS"
+  --metric_device "$METRIC_DEVICE"
+  --metric_batch_size "$METRIC_BATCH_SIZE"
+  --learned_image_size "$LEARNED_IMAGE_SIZE"
 )
 
 if [ -n "$DATASET_ROOT" ]; then
