@@ -120,6 +120,22 @@ for r in rows[:30]:
 PY
 ```
 
+Summarize RI score alignment against ground-truth usefulness:
+
+```bash
+python utils/summarize_ri_alignment.py \
+  --scores /data/ab575577/MemCam/analysis/context_memory/ri_frame_scores.jsonl \
+  --output_dir /data/ab575577/MemCam/analysis/context_memory \
+  --topk 32
+```
+
+Main outputs:
+
+```bash
+/data/ab575577/MemCam/analysis/context_memory/ri_alignment_summary.json
+/data/ab575577/MemCam/analysis/context_memory/ri_alignment_by_decision.csv
+```
+
 Use separate output folders per memory policy:
 
 ```bash
