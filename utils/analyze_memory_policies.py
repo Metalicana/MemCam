@@ -6,18 +6,18 @@ import math
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-
-from dataset.poses import load_c2ws_from_json
 
 MEMORY_POLICIES_PATH = REPO_ROOT / "diffsynth" / "pipelines" / "memory_policies.py"
 spec = importlib.util.spec_from_file_location("memory_policies", MEMORY_POLICIES_PATH)
 memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
+VisualMemoryFeatureExtractor = memory_policies.VisualMemoryFeatureExtractor
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
-pose_distances = memory_policies.pose_distances
 
 
 FRAMES_PER_SECTION = 77
@@ -82,6 +82,12 @@ def resolve_overlap_dir(item, dataset_root):
     if dataset_root is not None:
         return dataset_root / "overlap_labels" / item["scene"]
     return Path(item["overlap_dir"])
+
+
+def resolve_gt_frames_dir(item, dataset_root):
+    if dataset_root is not None:
+        return dataset_root / "frames" / item["scene"]
+    return Path(item["gt_frames_dir"])
 
 
 def extract_overlap_indices(data):
@@ -296,36 +302,13 @@ def fifo_evict(memory, budget, protected_frames):
     return evicted
 
 
-def record_ri_accesses(memory_buffer, memory, predict_range, overlap_map, generated_until, exclude_frames, c2ws):
-    if c2ws is None:
-        return
-
-    for target_frame in predict_range:
-        useful = available_useful_frames(
-            target_frame=target_frame,
-            overlap_map=overlap_map,
-            generated_until=generated_until,
-            exclude_frames=exclude_frames,
-        )
-        candidates = sorted(memory & useful)
-        if not candidates:
-            continue
-        distances = pose_distances(c2ws, candidates, [target_frame])[:, 0]
-        best_idx = candidates[int(distances.argmin())]
-        memory_buffer.record_selection(best_idx, overlap=1.0)
-
-
-def ri_evict(memory_buffer, c2ws, total_frames, section_end_frame, protected_frames, pinned_frames):
-    future_start = section_end_frame + 1
-    future_end = min(total_frames, future_start + 2 * PREDICT_FRAMES)
-    future_frame_indices = list(range(future_start, future_end, 4))
+def ri_evict(memory_buffer, dino_features, rgb_features, protected_frames, pinned_frames):
     memory_frame_indices = memory_buffer.candidates()
     scores = compute_rarity_irreplaceability_scores(
-        c2ws=c2ws,
         memory_frame_indices=memory_frame_indices,
-        memory_buffer=memory_buffer,
-        future_frame_indices=future_frame_indices,
         pinned_frames=pinned_frames,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
     )
     return memory_buffer.evict_to_budget(protected_frames=protected_frames), scores
 
@@ -396,6 +379,7 @@ def make_ri_score_rows(
     protected_frames,
     pinned_frames,
     ri_scores,
+    ri_score_details,
     overlap_map,
 ):
     num_frames = int(item["num_frames"])
@@ -433,6 +417,21 @@ def make_ri_score_rows(
                 "kept_after": frame_idx in memory_after,
                 "evicted": frame_idx in evicted_frames,
                 "ri_score": ri_score,
+                "ri_rarity": (ri_score_details.get(frame_idx) or {}).get("rarity"),
+                "ri_irreplaceability": (
+                    ri_score_details.get(frame_idx) or {}
+                ).get("irreplaceability"),
+                "ri_cluster_id": (ri_score_details.get(frame_idx) or {}).get("cluster_id"),
+                "ri_cluster_size": (ri_score_details.get(frame_idx) or {}).get("cluster_size"),
+                "ri_dino_cluster_threshold": (
+                    ri_score_details.get(frame_idx) or {}
+                ).get("cluster_threshold"),
+                "ri_rgb_nearest_frame": (
+                    ri_score_details.get(frame_idx) or {}
+                ).get("rgb_nearest_frame"),
+                "ri_rgb_nearest_distance": (
+                    ri_score_details.get(frame_idx) or {}
+                ).get("rgb_nearest_distance"),
                 "ri_rank": ri_ranks.get(frame_idx),
                 "gt_future_rank": gt_ranks.get(frame_idx),
                 "gt_future_use_count": future_use["future_use_count"],
@@ -472,7 +471,7 @@ def sum_metrics(metric_rows):
     return summary
 
 
-def simulate_row(item, policy, budget, overlap_map, c2ws=None):
+def simulate_row(item, policy, budget, overlap_map, dino_features=None, rgb_features=None):
     total_frames = int(item["num_frames"])
     total_sections = (total_frames - 1) // PREDICT_FRAMES
     if policy != "unbounded" and budget is None:
@@ -510,16 +509,6 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
             )
             metrics["section_idx"] = section_idx
             section_metrics.append(metrics)
-            if policy == "ri":
-                record_ri_accesses(
-                    memory_buffer=memory_buffer,
-                    memory=memory,
-                    predict_range=predict_range,
-                    overlap_map=overlap_map,
-                    generated_until=generated_until,
-                    exclude_frames=exclude_frames,
-                    c2ws=c2ws,
-                )
             trace_rows.append(
                 {
                     "row": item["_row"],
@@ -583,12 +572,12 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
         elif policy == "ri":
             for frame_idx in new_frames:
                 memory_buffer.add(frame_idx, evict=False)
-            scores = compute_rarity_irreplaceability_scores(
-                c2ws=c2ws,
+            scores, score_details = compute_rarity_irreplaceability_scores(
                 memory_frame_indices=memory_buffer.candidates(),
-                memory_buffer=memory_buffer,
-                future_frame_indices=list(range(section_end + 1, min(total_frames, section_end + 1 + 2 * PREDICT_FRAMES), 4)),
                 pinned_frames=pinned_frames,
+                dino_features=dino_features,
+                rgb_features=rgb_features,
+                return_details=True,
             )
             memory_buffer.set_scores(scores)
             memory_before_eviction = set(memory_buffer.candidates())
@@ -607,6 +596,7 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
                     protected_frames=protected_frames,
                     pinned_frames=pinned_frames,
                     ri_scores=scores,
+                    ri_score_details=score_details,
                     overlap_map=overlap_map,
                 )
             )
@@ -630,6 +620,31 @@ def simulate_row(item, policy, budget, overlap_map, c2ws=None):
         }
     )
     return summary, trace_rows, score_rows
+
+
+def load_visual_feature_maps(item, dataset_root, feature_extractor):
+    gt_frames_dir = resolve_gt_frames_dir(item, dataset_root)
+    start_frame = int(item["start_frame"])
+    num_frames = int(item["num_frames"])
+    dino_features = {}
+    rgb_features = {}
+
+    for batch_start in range(0, num_frames, feature_extractor.batch_size):
+        frame_indices = list(
+            range(batch_start, min(num_frames, batch_start + feature_extractor.batch_size))
+        )
+        images = []
+        for frame_idx in frame_indices:
+            path = gt_frames_dir / f"{start_frame + frame_idx:04d}.png"
+            with Image.open(path) as image:
+                images.append(image.convert("RGB").copy())
+
+        dino_batch, rgb_batch = feature_extractor.encode_pil_images(images)
+        for batch_idx, frame_idx in enumerate(frame_indices):
+            dino_features[frame_idx] = dino_batch[batch_idx]
+            rgb_features[frame_idx] = rgb_batch[batch_idx]
+
+    return dino_features, rgb_features
 
 
 def write_csv(path, rows):
@@ -682,6 +697,10 @@ def main():
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--budgets", type=str, default="32")
     parser.add_argument("--policies", type=str, default="unbounded,fifo,ri,belady,coverage_oracle")
+    parser.add_argument("--ri_dino_model", type=str, default="facebook/dinov2-base")
+    parser.add_argument("--ri_feature_device", type=str, default="cuda")
+    parser.add_argument("--ri_feature_batch_size", type=int, default=16)
+    parser.add_argument("--ri_rgb_image_size", type=int, default=64)
     args = parser.parse_args()
 
     items = load_manifest(args.manifest)
@@ -696,6 +715,14 @@ def main():
 
     policies = parse_str_list(args.policies)
     budgets = parse_int_list(args.budgets) or []
+    feature_extractor = None
+    if "ri" in policies:
+        feature_extractor = VisualMemoryFeatureExtractor(
+            dino_model_name=args.ri_dino_model,
+            device=args.ri_feature_device,
+            batch_size=args.ri_feature_batch_size,
+            rgb_image_size=args.ri_rgb_image_size,
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_rows = []
@@ -713,12 +740,13 @@ def main():
             num_frames=int(item["num_frames"]),
         )
         frame_usefulness_rows.extend(compute_frame_usefulness_rows(item, overlap_map))
-        c2ws = None
+        dino_features = None
+        rgb_features = None
         if "ri" in policies:
-            c2ws = load_c2ws_from_json(
-                json_path=item["pose_path"],
-                start_frame=int(item["start_frame"]),
-                num_frames=int(item["num_frames"]),
+            dino_features, rgb_features = load_visual_feature_maps(
+                item=item,
+                dataset_root=args.dataset_root,
+                feature_extractor=feature_extractor,
             )
 
         for policy in policies:
@@ -729,7 +757,8 @@ def main():
                     policy=policy,
                     budget=budget,
                     overlap_map=overlap_map,
-                    c2ws=c2ws,
+                    dino_features=dino_features,
+                    rgb_features=rgb_features,
                 )
                 summary_rows.append(summary)
                 trace_rows.extend(traces)

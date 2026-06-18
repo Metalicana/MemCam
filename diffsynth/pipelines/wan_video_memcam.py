@@ -11,7 +11,11 @@ import torch.nn.functional as F
 from dataset.poses import compute_relative_pose
 
 from .base import BasePipeline
-from .memory_policies import FrameMemoryBuffer, compute_rarity_irreplaceability_scores
+from .memory_policies import (
+    FrameMemoryBuffer,
+    VisualMemoryFeatureExtractor,
+    compute_rarity_irreplaceability_scores,
+)
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
 
@@ -174,6 +178,17 @@ class WanVideoMemCamPipeline(BasePipeline):
         frames = ((frames.float() + 1) * 127.5).clip(0, 255).cpu().numpy().astype(np.uint8)
         frames = [Image.fromarray(frame) for frame in frames]
         return frames
+
+
+    def frame_tensor_to_pil(self, frame_tensor):
+        frame_tensor = frame_tensor.detach().float().cpu()
+        if frame_tensor.ndim == 5:
+            frame_tensor = frame_tensor[0, :, 0]
+        elif frame_tensor.ndim == 4:
+            frame_tensor = frame_tensor[:, 0]
+        frame = ((frame_tensor + 1) * 127.5).clip(0, 255).byte()
+        frame = frame.permute(1, 2, 0).numpy()
+        return Image.fromarray(frame)
     
     
     def encode_video(self, input_video, tiled=True, tile_size=(34, 34), tile_stride=(18, 16)):
@@ -321,6 +336,12 @@ class WanVideoMemCamPipeline(BasePipeline):
             budget=memory_budget,
             pinned_frames=pinned_memory_frames,
         )
+        visual_feature_extractor = None
+        memory_dino_features = {}
+        memory_rgb_features = {}
+        if memory_policy == "rarity_irreplaceability":
+            self.load_models_to_device([])
+            visual_feature_extractor = VisualMemoryFeatureExtractor(device=self.device)
         section_start_frames = [i * (FRAMES_PER_SECTION - 1) for i in range(total_sections)]
         
         # 初始化: section 0 的 anchor 来自输入图片
@@ -571,24 +592,32 @@ class WanVideoMemCamPipeline(BasePipeline):
 
             new_frame_indices = range(section_start_frame, section_start_frame + section_frames_cpu.shape[2])
             eviction_scores = None
+            eviction_score_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
             if memory_policy == "rarity_irreplaceability":
-                future_start = section_end_frame + 1
-                future_end = min(total_frames, future_start + 2 * PREDICT_FRAMES)
-                future_frame_indices = list(range(future_start, future_end, 4))
+                feature_frame_indices = list(new_frame_indices)
+                feature_images = [
+                    self.frame_tensor_to_pil(all_generated_frames[frame_idx])
+                    for frame_idx in feature_frame_indices
+                ]
+                dino_batch, rgb_batch = visual_feature_extractor.encode_pil_images(feature_images)
+                for feature_idx, frame_idx in enumerate(feature_frame_indices):
+                    memory_dino_features[frame_idx] = dino_batch[feature_idx]
+                    memory_rgb_features[frame_idx] = rgb_batch[feature_idx]
+
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
                     frame_idx
                     for frame_idx in new_frame_indices
                     if frame_idx not in current_memory
                 ]
-                eviction_scores = compute_rarity_irreplaceability_scores(
-                    c2ws=c2ws,
+                eviction_scores, eviction_score_details = compute_rarity_irreplaceability_scores(
                     memory_frame_indices=prospective_memory,
-                    memory_buffer=memory_buffer,
-                    future_frame_indices=future_frame_indices,
                     pinned_frames=pinned_memory_frames,
+                    dino_features=memory_dino_features,
+                    rgb_features=memory_rgb_features,
+                    return_details=True,
                 )
 
             evicted_frames = memory_buffer.update(
@@ -597,6 +626,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 protected_frames=protected_frames,
             )
             for evicted_frame_idx in evicted_frames:
+                score_detail = eviction_score_details.get(evicted_frame_idx, {})
                 all_generated_frames.pop(evicted_frame_idx, None)
                 write_access_trace(
                     {
@@ -608,8 +638,18 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "stored_memory_size": len(memory_buffer),
                         "memory_policy": memory_policy,
                         "memory_budget": memory_budget,
+                        "eviction_score": score_detail.get("score"),
+                        "eviction_rarity": score_detail.get("rarity"),
+                        "eviction_irreplaceability": score_detail.get("irreplaceability"),
+                        "eviction_cluster_id": score_detail.get("cluster_id"),
+                        "eviction_cluster_size": score_detail.get("cluster_size"),
+                        "eviction_dino_cluster_threshold": score_detail.get("cluster_threshold"),
+                        "eviction_rgb_nearest_frame": score_detail.get("rgb_nearest_frame"),
+                        "eviction_rgb_nearest_distance": score_detail.get("rgb_nearest_distance"),
                     }
                 )
+                memory_dino_features.pop(evicted_frame_idx, None)
+                memory_rgb_features.pop(evicted_frame_idx, None)
             if evicted_frames:
                 print(f"Evicted frames: {evicted_frames}")
             print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")

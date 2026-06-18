@@ -162,56 +162,206 @@ def normalize(values):
     return (values - min_value) / (max_value - min_value)
 
 
+def connected_components_from_threshold(pairwise_distances, threshold):
+    num_items = pairwise_distances.shape[0]
+    visited = np.zeros(num_items, dtype=bool)
+    cluster_ids = np.full(num_items, -1, dtype=np.int64)
+    clusters = []
+
+    for start in range(num_items):
+        if visited[start]:
+            continue
+
+        cluster_id = len(clusters)
+        stack = [start]
+        visited[start] = True
+        members = []
+
+        while stack:
+            item = stack.pop()
+            members.append(item)
+            neighbors = np.flatnonzero(pairwise_distances[item] <= threshold)
+            for neighbor in neighbors:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    stack.append(int(neighbor))
+
+        for member in members:
+            cluster_ids[member] = cluster_id
+        clusters.append(members)
+
+    return cluster_ids, clusters
+
+
+def estimate_cluster_threshold(pairwise_distances, rarity_neighbors):
+    finite = pairwise_distances[np.isfinite(pairwise_distances)]
+    if finite.size == 0:
+        return 0.0
+
+    # Use the median nearest-neighbor distance as the mode scale. Larger k-neighbor
+    # thresholds can merge a whole camera path into one chain-shaped component.
+    nearest = np.partition(pairwise_distances, 0, axis=1)[:, 0]
+    nearest = nearest[np.isfinite(nearest)]
+    if nearest.size:
+        return float(np.median(nearest))
+    return float(np.median(finite))
+
+
+def cosine_distances(features):
+    features = np.asarray(features, dtype=np.float64)
+    norms = np.linalg.norm(features, axis=1, keepdims=True)
+    features = features / np.maximum(norms, 1e-12)
+    similarities = np.clip(features @ features.T, -1.0, 1.0)
+    return 1.0 - similarities
+
+
+def pairwise_mean_abs_distances(features):
+    features = np.asarray(features, dtype=np.float32)
+    distances = np.zeros((features.shape[0], features.shape[0]), dtype=np.float64)
+    for index in range(features.shape[0]):
+        distances[index] = np.mean(np.abs(features[index][None, :] - features), axis=1)
+    return distances
+
+
+def rgb_features_from_pil_images(images, image_size=64):
+    features = []
+    for image in images:
+        image = image.convert("RGB").resize((image_size, image_size))
+        array = np.asarray(image, dtype=np.float32) / 255.0
+        features.append(array.reshape(-1))
+    return np.stack(features, axis=0) if features else np.zeros((0, image_size * image_size * 3))
+
+
+class VisualMemoryFeatureExtractor:
+    def __init__(
+        self,
+        dino_model_name="facebook/dinov2-base",
+        device="cuda",
+        batch_size=16,
+        rgb_image_size=64,
+    ):
+        import torch
+        from transformers import AutoImageProcessor, AutoModel
+
+        self.torch = torch
+        if str(device).startswith("cuda") and not torch.cuda.is_available():
+            device = "cpu"
+        self.device = torch.device(device)
+        self.batch_size = int(batch_size)
+        self.rgb_image_size = int(rgb_image_size)
+        self.processor = AutoImageProcessor.from_pretrained(dino_model_name)
+        self.model = AutoModel.from_pretrained(dino_model_name).eval().to(self.device)
+
+    def encode_pil_images(self, images):
+        dino_features = []
+        with self.torch.inference_mode():
+            for start in range(0, len(images), self.batch_size):
+                batch = images[start : start + self.batch_size]
+                inputs = self.processor(images=batch, return_tensors="pt")
+                inputs = {key: value.to(self.device) for key, value in inputs.items()}
+                outputs = self.model(**inputs)
+                features = getattr(outputs, "pooler_output", None)
+                if features is None:
+                    features = outputs.last_hidden_state[:, 0]
+                features = self.torch.nn.functional.normalize(features.float(), dim=-1)
+                dino_features.append(features.detach().cpu().numpy())
+
+        if dino_features:
+            dino_features = np.concatenate(dino_features, axis=0)
+        else:
+            dino_features = np.zeros((0, 0), dtype=np.float32)
+
+        rgb_features = rgb_features_from_pil_images(
+            images,
+            image_size=self.rgb_image_size,
+        )
+        return dino_features, rgb_features
+
+
 def compute_rarity_irreplaceability_scores(
-    c2ws,
     memory_frame_indices,
-    memory_buffer,
-    future_frame_indices=None,
     pinned_frames=None,
     rarity_neighbors=3,
-    affinity_temperature=0.75,
+    cluster_distance_threshold=None,
+    return_details=False,
+    dino_features=None,
+    rgb_features=None,
 ):
     memory_frame_indices = list(memory_frame_indices)
     pinned_frames = set(pinned_frames or [])
     if not memory_frame_indices:
-        return {}
+        return ({}, {}) if return_details else {}
 
-    pairwise = pose_distances(c2ws, memory_frame_indices, memory_frame_indices)
-    np.fill_diagonal(pairwise, np.inf)
-    finite_pairwise = np.where(np.isfinite(pairwise), pairwise, np.nan)
+    if dino_features is None or rgb_features is None:
+        raise ValueError(
+            "rarity_irreplaceability now requires DINO features for rarity "
+            "and RGB features for irreplaceability."
+        )
 
-    rarity = np.ones(len(memory_frame_indices), dtype=np.float64)
-    if len(memory_frame_indices) > 1:
-        neighbor_count = min(rarity_neighbors, len(memory_frame_indices) - 1)
-        nearest = np.partition(finite_pairwise, neighbor_count - 1, axis=1)[:, :neighbor_count]
-        rarity = normalize(np.nanmean(nearest, axis=1))
+    missing_features = [
+        frame_idx
+        for frame_idx in memory_frame_indices
+        if frame_idx not in dino_features or frame_idx not in rgb_features
+    ]
+    if missing_features:
+        raise ValueError(f"Missing visual memory features for frames: {missing_features[:10]}")
 
-    irreplaceability = np.zeros(len(memory_frame_indices), dtype=np.float64)
-    future_frame_indices = list(future_frame_indices or [])
-    if future_frame_indices:
-        future_dists = pose_distances(c2ws, memory_frame_indices, future_frame_indices)
-        affinities = np.exp(-future_dists / max(affinity_temperature, 1e-6))
-        affinity_sums = np.maximum(np.sum(affinities, axis=0, keepdims=True), 1e-12)
-        soft_credit = affinities / affinity_sums
-        irreplaceability = np.mean(soft_credit, axis=1)
-        irreplaceability = normalize(irreplaceability)
+    dino_matrix = np.stack([dino_features[frame_idx] for frame_idx in memory_frame_indices])
+    rgb_matrix = np.stack([rgb_features[frame_idx] for frame_idx in memory_frame_indices])
 
-    observed_use = np.array(
-        [
-            math.log1p(memory_buffer.selected_count(frame_idx))
-            * (0.05 + memory_buffer.mean_selection_overlap(frame_idx))
-            for frame_idx in memory_frame_indices
-        ],
-        dtype=np.float64,
-    )
-    observed_use = normalize(observed_use)
+    dino_pairwise = cosine_distances(dino_matrix)
+    np.fill_diagonal(dino_pairwise, np.inf)
+
+    if len(memory_frame_indices) == 1:
+        cluster_ids = np.zeros(1, dtype=np.int64)
+        cluster_sizes = np.ones(1, dtype=np.float64)
+        threshold = 0.0
+    else:
+        threshold = (
+            float(cluster_distance_threshold)
+            if cluster_distance_threshold is not None
+            else estimate_cluster_threshold(dino_pairwise, rarity_neighbors)
+        )
+        cluster_pairwise = dino_pairwise.copy()
+        np.fill_diagonal(cluster_pairwise, 0.0)
+        cluster_ids, clusters = connected_components_from_threshold(
+            cluster_pairwise,
+            threshold=threshold,
+        )
+        cluster_sizes = np.array([len(clusters[cluster_id]) for cluster_id in cluster_ids])
+
+    memory_count = float(len(memory_frame_indices))
+    rarity = np.log((memory_count + 1.0) / np.maximum(cluster_sizes, 1.0))
+
+    rgb_pairwise = pairwise_mean_abs_distances(rgb_matrix)
+    np.fill_diagonal(rgb_pairwise, np.inf)
+    if len(memory_frame_indices) == 1:
+        nearest_rgb_distances = np.ones(1, dtype=np.float64)
+        nearest_rgb_indices = np.full(1, -1, dtype=np.int64)
+    else:
+        nearest_rgb_indices = np.argmin(rgb_pairwise, axis=1)
+        nearest_rgb_distances = rgb_pairwise[np.arange(len(memory_frame_indices)), nearest_rgb_indices]
+    irreplaceability = nearest_rgb_distances
 
     scores = {}
+    details = {}
     for index, frame_idx in enumerate(memory_frame_indices):
-        score = (0.25 + rarity[index]) * (
-            0.5 + irreplaceability[index] + 0.25 * observed_use[index]
-        )
+        score = rarity[index] * irreplaceability[index]
         if frame_idx in pinned_frames:
             score = float("inf")
         scores[frame_idx] = float(score)
-    return scores
+        details[frame_idx] = {
+            "score": float(score),
+            "rarity": float(rarity[index]),
+            "irreplaceability": float(irreplaceability[index]),
+            "cluster_id": int(cluster_ids[index]),
+            "cluster_size": int(cluster_sizes[index]),
+            "cluster_threshold": float(threshold),
+            "rgb_nearest_frame": (
+                None
+                if nearest_rgb_indices[index] < 0
+                else int(memory_frame_indices[int(nearest_rgb_indices[index])])
+            ),
+            "rgb_nearest_distance": float(nearest_rgb_distances[index]),
+        }
+    return (scores, details) if return_details else scores

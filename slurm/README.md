@@ -188,11 +188,14 @@ POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 bash scripts/run_current_cluster
 POLICY=fifo MEMORY_POLICY=fifo MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
 ```
 
-Rarity x irreplaceability also requires an explicit memory budget:
+Rarity x irreplaceability also requires an explicit memory budget. This policy uses
+DINOv2 features for rarity clustering and downsampled RGB nearest-neighbor distance
+for irreplaceability. Use a fresh run name for this corrected version; older `ri_b32`
+runs used a pose-based heuristic.
 
 ```bash
-POLICY=ri_b32 MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
-POLICY=ri_b32 MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
+POLICY=ri_b32_dino_rgb MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
+POLICY=ri_b32_dino_rgb MEMORY_POLICY=rarity_irreplaceability MEMORY_BUDGET=32 sbatch slurm/newton_memcam_h100_20s_array.sbatch
 ```
 
 Baseline/unbounded:

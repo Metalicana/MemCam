@@ -71,18 +71,41 @@ def check_rarity_irreplaceability_scores():
         pinned_frames={0},
     )
     memory.update([0, 1, 2, 5], eviction_scores={idx: 0.0 for idx in [0, 1, 2, 5]})
-    memory.record_selection(2, 0.8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.99, 0.01], dtype=np.float32),
+        2: np.array([0.98, 0.02], dtype=np.float32),
+        5: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.full(12, 0.01, dtype=np.float32),
+        2: np.full(12, 0.02, dtype=np.float32),
+        5: np.ones(12, dtype=np.float32),
+    }
 
-    scores = compute_rarity_irreplaceability_scores(
-        c2ws=make_line_c2ws(8),
+    scores, details = compute_rarity_irreplaceability_scores(
         memory_frame_indices=memory.candidates(),
-        memory_buffer=memory,
-        future_frame_indices=[6, 7],
         pinned_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        return_details=True,
     )
     assert set(scores) == {0, 1, 2, 5}
     assert scores[0] == float("inf")
     assert scores[5] > scores[1]
+    assert details[5]["rarity"] > details[1]["rarity"]
+    assert details[5]["irreplaceability"] > details[1]["irreplaceability"]
+
+    before = scores[2]
+    memory.record_selection(2, 0.8)
+    after_scores = compute_rarity_irreplaceability_scores(
+        memory_frame_indices=memory.candidates(),
+        pinned_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+    )
+    assert after_scores[2] == before
 
 
 if __name__ == "__main__":
