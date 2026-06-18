@@ -165,6 +165,22 @@ access_summary.json
 access_selected_frames.csv
 ```
 
+Analyze manifest trajectory diversity:
+
+```bash
+python utils/analyze_trajectory_diversity.py \
+  --manifest testbeds/context_memory/manifest.jsonl \
+  --output_dir /data/ab575577/MemCam/analysis/context_memory \
+  --durations 10,20,40,60,120
+```
+
+Main outputs:
+
+```bash
+/data/ab575577/MemCam/analysis/context_memory/trajectory_diversity.csv
+/data/ab575577/MemCam/analysis/context_memory/trajectory_diversity_summary.csv
+```
+
 FIFO requires an explicit memory budget:
 
 ```bash
