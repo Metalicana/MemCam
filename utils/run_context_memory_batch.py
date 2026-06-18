@@ -99,6 +99,12 @@ def main():
         choices=["unbounded", "fifo", "rarity_irreplaceability"],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument(
+        "--access_trace_dir",
+        type=Path,
+        default=None,
+        help="Directory for per-video JSONL memory access traces. Defaults to output_dir/access_traces.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -108,6 +114,8 @@ def main():
     num_inference_steps = 20 if args.smoke else args.num_inference_steps
     output_dir = args.output_dir / "smoke" if args.smoke else args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    access_trace_dir = args.access_trace_dir or (output_dir / "access_traces")
+    access_trace_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run_status.jsonl"
 
     items = load_manifest(args.manifest)
@@ -168,6 +176,7 @@ def main():
     for item in pending:
         row = item["_row"]
         save_path = output_path(output_dir, item)
+        access_trace_path = access_trace_dir / f"{item['output_prefix']}custom.jsonl"
         print(
             f"[row {row}] {item['scene']} start={item['start_frame']} "
             f"frames={item['num_frames']} duration={item['duration_sec']}s"
@@ -195,6 +204,18 @@ def main():
                 seed=args.seed,
                 memory_policy=args.memory_policy,
                 memory_budget=args.memory_budget,
+                access_trace_path=str(access_trace_path),
+                access_trace_metadata={
+                    "row": row,
+                    "scene": item["scene"],
+                    "dataset_start_frame": item["start_frame"],
+                    "duration_sec": item["duration_sec"],
+                    "num_frames": item["num_frames"],
+                    "output": str(save_path),
+                    "output_prefix": item["output_prefix"],
+                    "run_memory_policy": args.memory_policy,
+                    "run_memory_budget": args.memory_budget,
+                },
                 tiled=False,
             )
             save_video(video, str(save_path), fps=item["fps"], quality=5)

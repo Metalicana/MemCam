@@ -36,12 +36,16 @@ def main():
         choices=["unbounded", "fifo", "rarity_irreplaceability"],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--access_trace_dir", type=Path, default=None)
     args = parser.parse_args()
 
     item = read_manifest_row(args.manifest, args.row)
     num_inference_steps = 20 if args.smoke else args.num_inference_steps
     output_dir = args.output_dir / "smoke" if args.smoke else args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    access_trace_dir = args.access_trace_dir or (output_dir / "access_traces")
+    access_trace_dir.mkdir(parents=True, exist_ok=True)
+    access_trace_path = access_trace_dir / f"{item['output_prefix']}custom.jsonl"
 
     command = [
         sys.executable,
@@ -74,6 +78,8 @@ def main():
         str(output_dir),
         "--output_prefix",
         item["output_prefix"],
+        "--access_trace_path",
+        str(access_trace_path),
     ]
     if args.memory_budget is not None:
         command.extend(["--memory_budget", str(args.memory_budget)])

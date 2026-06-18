@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 
 import numpy as np
@@ -275,6 +276,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         tile_stride=(15, 26),
         memory_policy="unbounded",
         memory_budget=None,
+        access_trace_path=None,
+        access_trace_metadata=None,
         progress_bar_cmd=tqdm
     ):
         # Tiler parameters
@@ -325,6 +328,28 @@ class WanVideoMemCamPipeline(BasePipeline):
         all_generated_frames[0] = input_image_tensor.cpu()  # 帧0
         memory_buffer.add(0)
         print(f"Memory policy: {memory_policy}, budget: {memory_budget}, stored frames: {len(memory_buffer)}")
+        access_trace_handle = None
+        access_trace_metadata = dict(access_trace_metadata or {})
+        if access_trace_path is not None:
+            os.makedirs(os.path.dirname(access_trace_path) or ".", exist_ok=True)
+            access_trace_handle = open(access_trace_path, "w", encoding="utf-8")
+
+        def write_access_trace(payload):
+            if access_trace_handle is None:
+                return
+            payload = {
+                **access_trace_metadata,
+                **payload,
+            }
+            dataset_start_frame = payload.get("dataset_start_frame")
+            if dataset_start_frame is not None:
+                if payload.get("target_frame") is not None:
+                    payload["target_dataset_frame"] = int(dataset_start_frame) + int(payload["target_frame"])
+                if payload.get("selected_memory_frame") is not None:
+                    payload["selected_dataset_frame"] = int(dataset_start_frame) + int(payload["selected_memory_frame"])
+                if payload.get("evicted_memory_frame") is not None:
+                    payload["evicted_dataset_frame"] = int(dataset_start_frame) + int(payload["evicted_memory_frame"])
+            access_trace_handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         
         # Vanilla Sampling
         for section_idx in range(total_sections):
@@ -376,9 +401,24 @@ class WanVideoMemCamPipeline(BasePipeline):
             
             if section_idx == 0:
                 # Section 0: context全零 (与训练drop_context一致)
-                for _ in range(PREDICT_FRAMES):
+                for slot_idx, frame_idx in enumerate(context_target_frames):
                     context_latent_list.append(torch.zeros(latent_C, 1, latent_H, latent_W, dtype=anchor_latent.dtype, device=anchor_latent.device))
                     context_frame_indices.append(anchor_pose_frame)
+                    write_access_trace(
+                        {
+                            "event": "context_access",
+                            "selected": False,
+                            "fallback_reason": "initial_section",
+                            "section_idx": section_idx,
+                            "context_slot": slot_idx,
+                            "target_frame": int(frame_idx),
+                            "anchor_pose_frame": int(anchor_pose_frame),
+                            "candidate_count": 0,
+                            "stored_memory_size": len(memory_buffer),
+                            "memory_policy": memory_policy,
+                            "memory_budget": memory_budget,
+                        }
+                    )
             else:
                 # Section > 0: 按 context_target_frames 选择，每个目标帧选1个最佳重叠 context
                 candidate_frame_indices = memory_buffer.candidates(exclude_frames=exclude_frames)
@@ -388,7 +428,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 print(f"  Candidate memory frames: {len(candidate_frame_indices)} / stored={len(memory_buffer)}")
                 
                 self.load_models_to_device(['vae'])
-                for frame_idx in context_target_frames:  # 按 frame_interval 选择的目标帧
+                for slot_idx, frame_idx in enumerate(context_target_frames):  # 按 frame_interval 选择的目标帧
                     # 计算与该帧重叠度最高的帧
                     target_c2w = c2ws[frame_idx]
                     best_idx = None
@@ -413,10 +453,46 @@ class WanVideoMemCamPipeline(BasePipeline):
                         chosen_latent = self.encode_video(chosen_frame, **tiler_kwargs)[0]
                         context_latent_list.append(chosen_latent)
                         context_frame_indices.append(best_idx)
+                        write_access_trace(
+                            {
+                                "event": "context_access",
+                                "selected": True,
+                                "fallback_reason": None,
+                                "section_idx": section_idx,
+                                "context_slot": slot_idx,
+                                "target_frame": int(frame_idx),
+                                "anchor_pose_frame": int(anchor_pose_frame),
+                                "selected_memory_frame": int(best_idx),
+                                "memory_age": int(frame_idx - best_idx),
+                                "selected_overlap": float(best_iou),
+                                "selected_count_after": memory_buffer.selected_count(best_idx),
+                                "candidate_count": len(candidate_frame_indices),
+                                "candidate_min_frame": int(min(candidate_frame_indices)) if candidate_frame_indices else None,
+                                "candidate_max_frame": int(max(candidate_frame_indices)) if candidate_frame_indices else None,
+                                "stored_memory_size": len(memory_buffer),
+                                "memory_policy": memory_policy,
+                                "memory_budget": memory_budget,
+                            }
+                        )
                     else:
                         # 没有有效context，用零填充
                         context_latent_list.append(torch.zeros(latent_C, 1, latent_H, latent_W, dtype=anchor_latent.dtype, device=anchor_latent.device))
                         context_frame_indices.append(anchor_pose_frame)
+                        write_access_trace(
+                            {
+                                "event": "context_access",
+                                "selected": False,
+                                "fallback_reason": "no_valid_context",
+                                "section_idx": section_idx,
+                                "context_slot": slot_idx,
+                                "target_frame": int(frame_idx),
+                                "anchor_pose_frame": int(anchor_pose_frame),
+                                "candidate_count": len(candidate_frame_indices),
+                                "stored_memory_size": len(memory_buffer),
+                                "memory_policy": memory_policy,
+                                "memory_budget": memory_budget,
+                            }
+                        )
 
                 print(f"  Selected [{context_frame_indices}] as context frames")
             
@@ -522,6 +598,18 @@ class WanVideoMemCamPipeline(BasePipeline):
             )
             for evicted_frame_idx in evicted_frames:
                 all_generated_frames.pop(evicted_frame_idx, None)
+                write_access_trace(
+                    {
+                        "event": "memory_eviction",
+                        "section_idx": section_idx,
+                        "evicted_memory_frame": int(evicted_frame_idx),
+                        "section_end_frame": int(section_end_frame),
+                        "memory_age_at_eviction": int(section_end_frame - evicted_frame_idx),
+                        "stored_memory_size": len(memory_buffer),
+                        "memory_policy": memory_policy,
+                        "memory_budget": memory_budget,
+                    }
+                )
             if evicted_frames:
                 print(f"Evicted frames: {evicted_frames}")
             print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")
@@ -543,5 +631,7 @@ class WanVideoMemCamPipeline(BasePipeline):
 
         all_frames = torch.cat(all_frames, dim=1)
         frames = self.tensor2video(all_frames.cpu())
+        if access_trace_handle is not None:
+            access_trace_handle.close()
         self.load_models_to_device([])
         return frames

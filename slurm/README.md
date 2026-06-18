@@ -143,6 +143,28 @@ POLICY=baseline MEMORY_POLICY=unbounded bash scripts/run_current_cluster_10s.sh
 POLICY=fifo_b32 MEMORY_POLICY=fifo MEMORY_BUDGET=32 bash scripts/run_current_cluster_10s.sh
 ```
 
+The batch runner writes memory access traces under each run's output directory:
+
+```bash
+/data/ab575577/MemCam/outputs/context_memory/<POLICY>/access_traces/*.jsonl
+```
+
+Summarize those traces:
+
+```bash
+python utils/summarize_access_traces.py \
+  --trace_dir /data/ab575577/MemCam/outputs/context_memory/ri_b32/access_traces \
+  --output_dir /data/ab575577/MemCam/analysis/context_memory/ri_b32_access
+```
+
+Main outputs:
+
+```bash
+access_summary.csv
+access_summary.json
+access_selected_frames.csv
+```
+
 FIFO requires an explicit memory budget:
 
 ```bash

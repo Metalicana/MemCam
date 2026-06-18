@@ -76,6 +76,7 @@ if __name__ == "__main__":
         choices=["unbounded", "fifo", "rarity_irreplaceability"],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--access_trace_path", type=str, default=None)
     args = parser.parse_args()
 
     pipe = setup_pipeline(
@@ -112,6 +113,13 @@ if __name__ == "__main__":
             seed=args.seed,
             memory_policy=args.memory_policy,
             memory_budget=args.memory_budget,
+            access_trace_path=args.access_trace_path,
+            access_trace_metadata={
+                "run_name": args.output_prefix.rstrip("_"),
+                "trajectory_mode": args.trajectory_mode,
+                "dataset_start_frame": args.start_frame,
+                "num_frames": args.num_frames,
+            },
             tiled=False
         )
         save_video(video, output_path(name), fps=30, quality=5)
