@@ -1,0 +1,515 @@
+import argparse
+import csv
+import importlib.util
+import json
+import math
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from dataset.poses import load_c2ws_from_json
+
+MEMORY_POLICIES_PATH = REPO_ROOT / "diffsynth" / "pipelines" / "memory_policies.py"
+spec = importlib.util.spec_from_file_location("memory_policies", MEMORY_POLICIES_PATH)
+memory_policies = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(memory_policies)
+FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
+compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
+
+
+FRAMES_PER_SECTION = 77
+PREDICT_FRAMES = 76
+
+
+def load_manifest(manifest_path):
+    rows = []
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        for row_index, line in enumerate(handle):
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            item["_row"] = row_index
+            rows.append(item)
+    return rows
+
+
+def parse_int_list(value):
+    if not value:
+        return None
+    return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
+def parse_str_list(value):
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def parse_rows(value):
+    if not value:
+        return None
+
+    rows = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_text, end_text = part.split("-", 1)
+            rows.update(range(int(start_text), int(end_text) + 1))
+        else:
+            rows.add(int(part))
+    return rows
+
+
+def select_rows(items, row_filter, durations, limit):
+    selected = []
+    duration_filter = set(durations) if durations else None
+    for item in items:
+        if row_filter is not None and item["_row"] not in row_filter:
+            continue
+        if duration_filter is not None and int(item["duration_sec"]) not in duration_filter:
+            continue
+        selected.append(item)
+        if limit is not None and len(selected) >= limit:
+            break
+    return selected
+
+
+def resolve_overlap_dir(item, dataset_root):
+    if dataset_root is not None:
+        return dataset_root / "overlap_labels" / item["scene"]
+    return Path(item["overlap_dir"])
+
+
+def extract_overlap_indices(data):
+    if isinstance(data, dict):
+        for key in ("overlapping_frames", "overlap_frames", "frames", "indices"):
+            if key in data:
+                return extract_overlap_indices(data[key])
+        if "frame_idx" in data:
+            return [int(data["frame_idx"])]
+        if "index" in data:
+            return [int(data["index"])]
+        return []
+
+    if isinstance(data, list):
+        indices = []
+        for item in data:
+            if isinstance(item, int):
+                indices.append(item)
+            elif isinstance(item, str) and item.lstrip("-").isdigit():
+                indices.append(int(item))
+            elif isinstance(item, dict):
+                indices.extend(extract_overlap_indices(item))
+        return indices
+
+    return []
+
+
+def load_overlap_map(overlap_dir, start_frame, num_frames):
+    overlap_map = {}
+    for local_frame_idx in range(num_frames):
+        global_frame_idx = start_frame + local_frame_idx
+        path = overlap_dir / f"{global_frame_idx}.json"
+        if not path.exists():
+            path = overlap_dir / f"{local_frame_idx}.json"
+        if not path.exists():
+            overlap_map[local_frame_idx] = set()
+            continue
+
+        with path.open("r", encoding="utf-8") as handle:
+            raw_indices = extract_overlap_indices(json.load(handle))
+
+        local_indices = set()
+        for frame_idx in raw_indices:
+            local_idx = int(frame_idx) - start_frame
+            if 0 <= local_idx < num_frames:
+                local_indices.add(local_idx)
+
+        # Fallback for datasets whose overlap labels are already local.
+        if not local_indices:
+            for frame_idx in raw_indices:
+                local_idx = int(frame_idx)
+                if 0 <= local_idx < num_frames:
+                    local_indices.add(local_idx)
+
+        overlap_map[local_frame_idx] = local_indices
+    return overlap_map
+
+
+def section_ranges(section_idx):
+    section_start = section_idx * (FRAMES_PER_SECTION - 1)
+    if section_idx == 0:
+        anchor_range = [section_start]
+    else:
+        anchor_range = list(range(section_start - 3, section_start + 1))
+    predict_range = list(range(section_start + 1, section_start + FRAMES_PER_SECTION))
+    return section_start, anchor_range, predict_range
+
+
+def available_useful_frames(target_frame, overlap_map, generated_until, exclude_frames):
+    return {
+        frame_idx
+        for frame_idx in overlap_map.get(target_frame, set())
+        if 0 <= frame_idx <= generated_until and frame_idx not in exclude_frames
+    }
+
+
+def next_use_distance(frame_idx, future_targets, useful_by_target):
+    for target_frame in future_targets:
+        if frame_idx in useful_by_target.get(target_frame, set()):
+            return target_frame
+    return math.inf
+
+
+def belady_evict(memory, budget, protected_frames, future_targets, useful_by_target):
+    evicted = []
+    protected_frames = set(protected_frames or [])
+    while len(memory) > budget:
+        evictable = [frame_idx for frame_idx in sorted(memory) if frame_idx not in protected_frames]
+        if not evictable:
+            break
+        evict_idx = max(
+            evictable,
+            key=lambda frame_idx: (
+                next_use_distance(frame_idx, future_targets, useful_by_target),
+                -frame_idx,
+            ),
+        )
+        memory.remove(evict_idx)
+        evicted.append(evict_idx)
+    return evicted
+
+
+def fifo_evict(memory, budget, protected_frames):
+    evicted = []
+    protected_frames = set(protected_frames or [])
+    while len(memory) > budget:
+        evictable = [frame_idx for frame_idx in sorted(memory) if frame_idx not in protected_frames]
+        if not evictable:
+            break
+        evict_idx = evictable[0]
+        memory.remove(evict_idx)
+        evicted.append(evict_idx)
+    return evicted
+
+
+def ri_evict(memory_buffer, c2ws, total_frames, section_end_frame, protected_frames, pinned_frames):
+    future_start = section_end_frame + 1
+    future_end = min(total_frames, future_start + 2 * PREDICT_FRAMES)
+    future_frame_indices = list(range(future_start, future_end, 4))
+    memory_frame_indices = memory_buffer.candidates()
+    scores = compute_rarity_irreplaceability_scores(
+        c2ws=c2ws,
+        memory_frame_indices=memory_frame_indices,
+        memory_buffer=memory_buffer,
+        future_frame_indices=future_frame_indices,
+        pinned_frames=pinned_frames,
+    )
+    return memory_buffer.evict_to_budget(protected_frames=protected_frames), scores
+
+
+def evaluate_memory_for_section(memory, predict_range, overlap_map, generated_until, exclude_frames):
+    possible_targets = 0
+    covered_targets = 0
+    retained_useful = 0
+    available_useful = 0
+    best_possible = 0
+
+    for target_frame in predict_range:
+        useful = available_useful_frames(
+            target_frame=target_frame,
+            overlap_map=overlap_map,
+            generated_until=generated_until,
+            exclude_frames=exclude_frames,
+        )
+        if useful:
+            possible_targets += 1
+            best_possible += 1
+        retained = useful & memory
+        if retained:
+            covered_targets += 1
+        retained_useful += len(retained)
+        available_useful += len(useful)
+
+    return {
+        "targets": len(predict_range),
+        "possible_targets": possible_targets,
+        "covered_targets": covered_targets,
+        "coverage": covered_targets / len(predict_range) if predict_range else 0.0,
+        "possible_coverage": (
+            covered_targets / possible_targets if possible_targets else 0.0
+        ),
+        "oracle_recall": (
+            retained_useful / available_useful if available_useful else 0.0
+        ),
+        "retained_useful": retained_useful,
+        "available_useful": available_useful,
+        "best_possible_coverage": (
+            best_possible / len(predict_range) if predict_range else 0.0
+        ),
+    }
+
+
+def sum_metrics(metric_rows):
+    keys = [
+        "targets",
+        "possible_targets",
+        "covered_targets",
+        "retained_useful",
+        "available_useful",
+    ]
+    summary = {key: sum(row[key] for row in metric_rows) for key in keys}
+    targets = summary["targets"]
+    possible_targets = summary["possible_targets"]
+    available_useful = summary["available_useful"]
+    summary["coverage"] = summary["covered_targets"] / targets if targets else 0.0
+    summary["possible_coverage"] = (
+        summary["covered_targets"] / possible_targets if possible_targets else 0.0
+    )
+    summary["oracle_recall"] = (
+        summary["retained_useful"] / available_useful if available_useful else 0.0
+    )
+    summary["best_possible_coverage"] = (
+        possible_targets / targets if targets else 0.0
+    )
+    return summary
+
+
+def simulate_row(item, policy, budget, overlap_map, c2ws=None):
+    total_frames = int(item["num_frames"])
+    total_sections = (total_frames - 1) // PREDICT_FRAMES
+    if policy != "unbounded" and budget is None:
+        raise ValueError(f"{policy} requires budget")
+
+    memory = set()
+    pinned_frames = {0} if policy == "ri" else set()
+    memory_buffer = None
+    if policy == "ri":
+        if budget < 2:
+            raise ValueError("ri requires budget >= 2")
+        memory_buffer = FrameMemoryBuffer(
+            policy="rarity_irreplaceability",
+            budget=budget,
+            pinned_frames=pinned_frames,
+        )
+
+    section_metrics = []
+    trace_rows = []
+
+    for section_idx in range(total_sections):
+        section_start, anchor_range, predict_range = section_ranges(section_idx)
+        section_end = min(total_frames - 1, section_start + PREDICT_FRAMES)
+
+        if section_idx > 0:
+            exclude_frames = set(anchor_range) | set(predict_range)
+            generated_until = section_start
+            metrics = evaluate_memory_for_section(
+                memory=memory,
+                predict_range=predict_range,
+                overlap_map=overlap_map,
+                generated_until=generated_until,
+                exclude_frames=exclude_frames,
+            )
+            metrics["section_idx"] = section_idx
+            section_metrics.append(metrics)
+            trace_rows.append(
+                {
+                    "row": item["_row"],
+                    "scene": item["scene"],
+                    "start_frame": item["start_frame"],
+                    "duration_sec": item["duration_sec"],
+                    "policy": policy,
+                    "budget": budget,
+                    "section_idx": section_idx,
+                    "memory_size": len(memory),
+                    **metrics,
+                }
+            )
+
+        new_frames = range(section_start, section_end + 1)
+        protected_frames = {section_end}
+        if policy == "unbounded":
+            memory.update(new_frames)
+            evicted = []
+        elif policy == "fifo":
+            memory.update(new_frames)
+            evicted = fifo_evict(memory, budget, protected_frames=protected_frames)
+        elif policy == "belady":
+            memory.update(new_frames)
+            future_targets = list(range(section_end + 1, total_frames))
+            useful_by_target = {
+                target: available_useful_frames(
+                    target_frame=target,
+                    overlap_map=overlap_map,
+                    generated_until=section_end,
+                    exclude_frames=set(),
+                )
+                for target in future_targets
+            }
+            evicted = belady_evict(
+                memory=memory,
+                budget=budget,
+                protected_frames=protected_frames,
+                future_targets=future_targets,
+                useful_by_target=useful_by_target,
+            )
+        elif policy == "ri":
+            for frame_idx in new_frames:
+                memory_buffer.add(frame_idx, evict=False)
+            scores = compute_rarity_irreplaceability_scores(
+                c2ws=c2ws,
+                memory_frame_indices=memory_buffer.candidates(),
+                memory_buffer=memory_buffer,
+                future_frame_indices=list(range(section_end + 1, min(total_frames, section_end + 1 + 2 * PREDICT_FRAMES), 4)),
+                pinned_frames=pinned_frames,
+            )
+            memory_buffer.set_scores(scores)
+            evicted = memory_buffer.evict_to_budget(protected_frames=protected_frames)
+            memory = set(memory_buffer.candidates())
+        else:
+            raise ValueError(f"Unsupported policy: {policy}")
+
+        if policy != "ri":
+            memory.difference_update(evicted)
+
+    summary = sum_metrics(section_metrics)
+    summary.update(
+        {
+            "row": item["_row"],
+            "scene": item["scene"],
+            "start_frame": item["start_frame"],
+            "duration_sec": item["duration_sec"],
+            "policy": policy,
+            "budget": budget if budget is not None else "unbounded",
+            "sections_evaluated": len(section_metrics),
+            "final_memory_size": len(memory),
+        }
+    )
+    return summary, trace_rows
+
+
+def write_csv(path, rows):
+    if not rows:
+        return
+    fieldnames = list(rows[0].keys())
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_jsonl(path, rows):
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def aggregate_rows(rows):
+    grouped = {}
+    for row in rows:
+        key = (row["policy"], row["budget"], row["duration_sec"])
+        grouped.setdefault(key, []).append(row)
+
+    aggregates = []
+    for (policy, budget, duration_sec), group in sorted(grouped.items(), key=lambda x: str(x[0])):
+        totals = sum_metrics(group)
+        aggregates.append(
+            {
+                "policy": policy,
+                "budget": budget,
+                "duration_sec": duration_sec,
+                "videos": len(group),
+                "sections_evaluated": sum(row["sections_evaluated"] for row in group),
+                **totals,
+            }
+        )
+    return aggregates
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Offline memory-policy analysis using Context-as-Memory overlap labels."
+    )
+    parser.add_argument("--manifest", type=Path, default=Path("testbeds/context_memory/manifest.jsonl"))
+    parser.add_argument("--dataset_root", type=Path, default=None)
+    parser.add_argument("--output_dir", type=Path, default=Path("/data/ab575577/MemCam/analysis/context_memory"))
+    parser.add_argument("--durations", type=str, default="10")
+    parser.add_argument("--rows", type=str, default=None)
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--budgets", type=str, default="32")
+    parser.add_argument("--policies", type=str, default="unbounded,fifo,ri,belady")
+    args = parser.parse_args()
+
+    items = load_manifest(args.manifest)
+    selected = select_rows(
+        items=items,
+        row_filter=parse_rows(args.rows),
+        durations=parse_int_list(args.durations),
+        limit=args.limit,
+    )
+    if not selected:
+        raise RuntimeError("No manifest rows selected.")
+
+    policies = parse_str_list(args.policies)
+    budgets = parse_int_list(args.budgets) or []
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_rows = []
+    trace_rows = []
+    for item in selected:
+        print(
+            f"[analysis row {item['_row']}] {item['scene']} "
+            f"start={item['start_frame']} duration={item['duration_sec']}s"
+        )
+        overlap_map = load_overlap_map(
+            overlap_dir=resolve_overlap_dir(item, args.dataset_root),
+            start_frame=int(item["start_frame"]),
+            num_frames=int(item["num_frames"]),
+        )
+        c2ws = None
+        if "ri" in policies:
+            c2ws = load_c2ws_from_json(
+                json_path=item["pose_path"],
+                start_frame=int(item["start_frame"]),
+                num_frames=int(item["num_frames"]),
+            )
+
+        for policy in policies:
+            policy_budgets = [None] if policy == "unbounded" else budgets
+            for budget in policy_budgets:
+                summary, traces = simulate_row(
+                    item=item,
+                    policy=policy,
+                    budget=budget,
+                    overlap_map=overlap_map,
+                    c2ws=c2ws,
+                )
+                summary_rows.append(summary)
+                trace_rows.extend(traces)
+                print(
+                    f"  {policy} b={summary['budget']} "
+                    f"coverage={summary['coverage']:.4f} "
+                    f"possible={summary['possible_coverage']:.4f} "
+                    f"recall={summary['oracle_recall']:.4f}"
+                )
+
+    aggregate_summary_rows = aggregate_rows(summary_rows)
+    write_csv(args.output_dir / "policy_summary.csv", summary_rows)
+    write_csv(args.output_dir / "policy_aggregate.csv", aggregate_summary_rows)
+    write_jsonl(args.output_dir / "policy_traces.jsonl", trace_rows)
+
+    with (args.output_dir / "policy_aggregate.json").open("w", encoding="utf-8") as handle:
+        json.dump(aggregate_summary_rows, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+    print(f"Wrote: {args.output_dir / 'policy_summary.csv'}")
+    print(f"Wrote: {args.output_dir / 'policy_aggregate.csv'}")
+    print(f"Wrote: {args.output_dir / 'policy_aggregate.json'}")
+    print(f"Wrote: {args.output_dir / 'policy_traces.jsonl'}")
+
+
+if __name__ == "__main__":
+    main()

@@ -63,6 +63,27 @@ Metric direction:
 - Higher is better: `psnr_db`, `ssim`, `dino_cosine`, `clip_image_cosine`.
 - Lower is better: `mae`, `rmse`, `lpips_alex`, `dino_distance`, `clip_image_distance`, temporal delta errors.
 
+Run offline memory-policy analysis with a Belady oracle:
+
+```bash
+cd ~/MemCam
+
+python utils/analyze_memory_policies.py \
+  --manifest testbeds/context_memory/manifest.jsonl \
+  --dataset_root /data/ab575577/Context-as-Memory-Dataset/Context-as-Memory-Dataset \
+  --durations 10 \
+  --budgets 32 \
+  --policies unbounded,fifo,ri,belady
+```
+
+Main outputs:
+
+```bash
+/data/ab575577/MemCam/analysis/context_memory/policy_aggregate.csv
+/data/ab575577/MemCam/analysis/context_memory/policy_summary.csv
+/data/ab575577/MemCam/analysis/context_memory/policy_traces.jsonl
+```
+
 Use separate output folders per memory policy:
 
 ```bash
