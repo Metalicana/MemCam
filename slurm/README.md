@@ -23,6 +23,26 @@ cd ~/MemCam
 sbatch slurm/newton_memcam_h100_20s_array.sbatch
 ```
 
+Run the 20s rows as three separate policy jobs:
+
+```bash
+cd ~/MemCam
+
+POLICY=baseline \
+MEMORY_POLICY=unbounded \
+sbatch slurm/newton_memcam_h100_20s_policy_array.sbatch
+
+POLICY=fifo_b32 \
+MEMORY_POLICY=fifo \
+MEMORY_BUDGET=32 \
+sbatch slurm/newton_memcam_h100_20s_policy_array.sbatch
+
+POLICY=ri_b32_dino_rgb \
+MEMORY_POLICY=rarity_irreplaceability \
+MEMORY_BUDGET=32 \
+sbatch slurm/newton_memcam_h100_20s_policy_array.sbatch
+```
+
 On the current cluster, run only the 10s rows:
 
 ```bash
