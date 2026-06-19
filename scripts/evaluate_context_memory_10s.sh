@@ -15,7 +15,8 @@ LEARNED_IMAGE_SIZE="${LEARNED_IMAGE_SIZE:-224}"
 FVD_CLIP_LENGTH="${FVD_CLIP_LENGTH:-16}"
 FVD_CLIPS_PER_VIDEO="${FVD_CLIPS_PER_VIDEO:-4}"
 FVD_FRAME_STRIDE="${FVD_FRAME_STRIDE:-4}"
-FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-224}"
+FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-112}"
+FVD_BACKEND="${FVD_BACKEND:-torchvision_r3d18}"
 
 cd "$MEMCAM_ROOT"
 
@@ -35,6 +36,7 @@ cmd=(
   --fvd_clips_per_video "$FVD_CLIPS_PER_VIDEO"
   --fvd_frame_stride "$FVD_FRAME_STRIDE"
   --fvd_image_size "$FVD_IMAGE_SIZE"
+  --fvd_backend "$FVD_BACKEND"
 )
 
 if [ -n "$DATASET_ROOT" ]; then

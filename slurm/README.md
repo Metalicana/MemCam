@@ -61,7 +61,7 @@ RUN_NAME=fifo_b32 bash scripts/evaluate_context_memory_10s.sh
 Run the metrics we actually care about for a completed 10s policy run:
 
 ```bash
-python -m pip install --no-cache-dir lpips torchmetrics torch-fidelity
+python -m pip install --no-cache-dir lpips
 
 RUN_NAME=ri_b32_dino_rgb \
 LEARNED_METRICS=lpips,dino,fvd \
@@ -73,6 +73,7 @@ The compact report metrics are:
 
 - Lower is better: `mse`, `dino_distance`, `lpips_alex`, `fvd`.
 - Higher is better: `ssim`.
+- Current `fvd` uses a `torchvision_r3d18` Kinetics video-feature backend, recorded in `summary.json`.
 
 Copy a tab-separated summary for Excel:
 

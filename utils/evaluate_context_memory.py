@@ -349,21 +349,16 @@ class FVDRunner:
         self,
         device="cuda",
         batch_size=4,
-        image_size=224,
+        image_size=112,
         clip_length=16,
         clips_per_video=4,
         frame_stride=4,
-        feature=None,
+        backend="torchvision_r3d18",
     ):
         import torch
 
-        try:
-            from torchmetrics.video.fvd import FrechetVideoDistance
-        except ImportError as exc:
-            raise RuntimeError(
-                "FVD requested but torchmetrics is not installed. On the cluster run: "
-                "python -m pip install --no-cache-dir torchmetrics torch-fidelity"
-            ) from exc
+        if backend != "torchvision_r3d18":
+            raise ValueError(f"Unsupported FVD backend: {backend}")
 
         if clip_length < 2:
             raise ValueError("--fvd_clip_length must be >= 2")
@@ -377,18 +372,26 @@ class FVDRunner:
             print("CUDA requested for FVD but unavailable; using CPU.")
             device = "cpu"
         self.device = torch.device(device)
-        self.metric_class = FrechetVideoDistance
         self.batch_size = batch_size
         self.image_size = image_size
         self.clip_length = clip_length
         self.clips_per_video = clips_per_video
         self.frame_stride = frame_stride
-        self.feature = feature
+        self.backend = backend
+        self.feature_model = self._build_feature_model()
+        self.mean = torch.tensor([0.43216, 0.394666, 0.37645], device=self.device).view(
+            1, 3, 1, 1, 1
+        )
+        self.std = torch.tensor([0.22803, 0.22145, 0.216989], device=self.device).view(
+            1, 3, 1, 1, 1
+        )
 
-    def _new_metric(self):
-        if self.feature is None:
-            return self.metric_class().to(self.device)
-        return self.metric_class(feature=self.feature).to(self.device)
+    def _build_feature_model(self):
+        from torchvision.models.video import R3D_18_Weights, r3d_18
+
+        model = r3d_18(weights=R3D_18_Weights.KINETICS400_V1)
+        model.fc = self.torch.nn.Identity()
+        return model.eval().to(self.device)
 
     def _sample_starts(self, num_frames):
         span = (self.clip_length - 1) * self.frame_stride + 1
@@ -462,16 +465,50 @@ class FVDRunner:
                 gt_clips.append(np.stack([gt_frames[index] for index in indices]))
         return gen_clips, gt_clips
 
-    def _update_metric(self, metric, gen_batch, gt_batch):
-        gen_tensor = self.torch.from_numpy(np.stack(gen_batch)).to(self.device)
-        gt_tensor = self.torch.from_numpy(np.stack(gt_batch)).to(self.device)
-        metric.update(gt_tensor, real=True)
-        metric.update(gen_tensor, real=False)
+    def _clip_tensor(self, clips):
+        tensor = self.torch.from_numpy(np.stack(clips)).float().to(self.device)
+        tensor = tensor.permute(0, 2, 1, 3, 4) / 255.0
+        return (tensor - self.mean) / self.std
+
+    def _encode_batch(self, clips):
+        tensor = self._clip_tensor(clips)
+        with self.torch.inference_mode():
+            features = self.feature_model(tensor)
+        return features.float().detach().cpu().numpy()
+
+    def _append_features(self, feature_rows, clips):
+        for start in range(0, len(clips), self.batch_size):
+            feature_rows.append(self._encode_batch(clips[start : start + self.batch_size]))
+
+    def _frechet_distance(self, real_features, generated_features):
+        from scipy import linalg
+
+        real_features = np.asarray(real_features, dtype=np.float64)
+        generated_features = np.asarray(generated_features, dtype=np.float64)
+        real_mu = np.mean(real_features, axis=0)
+        generated_mu = np.mean(generated_features, axis=0)
+        real_sigma = np.cov(real_features, rowvar=False)
+        generated_sigma = np.cov(generated_features, rowvar=False)
+
+        diff = real_mu - generated_mu
+        covmean = linalg.sqrtm(real_sigma.dot(generated_sigma))
+        if not np.isfinite(covmean).all():
+            eps = 1e-6
+            covmean = linalg.sqrtm(
+                (real_sigma + np.eye(real_sigma.shape[0]) * eps).dot(
+                    generated_sigma + np.eye(generated_sigma.shape[0]) * eps
+                )
+            )
+        if np.iscomplexobj(covmean):
+            covmean = covmean.real
+        value = diff.dot(diff) + np.trace(real_sigma + generated_sigma - 2.0 * covmean)
+        return max(float(value), 0.0)
 
     def compute_group(self, items, model_output_dir, dataset_root, max_frames=None):
-        metric = self._new_metric()
         gen_batch = []
         gt_batch = []
+        gen_features = []
+        gt_features = []
         clip_count = 0
 
         for item in items:
@@ -486,17 +523,19 @@ class FVDRunner:
                 gt_batch.append(gt_clip)
                 clip_count += 1
                 if len(gen_batch) >= self.batch_size:
-                    self._update_metric(metric, gen_batch, gt_batch)
+                    self._append_features(gen_features, gen_batch)
+                    self._append_features(gt_features, gt_batch)
                     gen_batch.clear()
                     gt_batch.clear()
 
         if gen_batch:
-            self._update_metric(metric, gen_batch, gt_batch)
+            self._append_features(gen_features, gen_batch)
+            self._append_features(gt_features, gt_batch)
 
         if clip_count < 2:
             return None, clip_count
-        value = metric.compute().detach().cpu().item()
-        return float(value), clip_count
+        value = self._frechet_distance(np.concatenate(gt_features), np.concatenate(gen_features))
+        return value, clip_count
 
 
 def mean_or_none(values):
@@ -747,7 +786,13 @@ def main():
     parser.add_argument("--fvd_clip_length", type=int, default=16)
     parser.add_argument("--fvd_clips_per_video", type=int, default=4)
     parser.add_argument("--fvd_frame_stride", type=int, default=4)
-    parser.add_argument("--fvd_image_size", type=int, default=224)
+    parser.add_argument("--fvd_image_size", type=int, default=112)
+    parser.add_argument(
+        "--fvd_backend",
+        type=str,
+        default="torchvision_r3d18",
+        choices=["torchvision_r3d18"],
+    )
     parser.add_argument("--write_frame_metrics", action="store_true")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
@@ -779,6 +824,7 @@ def main():
             clip_length=args.fvd_clip_length,
             clips_per_video=args.fvd_clips_per_video,
             frame_stride=args.fvd_frame_stride,
+            backend=args.fvd_backend,
         )
     metric_fields = BASE_METRIC_FIELDS + (
         learned_runner.fields if learned_runner is not None else []
@@ -882,6 +928,7 @@ def main():
         )
         summary["overall"]["fvd"] = fvd_value
         summary["overall"]["fvd_clips"] = fvd_clips
+        summary["overall"]["fvd_backend"] = fvd_runner.backend
 
         for duration, duration_summary in summary["by_duration"].items():
             duration_items = [
@@ -897,6 +944,7 @@ def main():
             )
             duration_summary["fvd"] = duration_fvd
             duration_summary["fvd_clips"] = duration_fvd_clips
+            duration_summary["fvd_backend"] = fvd_runner.backend
 
     summary["metric_config"] = {
         "learned_metrics": learned_metric_names,
@@ -909,6 +957,7 @@ def main():
         "fvd_clips_per_video": args.fvd_clips_per_video,
         "fvd_frame_stride": args.fvd_frame_stride,
         "fvd_image_size": args.fvd_image_size,
+        "fvd_backend": args.fvd_backend,
         "frame_stride": args.frame_stride,
         "max_frames": args.max_frames,
     }
