@@ -595,27 +595,37 @@ class FVDRunner:
             feature_rows.append(self._encode_batch(clips[start : start + self.batch_size]))
 
     def _frechet_distance(self, real_features, generated_features):
-        from scipy import linalg
-
         real_features = np.asarray(real_features, dtype=np.float64)
         generated_features = np.asarray(generated_features, dtype=np.float64)
         real_mu = np.mean(real_features, axis=0)
         generated_mu = np.mean(generated_features, axis=0)
         real_sigma = np.atleast_2d(np.cov(real_features, rowvar=False))
         generated_sigma = np.atleast_2d(np.cov(generated_features, rowvar=False))
+        real_sigma = self._symmetric_matrix(real_sigma)
+        generated_sigma = self._symmetric_matrix(generated_sigma)
 
         diff = real_mu - generated_mu
-        covmean = linalg.sqrtm(real_sigma.dot(generated_sigma))
-        if not np.isfinite(covmean).all():
-            covmean = linalg.sqrtm(
-                (real_sigma + np.eye(real_sigma.shape[0]) * self.eps).dot(
-                    generated_sigma + np.eye(generated_sigma.shape[0]) * self.eps
-                )
-            )
-        if np.iscomplexobj(covmean):
-            covmean = covmean.real
-        value = diff.dot(diff) + np.trace(real_sigma + generated_sigma - 2.0 * covmean)
-        return max(float(value), 0.0)
+        trace_covmean = self._trace_sqrt_product(real_sigma, generated_sigma)
+        value = diff.dot(diff) + np.trace(real_sigma) + np.trace(generated_sigma)
+        value = value - 2.0 * trace_covmean
+        if value < 0.0:
+            return 0.0
+        return float(value)
+
+    @staticmethod
+    def _symmetric_matrix(matrix):
+        return 0.5 * (matrix + matrix.T)
+
+    def _trace_sqrt_product(self, sigma_a, sigma_b):
+        sigma_a = self._symmetric_matrix(sigma_a)
+        sigma_b = self._symmetric_matrix(sigma_b)
+        eigvals, eigvecs = np.linalg.eigh(sigma_a)
+        eigvals = np.clip(eigvals, 0.0, None)
+        sigma_a_sqrt = (eigvecs * np.sqrt(eigvals)).dot(eigvecs.T)
+        product = sigma_a_sqrt.dot(sigma_b).dot(sigma_a_sqrt)
+        product = self._symmetric_matrix(product)
+        product_eigvals = np.linalg.eigvalsh(product)
+        return float(np.sum(np.sqrt(np.clip(product_eigvals, 0.0, None))))
 
     def compute_group(self, items, model_output_dir, dataset_root, max_frames=None):
         gen_batch = []

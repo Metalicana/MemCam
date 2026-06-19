@@ -46,6 +46,12 @@ def main():
     shifted_fvd = fvd_runner._frechet_distance(features, features + 1.0)
     assert shifted_fvd > 0.0
 
+    rng = np.random.default_rng(0)
+    rank_deficient = rng.normal(size=(6, 32))
+    perturbed = rank_deficient + rng.normal(scale=0.1, size=rank_deficient.shape)
+    assert abs(fvd_runner._frechet_distance(rank_deficient, rank_deficient.copy())) < 1e-8
+    assert fvd_runner._frechet_distance(rank_deficient, perturbed) > 0.0
+
     print("evaluation metric checks passed")
 
 
