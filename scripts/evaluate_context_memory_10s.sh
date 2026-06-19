@@ -12,6 +12,10 @@ LEARNED_METRICS="${LEARNED_METRICS:-none}"
 METRIC_DEVICE="${METRIC_DEVICE:-cuda}"
 METRIC_BATCH_SIZE="${METRIC_BATCH_SIZE:-8}"
 LEARNED_IMAGE_SIZE="${LEARNED_IMAGE_SIZE:-224}"
+FVD_CLIP_LENGTH="${FVD_CLIP_LENGTH:-16}"
+FVD_CLIPS_PER_VIDEO="${FVD_CLIPS_PER_VIDEO:-4}"
+FVD_FRAME_STRIDE="${FVD_FRAME_STRIDE:-4}"
+FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-224}"
 
 cd "$MEMCAM_ROOT"
 
@@ -27,6 +31,10 @@ cmd=(
   --metric_device "$METRIC_DEVICE"
   --metric_batch_size "$METRIC_BATCH_SIZE"
   --learned_image_size "$LEARNED_IMAGE_SIZE"
+  --fvd_clip_length "$FVD_CLIP_LENGTH"
+  --fvd_clips_per_video "$FVD_CLIPS_PER_VIDEO"
+  --fvd_frame_stride "$FVD_FRAME_STRIDE"
+  --fvd_image_size "$FVD_IMAGE_SIZE"
 )
 
 if [ -n "$DATASET_ROOT" ]; then

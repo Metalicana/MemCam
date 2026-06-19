@@ -27,7 +27,10 @@ LEARNED_METRIC_FIELDS = {
     "dino": ["dino_cosine", "dino_distance"],
     "clip": ["clip_image_cosine", "clip_image_distance"],
 }
-SUPPORTED_LEARNED_METRICS = tuple(LEARNED_METRIC_FIELDS.keys())
+VIDEO_DISTRIBUTION_METRICS = {"fvd"}
+SUPPORTED_LEARNED_METRICS = tuple(LEARNED_METRIC_FIELDS.keys()) + tuple(
+    sorted(VIDEO_DISTRIBUTION_METRICS)
+)
 
 
 def get_imageio():
@@ -341,6 +344,161 @@ class LearnedMetricRunner:
         return results
 
 
+class FVDRunner:
+    def __init__(
+        self,
+        device="cuda",
+        batch_size=4,
+        image_size=224,
+        clip_length=16,
+        clips_per_video=4,
+        frame_stride=4,
+        feature=None,
+    ):
+        import torch
+
+        try:
+            from torchmetrics.video.fvd import FrechetVideoDistance
+        except ImportError as exc:
+            raise RuntimeError(
+                "FVD requested but torchmetrics is not installed. On the cluster run: "
+                "python -m pip install --no-cache-dir torchmetrics torch-fidelity"
+            ) from exc
+
+        if clip_length < 2:
+            raise ValueError("--fvd_clip_length must be >= 2")
+        if clips_per_video < 1:
+            raise ValueError("--fvd_clips_per_video must be >= 1")
+        if frame_stride < 1:
+            raise ValueError("--fvd_frame_stride must be >= 1")
+
+        self.torch = torch
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            print("CUDA requested for FVD but unavailable; using CPU.")
+            device = "cpu"
+        self.device = torch.device(device)
+        self.metric_class = FrechetVideoDistance
+        self.batch_size = batch_size
+        self.image_size = image_size
+        self.clip_length = clip_length
+        self.clips_per_video = clips_per_video
+        self.frame_stride = frame_stride
+        self.feature = feature
+
+    def _new_metric(self):
+        if self.feature is None:
+            return self.metric_class().to(self.device)
+        return self.metric_class(feature=self.feature).to(self.device)
+
+    def _sample_starts(self, num_frames):
+        span = (self.clip_length - 1) * self.frame_stride + 1
+        if num_frames < span:
+            return []
+        max_start = num_frames - span
+        if self.clips_per_video == 1:
+            return [max_start // 2]
+        starts = np.linspace(0, max_start, self.clips_per_video)
+        return sorted({int(round(start)) for start in starts})
+
+    def _to_clip_frame(self, frame):
+        frame = resize_for_metric(normalize_video_frame(frame), self.image_size)
+        return np.transpose(frame, (2, 0, 1))
+
+    def _read_generated_frames(self, video_path, indices):
+        imageio = get_imageio()
+        reader = imageio.get_reader(str(video_path))
+        wanted = set(indices)
+        frames = {}
+        last_index = max(wanted)
+        try:
+            for frame_index, frame in enumerate(reader):
+                if frame_index > last_index:
+                    break
+                if frame_index in wanted:
+                    frames[frame_index] = self._to_clip_frame(frame)
+        finally:
+            reader.close()
+        return frames
+
+    def _read_gt_frames(self, item, dataset_root, indices):
+        gt_frames_dir = resolve_gt_frames_dir(item, dataset_root)
+        frames = {}
+        for frame_index in indices:
+            gt_index = int(item["start_frame"]) + frame_index
+            gt_path = gt_frames_dir / f"{gt_index:04d}.png"
+            if not gt_path.exists():
+                raise FileNotFoundError(f"Missing ground-truth frame: {gt_path}")
+            frames[frame_index] = self._to_clip_frame(
+                read_gt_frame(gt_path, (self.image_size, self.image_size))
+            )
+        return frames
+
+    def _load_item_clips(self, item, model_output_dir, dataset_root, max_frames):
+        video_path = output_path(model_output_dir, item)
+        if not video_path.exists():
+            return [], []
+
+        num_frames = int(item["num_frames"])
+        if max_frames is not None:
+            num_frames = min(num_frames, max_frames)
+
+        starts = self._sample_starts(num_frames)
+        if not starts:
+            return [], []
+
+        clip_indices = [
+            [start + offset * self.frame_stride for offset in range(self.clip_length)]
+            for start in starts
+        ]
+        flat_indices = sorted({index for indices in clip_indices for index in indices})
+        gen_frames = self._read_generated_frames(video_path, flat_indices)
+        gt_frames = self._read_gt_frames(item, dataset_root, flat_indices)
+
+        gen_clips = []
+        gt_clips = []
+        for indices in clip_indices:
+            if all(index in gen_frames for index in indices):
+                gen_clips.append(np.stack([gen_frames[index] for index in indices]))
+                gt_clips.append(np.stack([gt_frames[index] for index in indices]))
+        return gen_clips, gt_clips
+
+    def _update_metric(self, metric, gen_batch, gt_batch):
+        gen_tensor = self.torch.from_numpy(np.stack(gen_batch)).to(self.device)
+        gt_tensor = self.torch.from_numpy(np.stack(gt_batch)).to(self.device)
+        metric.update(gt_tensor, real=True)
+        metric.update(gen_tensor, real=False)
+
+    def compute_group(self, items, model_output_dir, dataset_root, max_frames=None):
+        metric = self._new_metric()
+        gen_batch = []
+        gt_batch = []
+        clip_count = 0
+
+        for item in items:
+            gen_clips, gt_clips = self._load_item_clips(
+                item=item,
+                model_output_dir=model_output_dir,
+                dataset_root=dataset_root,
+                max_frames=max_frames,
+            )
+            for gen_clip, gt_clip in zip(gen_clips, gt_clips):
+                gen_batch.append(gen_clip)
+                gt_batch.append(gt_clip)
+                clip_count += 1
+                if len(gen_batch) >= self.batch_size:
+                    self._update_metric(metric, gen_batch, gt_batch)
+                    gen_batch.clear()
+                    gt_batch.clear()
+
+        if gen_batch:
+            self._update_metric(metric, gen_batch, gt_batch)
+
+        if clip_count < 2:
+            return None, clip_count
+        value = metric.compute().detach().cpu().item()
+        return float(value), clip_count
+
+
 def mean_or_none(values):
     values = [value for value in values if value is not None]
     if not values:
@@ -586,6 +744,10 @@ def main():
     parser.add_argument("--metric_device", type=str, default="cuda")
     parser.add_argument("--metric_batch_size", type=int, default=8)
     parser.add_argument("--learned_image_size", type=int, default=224)
+    parser.add_argument("--fvd_clip_length", type=int, default=16)
+    parser.add_argument("--fvd_clips_per_video", type=int, default=4)
+    parser.add_argument("--fvd_frame_stride", type=int, default=4)
+    parser.add_argument("--fvd_image_size", type=int, default=224)
     parser.add_argument("--write_frame_metrics", action="store_true")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
@@ -596,13 +758,27 @@ def main():
         raise ValueError("--metric_batch_size must be >= 1")
 
     learned_metric_names = parse_learned_metrics(args.learned_metrics)
+    fvd_requested = "fvd" in learned_metric_names
+    frame_learned_metric_names = [
+        metric_name for metric_name in learned_metric_names if metric_name != "fvd"
+    ]
     learned_runner = None
-    if learned_metric_names:
+    if frame_learned_metric_names:
         learned_runner = LearnedMetricRunner(
-            metric_names=learned_metric_names,
+            metric_names=frame_learned_metric_names,
             device=args.metric_device,
             batch_size=args.metric_batch_size,
             image_size=args.learned_image_size,
+        )
+    fvd_runner = None
+    if fvd_requested:
+        fvd_runner = FVDRunner(
+            device=args.metric_device,
+            batch_size=args.metric_batch_size,
+            image_size=args.fvd_image_size,
+            clip_length=args.fvd_clip_length,
+            clips_per_video=args.fvd_clips_per_video,
+            frame_stride=args.fvd_frame_stride,
         )
     metric_fields = BASE_METRIC_FIELDS + (
         learned_runner.fields if learned_runner is not None else []
@@ -690,11 +866,49 @@ def main():
     write_jsonl(metrics_jsonl, results)
     write_csv(metrics_csv, results, metric_fields)
     summary = build_summary(results, metric_fields)
+    if fvd_runner is not None:
+        completed_rows = {
+            row["row"]
+            for row in results
+            if row["status"] in {"completed", "short_video"}
+        }
+        completed_items = [item for item in selected if item["_row"] in completed_rows]
+        print("Computing FVD over completed videos...")
+        fvd_value, fvd_clips = fvd_runner.compute_group(
+            items=completed_items,
+            model_output_dir=args.model_output_dir,
+            dataset_root=args.dataset_root,
+            max_frames=args.max_frames,
+        )
+        summary["overall"]["fvd"] = fvd_value
+        summary["overall"]["fvd_clips"] = fvd_clips
+
+        for duration, duration_summary in summary["by_duration"].items():
+            duration_items = [
+                item
+                for item in completed_items
+                if int(item["duration_sec"]) == int(duration)
+            ]
+            duration_fvd, duration_fvd_clips = fvd_runner.compute_group(
+                items=duration_items,
+                model_output_dir=args.model_output_dir,
+                dataset_root=args.dataset_root,
+                max_frames=args.max_frames,
+            )
+            duration_summary["fvd"] = duration_fvd
+            duration_summary["fvd_clips"] = duration_fvd_clips
+
     summary["metric_config"] = {
         "learned_metrics": learned_metric_names,
+        "frame_learned_metrics": frame_learned_metric_names,
+        "video_distribution_metrics": ["fvd"] if fvd_requested else [],
         "metric_device": args.metric_device,
         "metric_batch_size": args.metric_batch_size,
         "learned_image_size": args.learned_image_size,
+        "fvd_clip_length": args.fvd_clip_length,
+        "fvd_clips_per_video": args.fvd_clips_per_video,
+        "fvd_frame_stride": args.fvd_frame_stride,
+        "fvd_image_size": args.fvd_image_size,
         "frame_stride": args.frame_stride,
         "max_frames": args.max_frames,
     }

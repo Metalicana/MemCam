@@ -58,30 +58,42 @@ RUN_NAME=baseline bash scripts/evaluate_context_memory_10s.sh
 RUN_NAME=fifo_b32 bash scripts/evaluate_context_memory_10s.sh
 ```
 
-Run perceptual/semantic metrics for a completed 10s policy run:
+Run the metrics we actually care about for a completed 10s policy run:
 
 ```bash
-RUN_NAME=ri_b32 \
-LEARNED_METRICS=dino,clip \
+python -m pip install --no-cache-dir lpips torchmetrics torch-fidelity
+
+RUN_NAME=ri_b32_dino_rgb \
+LEARNED_METRICS=lpips,dino,fvd \
 FRAME_STRIDE=4 \
 bash scripts/evaluate_context_memory_10s.sh
 ```
 
-LPIPS is also supported, but needs the extra package in the active env:
+The compact report metrics are:
+
+- Lower is better: `mse`, `dino_distance`, `lpips_alex`, `fvd`.
+- Higher is better: `ssim`.
+
+Copy a tab-separated summary for Excel:
 
 ```bash
-pip install lpips
+python - <<'PY'
+import json
+from pathlib import Path
 
-RUN_NAME=ri_b32 \
-LEARNED_METRICS=lpips,dino,clip \
-FRAME_STRIDE=4 \
-bash scripts/evaluate_context_memory_10s.sh
+root = Path("/data/ab575577/MemCam/eval/context_memory")
+runs = ["baseline", "fifo_b32", "ri_b32_dino_rgb"]
+fields = ["mse", "ssim", "dino_distance", "lpips_alex", "fvd"]
+print("run\t" + "\t".join(fields))
+for run in runs:
+    data = json.loads((root / run / "summary.json").read_text())
+    overall = data["overall"]
+    print(run + "\t" + "\t".join(
+        "" if overall.get(field) is None else f"{overall[field]:.4f}"
+        for field in fields
+    ))
+PY
 ```
-
-Metric direction:
-
-- Higher is better: `psnr_db`, `ssim`, `dino_cosine`, `clip_image_cosine`.
-- Lower is better: `mae`, `rmse`, `lpips_alex`, `dino_distance`, `clip_image_distance`, temporal delta errors.
 
 Run offline memory-policy analysis with a Belady oracle:
 
