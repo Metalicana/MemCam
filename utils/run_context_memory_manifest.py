@@ -88,9 +88,13 @@ def main():
         command.extend(["--memory_budget", str(args.memory_budget)])
 
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = args.gpu
+    visible_gpu = env.get("CUDA_VISIBLE_DEVICES")
+    if not visible_gpu:
+        env["CUDA_VISIBLE_DEVICES"] = args.gpu
+        visible_gpu = args.gpu
 
-    print(f"Running manifest row {args.row} on GPU {args.gpu}")
+    print(f"Running manifest row {args.row} on requested GPU arg {args.gpu}")
+    print(f"CUDA_VISIBLE_DEVICES: {visible_gpu}")
     print(f"Scene: {item['scene']}")
     print(f"Start frame: {item['start_frame']}")
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")

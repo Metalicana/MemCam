@@ -133,7 +133,12 @@ def main():
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    slurm_gpu = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if slurm_gpu:
+        visible_gpu = slurm_gpu
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+        visible_gpu = args.gpu
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     num_inference_steps = 20 if args.smoke else args.num_inference_steps
@@ -195,7 +200,8 @@ def main():
 
     print(f"Selected rows: {len(selected)}")
     print(f"Pending rows: {len(pending)}")
-    print(f"GPU: {args.gpu}")
+    print(f"Requested GPU arg: {args.gpu}")
+    print(f"CUDA_VISIBLE_DEVICES: {visible_gpu}")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
     print(f"Output dir: {output_dir}")
