@@ -72,6 +72,31 @@ def append_jsonl(path, payload):
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def assert_video_writer_available(output_dir):
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError(
+            "Video writer preflight failed before model loading. Install imageio and numpy."
+        ) from exc
+
+    probe_path = output_dir / ".ffmpeg_preflight.mp4"
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    try:
+        writer = imageio.get_writer(str(probe_path), format="FFMPEG", fps=1, quality=5)
+        writer.append_data(frame)
+        writer.close()
+    except Exception as exc:
+        raise RuntimeError(
+            "Video writer preflight failed before model loading. On Newton run: "
+            "conda activate memcam && python -m pip install --no-cache-dir "
+            "'imageio[ffmpeg]' imageio-ffmpeg"
+        ) from exc
+    finally:
+        probe_path.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run Context-as-Memory manifest rows sequentially with one loaded model."
@@ -150,6 +175,8 @@ def main():
     if not pending:
         print("No pending rows.")
         return
+
+    assert_video_writer_available(output_dir)
 
     # Import after CUDA_VISIBLE_DEVICES is set.
     from PIL import Image

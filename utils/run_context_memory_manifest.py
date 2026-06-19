@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from utils.run_context_memory_batch import assert_video_writer_available
+
 
 def read_manifest_row(manifest_path, row_index):
     with manifest_path.open("r", encoding="utf-8") as handle:
@@ -43,6 +45,7 @@ def main():
     num_inference_steps = 20 if args.smoke else args.num_inference_steps
     output_dir = args.output_dir / "smoke" if args.smoke else args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    assert_video_writer_available(output_dir)
     access_trace_dir = args.access_trace_dir or (output_dir / "access_traces")
     access_trace_dir.mkdir(parents=True, exist_ok=True)
     access_trace_path = access_trace_dir / f"{item['output_prefix']}custom.jsonl"

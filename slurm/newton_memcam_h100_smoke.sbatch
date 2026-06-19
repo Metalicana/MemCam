@@ -10,13 +10,16 @@
 
 set -euo pipefail
 
+module load cuda
+module load ffmpeg
 module load anaconda
 conda activate memcam
 
 export TOKENIZERS_PARALLELISM=false
-export HF_HOME="${HF_HOME:-/scratch/$USER/.cache/huggingface}"
+export HF_HOME="${HF_HOME:-$HOME/hf_cache}"
 export TRANSFORMERS_CACHE="$HF_HOME"
 export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+mkdir -p "$HF_HOME"
 
 MEMCAM_ROOT="${MEMCAM_ROOT:-$HOME/MemCam}"
 MANIFEST="${MANIFEST:-$MEMCAM_ROOT/testbeds/context_memory/manifest.jsonl}"
