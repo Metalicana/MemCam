@@ -2,6 +2,8 @@ import argparse
 import csv
 import json
 import math
+import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +33,8 @@ VIDEO_DISTRIBUTION_METRICS = {"fvd"}
 SUPPORTED_LEARNED_METRICS = tuple(LEARNED_METRIC_FIELDS.keys()) + tuple(
     sorted(VIDEO_DISTRIBUTION_METRICS)
 )
+FVD_I3D_DETECTOR_URL = "https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt?dl=1"
+FVD_I3D_BACKENDS = {"styleganv_i3d", "i3d_torchscript"}
 
 
 def get_imageio():
@@ -111,7 +115,7 @@ def resolve_gt_frames_dir(item, dataset_root):
 def read_gt_frame(path, size):
     with Image.open(path) as image:
         image = image.convert("RGB")
-        if image.size != size:
+        if size is not None and image.size != size:
             image = image.resize(size, resample=Image.BICUBIC)
         return np.asarray(image, dtype=np.uint8)
 
@@ -349,15 +353,22 @@ class FVDRunner:
         self,
         device="cuda",
         batch_size=4,
-        image_size=112,
+        image_size=224,
         clip_length=16,
         clips_per_video=4,
-        frame_stride=4,
-        backend="torchvision_r3d18",
+        frame_stride=1,
+        backend="styleganv_i3d",
+        detector_path=None,
+        detector_url=FVD_I3D_DETECTOR_URL,
+        cache_dir=None,
+        allow_download=True,
+        pca_dim=None,
+        eps=1e-6,
     ):
         import torch
 
-        if backend != "torchvision_r3d18":
+        backend = "styleganv_i3d" if backend == "i3d_torchscript" else backend
+        if backend not in FVD_I3D_BACKENDS and backend != "torchvision_r3d18":
             raise ValueError(f"Unsupported FVD backend: {backend}")
 
         if clip_length < 2:
@@ -366,6 +377,10 @@ class FVDRunner:
             raise ValueError("--fvd_clips_per_video must be >= 1")
         if frame_stride < 1:
             raise ValueError("--fvd_frame_stride must be >= 1")
+        if image_size < 1:
+            raise ValueError("--fvd_image_size must be >= 1")
+        if pca_dim is not None and backend in FVD_I3D_BACKENDS:
+            print("Warning: --fvd_pca_dim is ignored for canonical I3D FVD.")
 
         self.torch = torch
         if device.startswith("cuda") and not torch.cuda.is_available():
@@ -378,20 +393,98 @@ class FVDRunner:
         self.clips_per_video = clips_per_video
         self.frame_stride = frame_stride
         self.backend = backend
+        self.detector_path = Path(detector_path).expanduser() if detector_path else None
+        self.detector_url = detector_url
+        self.cache_dir = Path(cache_dir).expanduser() if cache_dir else self._default_cache_dir()
+        self.allow_download = allow_download
+        self.pca_dim = pca_dim
+        self.eps = eps
+        self.resolved_detector_path = None
         self.feature_model = self._build_feature_model()
-        self.mean = torch.tensor([0.43216, 0.394666, 0.37645], device=self.device).view(
-            1, 3, 1, 1, 1
-        )
-        self.std = torch.tensor([0.22803, 0.22145, 0.216989], device=self.device).view(
-            1, 3, 1, 1, 1
-        )
+        self.r3d_mean = torch.tensor(
+            [0.43216, 0.394666, 0.37645],
+            device=self.device,
+        ).view(1, 3, 1, 1, 1)
+        self.r3d_std = torch.tensor(
+            [0.22803, 0.22145, 0.216989],
+            device=self.device,
+        ).view(1, 3, 1, 1, 1)
+
+    def _default_cache_dir(self):
+        cache_root = os.environ.get("XDG_CACHE_HOME")
+        if cache_root:
+            return Path(cache_root) / "memcam"
+        return Path.home() / ".cache" / "memcam"
 
     def _build_feature_model(self):
+        if self.backend in FVD_I3D_BACKENDS:
+            detector_path = self._resolve_i3d_detector_path()
+            self.resolved_detector_path = detector_path
+            model = self.torch.jit.load(str(detector_path), map_location=self.device)
+            return model.eval().to(self.device)
+
         from torchvision.models.video import R3D_18_Weights, r3d_18
 
+        print(
+            "Warning: torchvision_r3d18 is a nonstandard FVD proxy. "
+            "Use --fvd_backend styleganv_i3d for canonical I3D FVD."
+        )
         model = r3d_18(weights=R3D_18_Weights.KINETICS400_V1)
         model.fc = self.torch.nn.Identity()
         return model.eval().to(self.device)
+
+    def _resolve_i3d_detector_path(self):
+        if self.detector_path is not None:
+            if not self.detector_path.exists():
+                raise FileNotFoundError(f"FVD detector not found: {self.detector_path}")
+            return self.detector_path
+
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        detector_path = self.cache_dir / "i3d_torchscript.pt"
+        if detector_path.exists():
+            return detector_path
+
+        if not self.allow_download:
+            raise FileNotFoundError(
+                "FVD I3D detector is not cached. Pass --fvd_detector_path or allow "
+                f"download from {self.detector_url}"
+            )
+
+        print(f"Downloading FVD I3D detector to {detector_path}")
+        self._download_file(self.detector_url, detector_path)
+        return detector_path
+
+    def _download_file(self, url, destination):
+        try:
+            import requests
+        except ImportError as exc:
+            raise RuntimeError(
+                "Downloading the FVD detector requires the 'requests' package. "
+                f"Install requests or pass --fvd_detector_path. URL: {url}"
+            ) from exc
+
+        destination = Path(destination)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=str(destination.parent),
+        )
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            with requests.get(url, stream=True, timeout=60) as response:
+                response.raise_for_status()
+                with tmp_path.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+            os.replace(tmp_path, destination)
+        except Exception as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "Could not download the FVD I3D detector. "
+                f"Download it manually from {url} and pass --fvd_detector_path."
+            ) from exc
 
     def _sample_starts(self, num_frames):
         span = (self.clip_length - 1) * self.frame_stride + 1
@@ -404,7 +497,7 @@ class FVDRunner:
         return sorted({int(round(start)) for start in starts})
 
     def _to_clip_frame(self, frame):
-        frame = resize_for_metric(normalize_video_frame(frame), self.image_size)
+        frame = normalize_video_frame(frame)
         return np.transpose(frame, (2, 0, 1))
 
     def _read_generated_frames(self, video_path, indices):
@@ -431,9 +524,7 @@ class FVDRunner:
             gt_path = gt_frames_dir / f"{gt_index:04d}.png"
             if not gt_path.exists():
                 raise FileNotFoundError(f"Missing ground-truth frame: {gt_path}")
-            frames[frame_index] = self._to_clip_frame(
-                read_gt_frame(gt_path, (self.image_size, self.image_size))
-            )
+            frames[frame_index] = self._to_clip_frame(read_gt_frame(gt_path, None))
         return frames
 
     def _load_item_clips(self, item, model_output_dir, dataset_root, max_frames):
@@ -466,14 +557,37 @@ class FVDRunner:
         return gen_clips, gt_clips
 
     def _clip_tensor(self, clips):
-        tensor = self.torch.from_numpy(np.stack(clips)).float().to(self.device)
-        tensor = tensor.permute(0, 2, 1, 3, 4) / 255.0
-        return (tensor - self.mean) / self.std
+        tensors = []
+        for clip in clips:
+            tensor = self.torch.from_numpy(np.asarray(clip)).float().to(self.device)
+            tensor = tensor.permute(1, 0, 2, 3).contiguous()
+            frames = tensor.permute(1, 0, 2, 3)
+            frames = self.torch.nn.functional.interpolate(
+                frames,
+                size=(self.image_size, self.image_size),
+                mode="bilinear",
+                align_corners=False,
+            )
+            tensors.append(frames.permute(1, 0, 2, 3))
+
+        tensor = self.torch.stack(tensors)
+        if self.backend == "torchvision_r3d18":
+            tensor = tensor / 255.0
+            return (tensor - self.r3d_mean) / self.r3d_std
+        return tensor
 
     def _encode_batch(self, clips):
         tensor = self._clip_tensor(clips)
         with self.torch.inference_mode():
-            features = self.feature_model(tensor)
+            if self.backend in FVD_I3D_BACKENDS:
+                features = self.feature_model(
+                    tensor,
+                    rescale=True,
+                    resize=False,
+                    return_features=True,
+                )
+            else:
+                features = self.feature_model(tensor)
         return features.float().detach().cpu().numpy()
 
     def _append_features(self, feature_rows, clips):
@@ -487,16 +601,15 @@ class FVDRunner:
         generated_features = np.asarray(generated_features, dtype=np.float64)
         real_mu = np.mean(real_features, axis=0)
         generated_mu = np.mean(generated_features, axis=0)
-        real_sigma = np.cov(real_features, rowvar=False)
-        generated_sigma = np.cov(generated_features, rowvar=False)
+        real_sigma = np.atleast_2d(np.cov(real_features, rowvar=False))
+        generated_sigma = np.atleast_2d(np.cov(generated_features, rowvar=False))
 
         diff = real_mu - generated_mu
         covmean = linalg.sqrtm(real_sigma.dot(generated_sigma))
         if not np.isfinite(covmean).all():
-            eps = 1e-6
             covmean = linalg.sqrtm(
-                (real_sigma + np.eye(real_sigma.shape[0]) * eps).dot(
-                    generated_sigma + np.eye(generated_sigma.shape[0]) * eps
+                (real_sigma + np.eye(real_sigma.shape[0]) * self.eps).dot(
+                    generated_sigma + np.eye(generated_sigma.shape[0]) * self.eps
                 )
             )
         if np.iscomplexobj(covmean):
@@ -778,21 +891,48 @@ def main():
         "--learned_metrics",
         type=str,
         default="none",
-        help="Optional comma list: lpips,dino,clip. Default: none.",
+        help="Optional comma list: lpips,dino,clip,fvd. Default: none.",
     )
     parser.add_argument("--metric_device", type=str, default="cuda")
     parser.add_argument("--metric_batch_size", type=int, default=8)
     parser.add_argument("--learned_image_size", type=int, default=224)
     parser.add_argument("--fvd_clip_length", type=int, default=16)
     parser.add_argument("--fvd_clips_per_video", type=int, default=4)
-    parser.add_argument("--fvd_frame_stride", type=int, default=4)
-    parser.add_argument("--fvd_image_size", type=int, default=112)
+    parser.add_argument("--fvd_frame_stride", type=int, default=1)
+    parser.add_argument("--fvd_image_size", type=int, default=224)
+    parser.add_argument(
+        "--fvd_pca_dim",
+        type=int,
+        default=None,
+        help="Deprecated compatibility flag. Canonical I3D FVD does not apply PCA.",
+    )
+    parser.add_argument("--fvd_eps", type=float, default=1e-6)
     parser.add_argument(
         "--fvd_backend",
         type=str,
-        default="torchvision_r3d18",
-        choices=["torchvision_r3d18"],
+        default="styleganv_i3d",
+        choices=["styleganv_i3d", "i3d_torchscript", "torchvision_r3d18"],
     )
+    parser.add_argument(
+        "--fvd_detector_path",
+        type=Path,
+        default=None,
+        help="Optional local i3d_torchscript.pt path for canonical FVD.",
+    )
+    parser.add_argument("--fvd_detector_url", type=str, default=FVD_I3D_DETECTOR_URL)
+    parser.add_argument(
+        "--fvd_cache_dir",
+        type=Path,
+        default=None,
+        help="Directory used to cache the I3D detector. Defaults to ~/.cache/memcam.",
+    )
+    parser.add_argument(
+        "--no_fvd_download",
+        action="store_false",
+        dest="fvd_allow_download",
+        help="Do not download the I3D detector automatically.",
+    )
+    parser.set_defaults(fvd_allow_download=True)
     parser.add_argument("--write_frame_metrics", action="store_true")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
@@ -825,6 +965,12 @@ def main():
             clips_per_video=args.fvd_clips_per_video,
             frame_stride=args.fvd_frame_stride,
             backend=args.fvd_backend,
+            detector_path=args.fvd_detector_path,
+            detector_url=args.fvd_detector_url,
+            cache_dir=args.fvd_cache_dir,
+            allow_download=args.fvd_allow_download,
+            pca_dim=args.fvd_pca_dim,
+            eps=args.fvd_eps,
         )
     metric_fields = BASE_METRIC_FIELDS + (
         learned_runner.fields if learned_runner is not None else []
@@ -929,6 +1075,11 @@ def main():
         summary["overall"]["fvd"] = fvd_value
         summary["overall"]["fvd_clips"] = fvd_clips
         summary["overall"]["fvd_backend"] = fvd_runner.backend
+        summary["overall"]["fvd_detector_path"] = (
+            str(fvd_runner.resolved_detector_path)
+            if fvd_runner.resolved_detector_path is not None
+            else None
+        )
 
         for duration, duration_summary in summary["by_duration"].items():
             duration_items = [
@@ -945,6 +1096,11 @@ def main():
             duration_summary["fvd"] = duration_fvd
             duration_summary["fvd_clips"] = duration_fvd_clips
             duration_summary["fvd_backend"] = fvd_runner.backend
+            duration_summary["fvd_detector_path"] = (
+                str(fvd_runner.resolved_detector_path)
+                if fvd_runner.resolved_detector_path is not None
+                else None
+            )
 
     summary["metric_config"] = {
         "learned_metrics": learned_metric_names,
@@ -958,6 +1114,12 @@ def main():
         "fvd_frame_stride": args.fvd_frame_stride,
         "fvd_image_size": args.fvd_image_size,
         "fvd_backend": args.fvd_backend,
+        "fvd_detector_url": args.fvd_detector_url,
+        "fvd_detector_path": str(args.fvd_detector_path) if args.fvd_detector_path else None,
+        "fvd_cache_dir": str(args.fvd_cache_dir) if args.fvd_cache_dir else None,
+        "fvd_allow_download": args.fvd_allow_download,
+        "fvd_pca_dim_ignored": args.fvd_pca_dim,
+        "fvd_eps": args.fvd_eps,
         "frame_stride": args.frame_stride,
         "max_frames": args.max_frames,
     }

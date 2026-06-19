@@ -14,9 +14,15 @@ METRIC_BATCH_SIZE="${METRIC_BATCH_SIZE:-8}"
 LEARNED_IMAGE_SIZE="${LEARNED_IMAGE_SIZE:-224}"
 FVD_CLIP_LENGTH="${FVD_CLIP_LENGTH:-16}"
 FVD_CLIPS_PER_VIDEO="${FVD_CLIPS_PER_VIDEO:-4}"
-FVD_FRAME_STRIDE="${FVD_FRAME_STRIDE:-4}"
-FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-112}"
-FVD_BACKEND="${FVD_BACKEND:-torchvision_r3d18}"
+FVD_FRAME_STRIDE="${FVD_FRAME_STRIDE:-1}"
+FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-224}"
+FVD_BACKEND="${FVD_BACKEND:-styleganv_i3d}"
+FVD_DETECTOR_PATH="${FVD_DETECTOR_PATH:-}"
+FVD_DETECTOR_URL="${FVD_DETECTOR_URL:-}"
+FVD_CACHE_DIR="${FVD_CACHE_DIR:-}"
+FVD_ALLOW_DOWNLOAD="${FVD_ALLOW_DOWNLOAD:-1}"
+FVD_PCA_DIM="${FVD_PCA_DIM:-}"
+FVD_EPS="${FVD_EPS:-1e-6}"
 
 cd "$MEMCAM_ROOT"
 
@@ -37,7 +43,24 @@ cmd=(
   --fvd_frame_stride "$FVD_FRAME_STRIDE"
   --fvd_image_size "$FVD_IMAGE_SIZE"
   --fvd_backend "$FVD_BACKEND"
+  --fvd_eps "$FVD_EPS"
 )
+
+if [ -n "$FVD_DETECTOR_PATH" ]; then
+  cmd+=(--fvd_detector_path "$FVD_DETECTOR_PATH")
+fi
+if [ -n "$FVD_DETECTOR_URL" ]; then
+  cmd+=(--fvd_detector_url "$FVD_DETECTOR_URL")
+fi
+if [ -n "$FVD_CACHE_DIR" ]; then
+  cmd+=(--fvd_cache_dir "$FVD_CACHE_DIR")
+fi
+if [ "$FVD_ALLOW_DOWNLOAD" = "0" ]; then
+  cmd+=(--no_fvd_download)
+fi
+if [ -n "$FVD_PCA_DIM" ]; then
+  cmd+=(--fvd_pca_dim "$FVD_PCA_DIM")
+fi
 
 if [ -n "$DATASET_ROOT" ]; then
   cmd+=(--dataset_root "$DATASET_ROOT")

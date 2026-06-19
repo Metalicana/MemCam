@@ -37,6 +37,15 @@ def main():
     assert temporal["temporal_delta_mae"] == 128.0
     assert temporal["temporal_delta_rmse"] == 128.0
 
+    fvd_runner = object.__new__(evaluator.FVDRunner)
+    fvd_runner.eps = 1e-6
+    features = np.arange(24, dtype=np.float64).reshape(6, 4)
+    same_fvd = fvd_runner._frechet_distance(features, features.copy())
+    assert abs(same_fvd) < 1e-8
+
+    shifted_fvd = fvd_runner._frechet_distance(features, features + 1.0)
+    assert shifted_fvd > 0.0
+
     print("evaluation metric checks passed")
 
 

@@ -69,11 +69,24 @@ FRAME_STRIDE=4 \
 bash scripts/evaluate_context_memory_10s.sh
 ```
 
+`fvd` now uses the canonical I3D Kinetics-400 TorchScript detector used by
+StyleGAN-V/Google FVD-style evaluation. The first run caches the detector at
+`~/.cache/memcam/i3d_torchscript.pt`; on clusters without outbound internet,
+pre-stage that file and run with:
+
+```bash
+FVD_DETECTOR_PATH=/path/to/i3d_torchscript.pt \
+RUN_NAME=ri_b32_dino_rgb \
+LEARNED_METRICS=fvd \
+bash scripts/evaluate_context_memory_10s.sh
+```
+
 The compact report metrics are:
 
 - Lower is better: `mse`, `dino_distance`, `lpips_alex`, `fvd`.
 - Higher is better: `ssim`.
-- Current `fvd` uses a `torchvision_r3d18` Kinetics video-feature backend, recorded in `summary.json`.
+- The I3D FVD configuration is recorded in `summary.json`, including backend,
+  detector path, clip length, frame stride, and resize size.
 
 Copy a tab-separated summary for Excel:
 
