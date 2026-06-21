@@ -35,7 +35,7 @@ def main():
         "--memory_policy",
         type=str,
         default="unbounded",
-        choices=["unbounded", "fifo", "rarity_irreplaceability"],
+        choices=["unbounded", "fifo", "rarity_irreplaceability", "slam_covisibility"],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--access_trace_dir", type=Path, default=None)

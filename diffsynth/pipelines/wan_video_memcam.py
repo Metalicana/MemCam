@@ -15,6 +15,7 @@ from .memory_policies import (
     FrameMemoryBuffer,
     VisualMemoryFeatureExtractor,
     compute_rarity_irreplaceability_scores,
+    compute_slam_covisibility_scores,
 )
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
@@ -324,13 +325,17 @@ class WanVideoMemCamPipeline(BasePipeline):
         latent_H = start_latent.shape[2]  # H // 8
         latent_W = start_latent.shape[3]  # W // 8
 
-        if memory_policy == "rarity_irreplaceability" and memory_budget is not None and memory_budget < 2:
-            raise ValueError("rarity_irreplaceability requires memory_budget >= 2")
+        if memory_policy in {"rarity_irreplaceability", "slam_covisibility"} and memory_budget is not None and memory_budget < 2:
+            raise ValueError(f"{memory_policy} requires memory_budget >= 2")
         
         # ============ 存储结构 ============
         all_section_latents = []  # (0:start_latent, else:1+19latents)
         all_generated_frames = {} # {frame_idx:frame_tensor}
-        pinned_memory_frames = {0} if memory_policy == "rarity_irreplaceability" else set()
+        pinned_memory_frames = (
+            {0}
+            if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}
+            else set()
+        )
         memory_buffer = FrameMemoryBuffer(
             policy=memory_policy,
             budget=memory_budget,
@@ -339,7 +344,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         visual_feature_extractor = None
         memory_dino_features = {}
         memory_rgb_features = {}
-        if memory_policy == "rarity_irreplaceability":
+        if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}:
             self.load_models_to_device([])
             visual_feature_extractor = VisualMemoryFeatureExtractor(device=self.device)
         section_start_frames = [i * (FRAMES_PER_SECTION - 1) for i in range(total_sections)]
@@ -595,7 +600,7 @@ class WanVideoMemCamPipeline(BasePipeline):
             eviction_score_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
-            if memory_policy == "rarity_irreplaceability":
+            if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}:
                 feature_frame_indices = list(new_frame_indices)
                 feature_images = [
                     self.frame_tensor_to_pil(all_generated_frames[frame_idx])
@@ -606,6 +611,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                     memory_dino_features[frame_idx] = dino_batch[feature_idx]
                     memory_rgb_features[frame_idx] = rgb_batch[feature_idx]
 
+            if memory_policy == "rarity_irreplaceability":
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
                     frame_idx
@@ -614,6 +620,21 @@ class WanVideoMemCamPipeline(BasePipeline):
                 ]
                 eviction_scores, eviction_score_details = compute_rarity_irreplaceability_scores(
                     memory_frame_indices=prospective_memory,
+                    pinned_frames=pinned_memory_frames,
+                    dino_features=memory_dino_features,
+                    rgb_features=memory_rgb_features,
+                    return_details=True,
+                )
+            elif memory_policy == "slam_covisibility":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_slam_covisibility_scores(
+                    memory_frame_indices=prospective_memory,
+                    c2ws=c2ws,
                     pinned_frames=pinned_memory_frames,
                     dino_features=memory_dino_features,
                     rgb_features=memory_rgb_features,
@@ -646,6 +667,12 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_dino_cluster_threshold": score_detail.get("cluster_threshold"),
                         "eviction_rgb_nearest_frame": score_detail.get("rgb_nearest_frame"),
                         "eviction_rgb_nearest_distance": score_detail.get("rgb_nearest_distance"),
+                        "eviction_redundancy_ratio": score_detail.get("redundancy_ratio"),
+                        "eviction_covisible_observers": score_detail.get("covisible_observers"),
+                        "eviction_max_covisibility": score_detail.get("max_covisibility"),
+                        "eviction_nearest_covisible_frame": score_detail.get("nearest_covisible_frame"),
+                        "eviction_marginal_contribution": score_detail.get("marginal_contribution"),
+                        "eviction_unique_bonus": score_detail.get("unique_bonus"),
                     }
                 )
                 memory_dino_features.pop(evicted_frame_idx, None)

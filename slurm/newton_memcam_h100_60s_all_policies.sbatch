@@ -27,6 +27,7 @@ MANIFEST="${MANIFEST:-$MEMCAM_ROOT/testbeds/context_memory/manifest.jsonl}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$HOME/memcam_results/context_memory_60s}"
 STEPS="${STEPS:-50}"
 GPU="${GPU:-0}"
+BUDGETS="${BUDGETS:-32,64}"
 
 mkdir -p "$MEMCAM_ROOT/logs" "$OUTPUT_ROOT"
 cd "$MEMCAM_ROOT"
@@ -35,6 +36,7 @@ echo "MemCam 60s benchmark, all policies"
 echo "Manifest: $MANIFEST"
 echo "Output root: $OUTPUT_ROOT"
 echo "Steps: $STEPS"
+echo "Budgeted policy budgets: $BUDGETS"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "Started: $(date)"
 
@@ -47,6 +49,8 @@ imageio.mimsave("/tmp/memcam_ffmpeg_slurm_check.mp4", frames, fps=2)
 print("imageio ffmpeg writer ok")
 PY
 
+RUNS=()
+
 run_policy() {
   local policy="$1"
   local memory_policy="$2"
@@ -54,6 +58,7 @@ run_policy() {
   local output_dir="$OUTPUT_ROOT/$policy"
 
   mkdir -p "$output_dir"
+  RUNS+=("$policy")
 
   echo
   echo "============================================================"
@@ -86,12 +91,21 @@ run_policy() {
 }
 
 run_policy "baseline" "unbounded"
-run_policy "fifo_b32" "fifo" "32"
-run_policy "ri_b32_dino_rgb" "rarity_irreplaceability" "32"
+
+IFS=',' read -r -a MEMORY_BUDGETS <<< "$BUDGETS"
+for budget in "${MEMORY_BUDGETS[@]}"; do
+  budget="${budget//[[:space:]]/}"
+  if [ -z "$budget" ]; then
+    continue
+  fi
+  run_policy "fifo_b${budget}" "fifo" "$budget"
+  run_policy "ri_b${budget}_dino_rgb" "rarity_irreplaceability" "$budget"
+  run_policy "slam_b${budget}_covisibility" "slam_covisibility" "$budget"
+done
 
 echo
 echo "All policies finished: $(date)"
-for policy in baseline fifo_b32 ri_b32_dino_rgb; do
+for policy in "${RUNS[@]}"; do
   output_dir="$OUTPUT_ROOT/$policy"
   echo "== $policy =="
   echo "videos: $(find "$output_dir" -maxdepth 1 -name '*custom.mp4' | wc -l)"

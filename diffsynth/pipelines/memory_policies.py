@@ -4,8 +4,13 @@ from collections import OrderedDict
 import numpy as np
 
 
-SUPPORTED_MEMORY_POLICIES = ("unbounded", "fifo", "rarity_irreplaceability")
-BUDGETED_MEMORY_POLICIES = ("fifo", "rarity_irreplaceability")
+SUPPORTED_MEMORY_POLICIES = (
+    "unbounded",
+    "fifo",
+    "rarity_irreplaceability",
+    "slam_covisibility",
+)
+BUDGETED_MEMORY_POLICIES = ("fifo", "rarity_irreplaceability", "slam_covisibility")
 
 
 class FrameMemoryBuffer:
@@ -364,4 +369,97 @@ def compute_rarity_irreplaceability_scores(
             ),
             "rgb_nearest_distance": float(nearest_rgb_distances[index]),
         }
+    return (scores, details) if return_details else scores
+
+
+def _feature_cosine_similarity(memory_frame_indices, features):
+    missing_features = [frame_idx for frame_idx in memory_frame_indices if frame_idx not in features]
+    if missing_features:
+        raise ValueError(f"Missing visual memory features for frames: {missing_features[:10]}")
+
+    feature_matrix = np.stack([features[frame_idx] for frame_idx in memory_frame_indices])
+    norms = np.linalg.norm(feature_matrix, axis=1, keepdims=True)
+    feature_matrix = feature_matrix / np.maximum(norms, 1e-12)
+    return np.clip(feature_matrix @ feature_matrix.T, -1.0, 1.0)
+
+
+def compute_slam_covisibility_scores(
+    memory_frame_indices,
+    c2ws,
+    pinned_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    n_other_observers=3,
+    covisibility_threshold=0.65,
+    visual_weight=0.35,
+    geometry_weight=0.65,
+    return_details=False,
+):
+    """Score frames by SLAM-style marginal evidence contribution.
+
+    Higher scores mean the frame is more worth keeping. A low score means the
+    frame is already covered by several visually/geometrically similar memories.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    pinned_frames = set(pinned_frames or [])
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+
+    pose_distance = pose_distances(c2ws, memory_frame_indices, memory_frame_indices)
+    geom_similarity = np.exp(-pose_distance)
+    np.fill_diagonal(geom_similarity, 0.0)
+
+    components = [(geometry_weight, geom_similarity)]
+    if dino_features is not None:
+        visual_similarity = _feature_cosine_similarity(memory_frame_indices, dino_features)
+        visual_similarity = np.maximum(visual_similarity, 0.0)
+        np.fill_diagonal(visual_similarity, 0.0)
+        components.append((visual_weight, visual_similarity))
+    elif rgb_features is not None:
+        rgb_distance = pairwise_mean_abs_distances(
+            np.stack([rgb_features[frame_idx] for frame_idx in memory_frame_indices])
+        )
+        rgb_similarity = np.exp(-4.0 * rgb_distance)
+        np.fill_diagonal(rgb_similarity, 0.0)
+        components.append((visual_weight, rgb_similarity))
+
+    total_weight = sum(weight for weight, _ in components)
+    covisibility = sum(weight * matrix for weight, matrix in components) / max(total_weight, 1e-12)
+    np.fill_diagonal(covisibility, 0.0)
+
+    scores = {}
+    details = {}
+    for row, frame_idx in enumerate(memory_frame_indices):
+        row_values = covisibility[row]
+        observer_indices = np.flatnonzero(row_values >= covisibility_threshold)
+        covisible_observers = int(observer_indices.size)
+        redundancy_ratio = min(covisible_observers / max(float(n_other_observers), 1.0), 1.0)
+
+        if row_values.size:
+            nearest_index = int(np.argmax(row_values))
+            nearest_frame = int(memory_frame_indices[nearest_index])
+            max_covisibility = float(row_values[nearest_index])
+        else:
+            nearest_frame = None
+            max_covisibility = 0.0
+
+        marginal_contribution = 1.0 / (covisible_observers + 1.0)
+        unique_bonus = 1.0 - max_covisibility
+        score = (1.0 - redundancy_ratio) + 0.5 * marginal_contribution + 0.25 * unique_bonus
+        if frame_idx in pinned_frames:
+            score = float("inf")
+
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "redundancy_ratio": float(redundancy_ratio),
+            "covisible_observers": covisible_observers,
+            "max_covisibility": float(max_covisibility),
+            "nearest_covisible_frame": nearest_frame,
+            "marginal_contribution": float(marginal_contribution),
+            "unique_bonus": float(unique_bonus),
+            "covisibility_threshold": float(covisibility_threshold),
+            "n_other_observers": int(n_other_observers),
+        }
+
     return (scores, details) if return_details else scores

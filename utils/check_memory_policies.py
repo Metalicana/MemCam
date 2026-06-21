@@ -10,6 +10,7 @@ memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
+compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 
 
 def check_unbounded():
@@ -64,6 +65,14 @@ def check_rarity_irreplaceability_requires_budget():
     raise AssertionError("rarity_irreplaceability without a budget should fail")
 
 
+def check_slam_covisibility_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="slam_covisibility")
+    except ValueError:
+        return
+    raise AssertionError("slam_covisibility without a budget should fail")
+
+
 def check_rarity_irreplaceability_scores():
     memory = FrameMemoryBuffer(
         policy="rarity_irreplaceability",
@@ -108,6 +117,29 @@ def check_rarity_irreplaceability_scores():
     assert after_scores[2] == before
 
 
+def check_slam_covisibility_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.99, 0.01], dtype=np.float32),
+        2: np.array([0.98, 0.02], dtype=np.float32),
+        7: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    scores, details = compute_slam_covisibility_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        pinned_frames={0},
+        dino_features=dino_features,
+        covisibility_threshold=0.5,
+        n_other_observers=2,
+        return_details=True,
+    )
+    assert scores[0] == float("inf")
+    assert scores[7] > scores[1]
+    assert details[1]["covisible_observers"] >= 2
+    assert details[7]["covisible_observers"] == 0
+
+
 if __name__ == "__main__":
     check_unbounded()
     check_fifo()
@@ -115,4 +147,6 @@ if __name__ == "__main__":
     check_rarity_irreplaceability_budgeting()
     check_rarity_irreplaceability_requires_budget()
     check_rarity_irreplaceability_scores()
+    check_slam_covisibility_requires_budget()
+    check_slam_covisibility_scores()
     print("memory policy checks passed")
