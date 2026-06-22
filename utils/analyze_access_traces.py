@@ -41,6 +41,29 @@ def parse_list(value):
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def parse_int_list(value):
+    if not value:
+        return None
+    return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
+def parse_rows(value):
+    if not value:
+        return None
+
+    rows = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_text, end_text = part.split("-", 1)
+            rows.update(range(int(start_text), int(end_text) + 1))
+        else:
+            rows.add(int(part))
+    return rows
+
+
 def to_float(value):
     if value is None:
         return None
@@ -181,6 +204,65 @@ def iter_trace_rows(run_name, trace_dir):
                 row["_trace_file"] = path.name
                 row["_line_number"] = line_number
                 yield row
+
+
+def filter_rows(rows, durations=None, row_filter=None):
+    if durations is not None:
+        durations = set(int(value) for value in durations)
+    if row_filter is not None:
+        row_filter = set(int(value) for value in row_filter)
+
+    output = []
+    for row in rows:
+        if durations is not None:
+            duration = row.get("duration_sec")
+            if duration is None or int(duration) not in durations:
+                continue
+        if row_filter is not None:
+            row_id = row.get("row")
+            if row_id is None or int(row_id) not in row_filter:
+                continue
+        output.append(row)
+    return output
+
+
+def keep_common_video_keys(rows):
+    run_names = sorted({row.get("_run_name") for row in rows})
+    if len(run_names) <= 1:
+        return rows
+
+    keys_by_run = {}
+    for run_name in run_names:
+        keys = {
+            (
+                row.get("row"),
+                row.get("scene"),
+                row.get("duration_sec"),
+                row.get("dataset_start_frame"),
+            )
+            for row in rows
+            if row.get("_run_name") == run_name
+        }
+        keys = {key for key in keys if key[0] is not None}
+        keys_by_run[run_name] = keys
+
+    common_keys = None
+    for keys in keys_by_run.values():
+        common_keys = set(keys) if common_keys is None else common_keys & keys
+    common_keys = common_keys or set()
+    print(f"Common video keys across runs: {len(common_keys)}")
+
+    return [
+        row
+        for row in rows
+        if (
+            row.get("row"),
+            row.get("scene"),
+            row.get("duration_sec"),
+            row.get("dataset_start_frame"),
+        )
+        in common_keys
+    ]
 
 
 def context_rows(rows, post_initial=False):
@@ -483,6 +565,9 @@ def main():
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--runs", type=str, default=None)
+    parser.add_argument("--durations", type=str, default=None)
+    parser.add_argument("--rows", type=str, default=None)
+    parser.add_argument("--require_common_rows", action="store_true")
     parser.add_argument("--trace_dir_name", type=str, default="access_traces")
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--top_k_selected", type=int, default=20)
@@ -503,6 +588,14 @@ def main():
         run_rows = list(iter_trace_rows(run_name, trace_dir))
         print(f"{run_name}: {len(run_rows)} trace rows from {trace_dir}")
         rows.extend(run_rows)
+
+    rows = filter_rows(
+        rows,
+        durations=parse_int_list(args.durations),
+        row_filter=parse_rows(args.rows),
+    )
+    if args.require_common_rows:
+        rows = keep_common_video_keys(rows)
 
     if not rows:
         raise RuntimeError("No trace rows loaded.")
