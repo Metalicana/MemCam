@@ -35,7 +35,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$HOME/memcam_results/context_memory_20s}"
 OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_ROOT/$POLICY}"
 STEPS="${STEPS:-50}"
 
-if { [ "$MEMORY_POLICY" = "fifo" ] || [ "$MEMORY_POLICY" = "rarity_irreplaceability" ] || [ "$MEMORY_POLICY" = "slam_covisibility" ]; } && [ -z "$MEMORY_BUDGET" ]; then
+if { [ "$MEMORY_POLICY" = "fifo" ] || [ "$MEMORY_POLICY" = "rarity_irreplaceability" ] || [ "$MEMORY_POLICY" = "slam_covisibility" ] || [ "$MEMORY_POLICY" = "facility_coreset" ]; } && [ -z "$MEMORY_BUDGET" ]; then
   echo "MEMORY_BUDGET is required when MEMORY_POLICY=$MEMORY_POLICY" >&2
   exit 2
 fi

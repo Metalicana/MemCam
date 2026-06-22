@@ -9,6 +9,7 @@ spec = importlib.util.spec_from_file_location("memory_policies", MEMORY_POLICIES
 memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
+compute_facility_coreset_scores = memory_policies.compute_facility_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 
@@ -71,6 +72,14 @@ def check_slam_covisibility_requires_budget():
     except ValueError:
         return
     raise AssertionError("slam_covisibility without a budget should fail")
+
+
+def check_facility_coreset_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="facility_coreset")
+    except ValueError:
+        return
+    raise AssertionError("facility_coreset without a budget should fail")
 
 
 def check_rarity_irreplaceability_scores():
@@ -140,6 +149,48 @@ def check_slam_covisibility_scores():
     assert details[7]["covisible_observers"] == 0
 
 
+def check_facility_coreset_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.99, 0.01], dtype=np.float32),
+        2: np.array([0.98, 0.02], dtype=np.float32),
+        7: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    quality = {frame_idx: 1.0 for frame_idx in dino_features}
+    scores, details = compute_facility_coreset_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        archive_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        budget=2,
+        dino_features=dino_features,
+        frame_quality=quality,
+        return_details=True,
+    )
+    selected = {frame_idx for frame_idx, row in details.items() if row["coreset_selected"]}
+    assert len(selected) == 2
+    assert 7 in selected
+    assert selected & {0, 1, 2}
+    assert all(scores[frame_idx] > 0 for frame_idx in selected)
+    assert all(scores[frame_idx] < 0 for frame_idx in set(scores) - selected)
+
+    forced_scores, forced_details = compute_facility_coreset_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        archive_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        frame_quality=quality,
+        return_details=True,
+    )
+    forced_selected = {
+        frame_idx for frame_idx, row in forced_details.items() if row["coreset_selected"]
+    }
+    assert 0 in forced_selected
+    assert forced_scores[0] == float("inf")
+
+
 if __name__ == "__main__":
     check_unbounded()
     check_fifo()
@@ -149,4 +200,6 @@ if __name__ == "__main__":
     check_rarity_irreplaceability_scores()
     check_slam_covisibility_requires_budget()
     check_slam_covisibility_scores()
+    check_facility_coreset_requires_budget()
+    check_facility_coreset_scores()
     print("memory policy checks passed")

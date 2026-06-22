@@ -9,8 +9,14 @@ SUPPORTED_MEMORY_POLICIES = (
     "fifo",
     "rarity_irreplaceability",
     "slam_covisibility",
+    "facility_coreset",
 )
-BUDGETED_MEMORY_POLICIES = ("fifo", "rarity_irreplaceability", "slam_covisibility")
+BUDGETED_MEMORY_POLICIES = (
+    "fifo",
+    "rarity_irreplaceability",
+    "slam_covisibility",
+    "facility_coreset",
+)
 
 
 class FrameMemoryBuffer:
@@ -237,6 +243,23 @@ def rgb_features_from_pil_images(images, image_size=64):
     return np.stack(features, axis=0) if features else np.zeros((0, image_size * image_size * 3))
 
 
+def image_quality_scores_from_pil_images(images):
+    """Return simple sharpness/contrast quality scores in [0, 1]."""
+    scores = []
+    for image in images:
+        gray = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
+        if gray.size == 0:
+            scores.append(0.0)
+            continue
+
+        grad_y, grad_x = np.gradient(gray)
+        sharpness = float(np.mean(grad_x * grad_x + grad_y * grad_y))
+        contrast = float(np.std(gray))
+        score = (sharpness / (sharpness + 0.002)) * (contrast / (contrast + 0.05))
+        scores.append(float(np.clip(score, 0.0, 1.0)))
+    return np.asarray(scores, dtype=np.float32)
+
+
 class VisualMemoryFeatureExtractor:
     def __init__(
         self,
@@ -460,6 +483,219 @@ def compute_slam_covisibility_scores(
             "unique_bonus": float(unique_bonus),
             "covisibility_threshold": float(covisibility_threshold),
             "n_other_observers": int(n_other_observers),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def _feature_cosine_similarity_cross(left_frame_indices, right_frame_indices, features):
+    frame_indices = list(left_frame_indices) + list(right_frame_indices)
+    missing_features = [frame_idx for frame_idx in frame_indices if frame_idx not in features]
+    if missing_features:
+        raise ValueError(f"Missing visual memory features for frames: {missing_features[:10]}")
+
+    left = np.stack([features[frame_idx] for frame_idx in left_frame_indices])
+    right = np.stack([features[frame_idx] for frame_idx in right_frame_indices])
+    left = left / np.maximum(np.linalg.norm(left, axis=1, keepdims=True), 1e-12)
+    right = right / np.maximum(np.linalg.norm(right, axis=1, keepdims=True), 1e-12)
+    return np.clip(left @ right.T, -1.0, 1.0)
+
+
+def compute_facility_coreset_scores(
+    memory_frame_indices,
+    archive_frame_indices,
+    c2ws,
+    budget,
+    forced_keep_frames=None,
+    dino_features=None,
+    frame_quality=None,
+    archive_weights=None,
+    visual_weight=0.6,
+    pose_weight=0.4,
+    time_weight=0.0,
+    similarity_sigma=0.35,
+    return_details=False,
+):
+    """Select representative memory frames with a facility-location coreset.
+
+    The archive defines all historical descriptors to represent. The memory set
+    contains actual frames the model can retrieve. Higher returned scores mean
+    "keep"; unselected frames get low scores and are evicted by the buffer.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    archive_frame_indices = list(archive_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError("facility_coreset requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("facility_coreset budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if not archive_frame_indices:
+        archive_frame_indices = list(memory_frame_indices)
+    if dino_features is None:
+        raise ValueError("facility_coreset requires DINO features")
+
+    missing_features = [
+        frame_idx
+        for frame_idx in set(memory_frame_indices) | set(archive_frame_indices)
+        if frame_idx not in dino_features
+    ]
+    if missing_features:
+        raise ValueError(f"Missing coreset DINO features for frames: {missing_features[:10]}")
+
+    if len(memory_frame_indices) <= budget:
+        selected_frames = list(memory_frame_indices)
+        frame_quality = frame_quality or {}
+        scores = {
+            frame_idx: float("inf") if frame_idx in forced_keep_frames else 1.0
+            for frame_idx in memory_frame_indices
+        }
+        details = {
+            frame_idx: {
+                "score": scores[frame_idx],
+                "coreset_selected": True,
+                "coreset_rank": index,
+                "coreset_marginal_gain": None,
+                "coreset_removal_loss": None,
+                "coreset_archive_size": len(archive_frame_indices),
+                "coreset_facility_value": None,
+                "coreset_quality": float(frame_quality.get(frame_idx, 1.0)),
+            }
+            for index, frame_idx in enumerate(selected_frames)
+        }
+        return (scores, details) if return_details else scores
+
+    weights = (
+        np.ones(len(archive_frame_indices), dtype=np.float64)
+        if archive_weights is None
+        else np.asarray(archive_weights, dtype=np.float64)
+    )
+    if weights.shape[0] != len(archive_frame_indices):
+        raise ValueError("archive_weights length must match archive_frame_indices")
+    weights = np.maximum(weights, 0.0)
+
+    visual_similarity = _feature_cosine_similarity_cross(
+        archive_frame_indices,
+        memory_frame_indices,
+        dino_features,
+    )
+    visual_distance = 1.0 - visual_similarity
+
+    pose_distance = pose_distances(c2ws, archive_frame_indices, memory_frame_indices)
+    pose_distance = 1.0 - np.exp(-pose_distance)
+
+    distance = visual_weight * visual_distance + pose_weight * pose_distance
+    if time_weight:
+        archive_times = np.asarray(archive_frame_indices, dtype=np.float64)
+        memory_times = np.asarray(memory_frame_indices, dtype=np.float64)
+        time_scale = max(
+            float(max(max(archive_frame_indices), max(memory_frame_indices)) + 1),
+            1.0,
+        )
+        time_distance = np.abs(archive_times[:, None] - memory_times[None, :]) / time_scale
+        distance = distance + float(time_weight) * time_distance
+
+    total_weight = max(float(visual_weight + pose_weight + time_weight), 1e-12)
+    distance = distance / total_weight
+    similarity = np.exp(-distance / max(float(similarity_sigma), 1e-12))
+
+    qualities = np.ones(len(memory_frame_indices), dtype=np.float64)
+    if frame_quality is not None:
+        qualities = np.asarray(
+            [frame_quality.get(frame_idx, 1.0) for frame_idx in memory_frame_indices],
+            dtype=np.float64,
+        )
+        qualities = np.clip(qualities, 0.0, 1.0)
+    similarity = similarity * qualities[None, :]
+
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+
+    selected_cols = []
+    selected_set = set()
+    marginal_gains = {}
+
+    for col in forced_cols:
+        if col not in selected_set:
+            selected_set.add(col)
+            selected_cols.append(col)
+            marginal_gains[col] = float("inf")
+
+    if selected_cols:
+        covered = np.max(similarity[:, selected_cols], axis=1)
+    else:
+        covered = np.zeros(len(archive_frame_indices), dtype=np.float64)
+
+    while len(selected_cols) < min(int(budget), len(memory_frame_indices)):
+        best_col = None
+        best_gain = -float("inf")
+        for col in range(len(memory_frame_indices)):
+            if col in selected_set:
+                continue
+            gain = float(np.sum(weights * np.maximum(0.0, similarity[:, col] - covered)))
+            if gain > best_gain:
+                best_gain = gain
+                best_col = col
+
+        if best_col is None:
+            break
+
+        selected_set.add(best_col)
+        selected_cols.append(best_col)
+        marginal_gains[best_col] = best_gain
+        covered = np.maximum(covered, similarity[:, best_col])
+
+    selected_frames = [memory_frame_indices[col] for col in selected_cols]
+    selected_frame_set = set(selected_frames)
+    facility_value = float(np.sum(weights * covered))
+
+    removal_losses = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        if other_cols:
+            without_col = np.max(similarity[:, other_cols], axis=1)
+        else:
+            without_col = np.zeros(len(archive_frame_indices), dtype=np.float64)
+        removal_losses[col] = float(np.sum(weights * (covered - without_col)))
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + removal_losses.get(col, 0.0)
+        else:
+            score = -1.0
+
+        rank = selected_frames.index(frame_idx) if selected else None
+        gain = marginal_gains.get(col)
+        candidate_gain = float(np.sum(weights * np.maximum(0.0, similarity[:, col] - covered)))
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "coreset_selected": bool(selected),
+            "coreset_forced_keep": bool(forced),
+            "coreset_rank": rank,
+            "coreset_marginal_gain": None if gain is None or np.isinf(gain) else float(gain),
+            "coreset_candidate_gain": float(candidate_gain),
+            "coreset_removal_loss": float(removal_losses.get(col, 0.0)) if selected else 0.0,
+            "coreset_archive_size": len(archive_frame_indices),
+            "coreset_facility_value": facility_value,
+            "coreset_quality": float(qualities[col]),
+            "coreset_similarity_mean": float(np.mean(similarity[:, col])),
+            "coreset_similarity_max": float(np.max(similarity[:, col])),
+            "coreset_visual_weight": float(visual_weight),
+            "coreset_pose_weight": float(pose_weight),
+            "coreset_time_weight": float(time_weight),
+            "coreset_similarity_sigma": float(similarity_sigma),
         }
 
     return (scores, details) if return_details else scores

@@ -14,8 +14,10 @@ from .base import BasePipeline
 from .memory_policies import (
     FrameMemoryBuffer,
     VisualMemoryFeatureExtractor,
+    compute_facility_coreset_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
+    image_quality_scores_from_pil_images,
 )
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
@@ -40,6 +42,13 @@ FOV_HALF_H = 45.0    # 水平半视场角（度）增大→更宽松的重叠判
 FOV_HALF_V = 30.0    # 垂直半视场角（度）增大→更宽松的重叠判定
 FOV_SAMPLES = 5000   # 采样点数 增大→更准确但更慢
 FOV_RADIUS = 50.0    # 采样球体半径
+VISUAL_MEMORY_POLICIES = {
+    "rarity_irreplaceability",
+    "slam_covisibility",
+    "facility_coreset",
+}
+CORESET_ARCHIVE_STRIDE = 4
+CORESET_MAX_ARCHIVE_SIZE = 5000
 
 
 class WanVideoMemCamPipeline(BasePipeline):
@@ -325,7 +334,11 @@ class WanVideoMemCamPipeline(BasePipeline):
         latent_H = start_latent.shape[2]  # H // 8
         latent_W = start_latent.shape[3]  # W // 8
 
-        if memory_policy in {"rarity_irreplaceability", "slam_covisibility"} and memory_budget is not None and memory_budget < 2:
+        if (
+            memory_policy in {"rarity_irreplaceability", "slam_covisibility"}
+            and memory_budget is not None
+            and memory_budget < 2
+        ):
             raise ValueError(f"{memory_policy} requires memory_budget >= 2")
         
         # ============ 存储结构 ============
@@ -344,7 +357,10 @@ class WanVideoMemCamPipeline(BasePipeline):
         visual_feature_extractor = None
         memory_dino_features = {}
         memory_rgb_features = {}
-        if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}:
+        memory_quality_scores = {}
+        coreset_archive_frame_indices = []
+        coreset_archive_seen = set()
+        if memory_policy in VISUAL_MEMORY_POLICIES:
             self.load_models_to_device([])
             visual_feature_extractor = VisualMemoryFeatureExtractor(device=self.device)
         section_start_frames = [i * (FRAMES_PER_SECTION - 1) for i in range(total_sections)]
@@ -600,16 +616,38 @@ class WanVideoMemCamPipeline(BasePipeline):
             eviction_score_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
-            if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}:
+            if memory_policy in VISUAL_MEMORY_POLICIES:
                 feature_frame_indices = list(new_frame_indices)
                 feature_images = [
                     self.frame_tensor_to_pil(all_generated_frames[frame_idx])
                     for frame_idx in feature_frame_indices
                 ]
                 dino_batch, rgb_batch = visual_feature_extractor.encode_pil_images(feature_images)
+                quality_batch = image_quality_scores_from_pil_images(feature_images)
                 for feature_idx, frame_idx in enumerate(feature_frame_indices):
                     memory_dino_features[frame_idx] = dino_batch[feature_idx]
                     memory_rgb_features[frame_idx] = rgb_batch[feature_idx]
+                    memory_quality_scores[frame_idx] = float(quality_batch[feature_idx])
+
+                if memory_policy == "facility_coreset":
+                    for frame_idx in feature_frame_indices:
+                        if frame_idx in coreset_archive_seen:
+                            continue
+                        if frame_idx == 0 or frame_idx % CORESET_ARCHIVE_STRIDE == 0:
+                            coreset_archive_frame_indices.append(frame_idx)
+                            coreset_archive_seen.add(frame_idx)
+                    if len(coreset_archive_frame_indices) > CORESET_MAX_ARCHIVE_SIZE:
+                        keep_positions = np.linspace(
+                            0,
+                            len(coreset_archive_frame_indices) - 1,
+                            CORESET_MAX_ARCHIVE_SIZE,
+                            dtype=np.int64,
+                        )
+                        coreset_archive_frame_indices = [
+                            coreset_archive_frame_indices[int(position)]
+                            for position in keep_positions
+                        ]
+                        coreset_archive_seen = set(coreset_archive_frame_indices)
 
             if memory_policy == "rarity_irreplaceability":
                 current_memory = list(memory_buffer.candidates())
@@ -638,6 +676,23 @@ class WanVideoMemCamPipeline(BasePipeline):
                     pinned_frames=pinned_memory_frames,
                     dino_features=memory_dino_features,
                     rgb_features=memory_rgb_features,
+                    return_details=True,
+                )
+            elif memory_policy == "facility_coreset":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_facility_coreset_scores(
+                    memory_frame_indices=prospective_memory,
+                    archive_frame_indices=coreset_archive_frame_indices,
+                    c2ws=c2ws,
+                    budget=memory_budget,
+                    forced_keep_frames=protected_frames,
+                    dino_features=memory_dino_features,
+                    frame_quality=memory_quality_scores,
                     return_details=True,
                 )
 
@@ -673,10 +728,23 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_nearest_covisible_frame": score_detail.get("nearest_covisible_frame"),
                         "eviction_marginal_contribution": score_detail.get("marginal_contribution"),
                         "eviction_unique_bonus": score_detail.get("unique_bonus"),
+                        "eviction_coreset_selected": score_detail.get("coreset_selected"),
+                        "eviction_coreset_forced_keep": score_detail.get("coreset_forced_keep"),
+                        "eviction_coreset_rank": score_detail.get("coreset_rank"),
+                        "eviction_coreset_marginal_gain": score_detail.get("coreset_marginal_gain"),
+                        "eviction_coreset_candidate_gain": score_detail.get("coreset_candidate_gain"),
+                        "eviction_coreset_removal_loss": score_detail.get("coreset_removal_loss"),
+                        "eviction_coreset_archive_size": score_detail.get("coreset_archive_size"),
+                        "eviction_coreset_facility_value": score_detail.get("coreset_facility_value"),
+                        "eviction_coreset_quality": score_detail.get("coreset_quality"),
+                        "eviction_coreset_similarity_mean": score_detail.get("coreset_similarity_mean"),
+                        "eviction_coreset_similarity_max": score_detail.get("coreset_similarity_max"),
                     }
                 )
-                memory_dino_features.pop(evicted_frame_idx, None)
-                memory_rgb_features.pop(evicted_frame_idx, None)
+                if memory_policy != "facility_coreset":
+                    memory_dino_features.pop(evicted_frame_idx, None)
+                    memory_rgb_features.pop(evicted_frame_idx, None)
+                    memory_quality_scores.pop(evicted_frame_idx, None)
             if evicted_frames:
                 print(f"Evicted frames: {evicted_frames}")
             print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")

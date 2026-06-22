@@ -73,7 +73,13 @@ if __name__ == "__main__":
         "--memory_policy",
         type=str,
         default="unbounded",
-        choices=["unbounded", "fifo", "rarity_irreplaceability", "slam_covisibility"],
+        choices=[
+            "unbounded",
+            "fifo",
+            "rarity_irreplaceability",
+            "slam_covisibility",
+            "facility_coreset",
+        ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--access_trace_path", type=str, default=None)
