@@ -211,6 +211,36 @@ access_summary.json
 access_selected_frames.csv
 ```
 
+Analyze which generated frames were actually useful in the 60s trace runs:
+
+```bash
+cd ~/MemCam
+
+python utils/analyze_trace_usefulness.py \
+  --root "$HOME/memcam_results/context_memory_60s" \
+  --baseline_run baseline \
+  --runs baseline,fifo_b64,ri_b64_dino_rgb,fifo_b128,ri_b128_dino_rgb \
+  --durations 60 \
+  --require_common_targets \
+  --output_dir "$HOME/memcam_results/context_memory_60s/trace_usefulness_analysis"
+```
+
+This treats the unbounded `baseline` run as the trace upperbound: for each
+target context slot, it records the frame that all-memory retrieval selected,
+then measures how often each bounded policy selected the same or nearby frame
+and how much camera-overlap quality it retained. Main outputs:
+
+```bash
+trace_usefulness_report.md
+trace_run_summary.csv
+trace_section_summary.csv
+trace_target_alignment.csv
+trace_upperbound_useful_frames.csv
+trace_policy_selected_frames.csv
+trace_frame_alignment.csv
+trace_eviction_summary.csv
+```
+
 Analyze manifest trajectory diversity:
 
 ```bash
