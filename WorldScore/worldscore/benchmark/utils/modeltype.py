@@ -1,5 +1,6 @@
 type2model = {
     "threedgen": [
+        "memcam_context",
         "wonderjourney",
         "wonderworld",
         "scenescape",

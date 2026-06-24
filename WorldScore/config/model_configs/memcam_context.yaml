@@ -1,0 +1,8 @@
+model: memcam_context
+
+runs_root: ${oc.env:MEMCAM_WORLDSCORE_RUNS_ROOT}
+
+resolution: [640, 352]
+generate_type: i2v
+frames: 50
+fps: 30
