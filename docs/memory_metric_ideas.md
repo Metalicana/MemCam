@@ -1,223 +1,315 @@
-# Memory and Retrieval Metric Ideas
+# Memory Metric Plan For Newton 60s
 
-This note captures metric ideas for the Newton H100 60s memory-policy runs.
-The goal is to move beyond average frame quality and measure whether a
-policy actually preserves useful long-range scene memory.
+This is the corrected metric plan. The earlier PSNR/SSIM/MAE/RMSE revisit
+script was the wrong direction. Pixel similarity can be kept as a compatibility
+number, but it is not the memory metric.
 
-## Current Coverage
+The core question for these 60s policy runs is:
 
-The repo already computes a useful base layer:
+> Does the memory policy retrieve the right old evidence, under long gaps,
+> revisits, redundancy pressure, and occlusion, at a useful cost?
 
-- Frame/GT quality in `utils/evaluate_context_memory.py`: MAE, MSE, RMSE,
-  PSNR, SSIM, temporal-delta MAE/RMSE, optional LPIPS, DINO, CLIP, and FVD.
-- Access trace summaries in `utils/analyze_access_traces.py` and
-  `utils/summarize_access_traces.py`: fallback rate, selected age, overlap,
-  candidate count, stored memory size, reuse entropy, reuse gini, top selected
-  frames, and eviction stats.
-- Policy oracle analysis in `utils/analyze_memory_policies.py`: coverage,
-  possible coverage, oracle recall, retained useful frames, available useful
-  frames, and RI score rows.
-- RI score alignment in `utils/summarize_ri_alignment.py`: Spearman/top-k
-  agreement with future overlap usefulness and useful-mass-kept.
-- Generated revisit consistency in `utils/analyze_revisit_consistency.py`:
-  planned-pose revisit pairs with generated-vs-generated PSNR, SSIM, MAE,
-  RMSE, and p90/p95/worst summaries.
+## Paper Read
 
-The remaining missing piece is a stronger set of learned revisit, retrieval,
-pose, occlusion, dynamic-event, and cost metrics.
+### MemCam
 
-## Source Papers
+Source: https://arxiv.org/abs/2603.26193
 
-- MemCam: https://arxiv.org/abs/2603.26193
-- Context-as-Memory: https://arxiv.org/abs/2506.03141
-- VMem: https://arxiv.org/abs/2506.18903
-- WorldMem: https://arxiv.org/abs/2504.12369
-- SPMem / spatial memory occlusion: https://arxiv.org/abs/2606.10299
-- OmniMem: https://arxiv.org/abs/2605.30519
+MemCam evaluates memory with explicit round-trip camera protocols:
 
-## Recommended Next Metrics
+- 90-degree round trip.
+- 360-degree round trip.
+- The generated video is split into two sequences; one side is reversed and
+  compared with the other side when the camera returns.
+- Reported metrics: PSNR, SSIM, LPIPS, FVD.
+- Ablates retrieval strategies: Recent, Random, TopK, and co-visibility.
+- Ablates context compression with both quality and seconds/frame.
 
-| Metric | What it catches | Source inspiration | Implementation status |
-| --- | --- | --- | --- |
-| Revisit consistency | Whether a returned view matches the earlier generated view at the same or similar pose | MemCam, Context-as-Memory, VMem, WorldMem | Implemented for base image metrics in `utils/analyze_revisit_consistency.py`; learned metrics still needed |
-| Cycle symmetry | Whether outbound frames match reversed inbound frames on round-trip trajectories | MemCam | Add paired segment comparison |
-| History-context comparison | Whether newly generated revisit frames match prior generated history, not just GT | Context-as-Memory | Add generated history pair table |
-| Tail revisit failure | Rare severe memory breaks hidden by means | All revisit papers | Add p90/p95/worst LPIPS, DINO distance, PSNR |
-| Retrieval overlap capture | How much of oracle/highest-overlap memory the policy captures | Context-as-Memory, MemCam | Mostly available through trace usefulness analysis |
-| Retrieval rank quality | Whether the policy ranks useful future memory high | RI/Belady policy work, Context-as-Memory | Extend traces to log all candidate scores |
-| Redundancy collapse | Whether selected memory degenerates into adjacent/recent frames | Context-as-Memory, VMem, OmniMem | Partly available through entropy/gini/age bins |
-| Long-range retrieval rate | Fraction of selections outside the recent window | VMem, OmniMem | Available from `memory_age`; add window-specific rates |
-| Pose-control error | Whether generated views follow the intended camera trajectory | VMem | Needs DUSt3R/COLMAP-style pose extraction |
-| Loop-closure pose error | Whether estimated pose at return matches estimated pose at start | VMem, WorldMem | Needs pose extraction |
-| Occlusion false-visible rate | Whether FOV/co-visibility retrieval selects memory that should be hidden | SPMem, VMem | Needs depth/geometry or richer overlap labels |
-| Dynamic/event recall | Whether changed scene state persists over time | WorldMem | Needs dynamic test cases or event labels |
-| Quality-cost frontier | Memory quality per second/frame, VRAM, and memory budget | MemCam, VMem, Context-as-Memory, OmniMem | Add run-time/VRAM logging from Slurm or torch |
+What matters for us:
 
-## Concrete Metric Definitions
+- Round-trip / cycle-return is the right evaluation shape.
+- Retrieval strategy comparison is more important than raw frame quality.
+- Seconds/frame belongs in the result table.
 
-### Revisit Consistency
+### VMem
 
-For matched generated-frame pairs `(i, j)` where camera poses are the same or
-close after a trajectory loop:
+Source: https://arxiv.org/abs/2506.18903
 
-- `revisit_psnr`, `revisit_ssim`, `revisit_lpips`
-- `revisit_dino_distance`, `revisit_clip_distance`
-- `revisit_frame_gap = j - i`
-- `revisit_pose_delta_t`, `revisit_pose_delta_rot_deg`
+VMem says standard long-term NVS benchmarks are not enough because they rarely
+revisit observed regions. It introduces cycle trajectories that go out and
+return along the same path. It evaluates return trajectories and compares
+retrieval strategies:
 
-Aggregate by gap bucket and by trajectory phase:
+- Temporal retrieval.
+- Camera-distance retrieval.
+- Field-of-view retrieval.
+- Surfel-indexed retrieval.
 
-- `mean`, `median`, `p90`, `p95`, `worst`
-- `gap_76_151`, `gap_152_303`, `gap_304_plus`
+VMem metrics include:
 
-This is more direct than GT-only quality because a generated world can be
-internally consistent while differing from GT, or match GT locally while
-forgetting earlier generated content.
+- LPIPS, PSNR, SSIM for generated view quality.
+- FID for generated-view distribution quality.
+- Rdist and Tdist for camera-control accuracy, using DUSt3R-extracted poses.
+- Context-view count K and speed/cost trade-off.
 
-### Cycle Symmetry
+What matters for us:
 
-For a round-trip trajectory, compare the outbound segment to the reversed
-inbound segment:
+- We need a cycle/revisit protocol over Newton 60s outputs.
+- We need pose-control error, not just image metrics.
+- We need retrieval-strategy ablations that match our policies.
+- We need context budget versus speed and quality.
 
-- `cycle_lpips_mean`
-- `cycle_lpips_p95`
-- `cycle_dino_distance_mean`
-- `cycle_psnr_min`
+### SPMem / Spatial Memory Occlusion
 
-MemCam uses 90 deg and 360 deg round-trip protocols. For the Newton 60s runs,
-this should be reported separately for each policy and budget because memory
-failures should widen as the return gap grows.
+Source: https://arxiv.org/abs/2606.10299
 
-### History-Context Comparison
+This is not a video-generation paper, but it directly attacks a retrieval
+failure mode relevant to our policies: spatial recall and visibility are not
+the same thing. A coordinate or FOV score can recall a location behind a wall,
+but that does not mean it is visible for the current query.
 
-Context-as-Memory separates two views of memory capability:
+Reported ideas include:
 
-- GT comparison: generated revisit frame vs ground truth frame.
-- History comparison: generated revisit frame vs earlier generated frame.
+- Delta-Hit@5 for spatial recall.
+- Separate visibility scoring.
+- Behind-wall false-visible tests.
+- Ray/voxel DDA visibility predicates.
+- Exact tests such as McNemar for visibility improvements.
 
-We should keep both. If a policy improves history comparison but not GT, it is
-remembering its own generated world but may be off-distribution. If it improves
-GT but not history comparison, it may be locally plausible but unstable.
+What matters for us:
 
-### Retrieval Overlap Capture
+- FOV overlap alone is not enough.
+- A memory policy can retrieve a spatially nearby but visually wrong/occluded
+  frame.
+- We should measure false-visible or occlusion-incorrect retrieval when labels
+  or geometry are available.
 
-For each target query with selected memory frame `s` and an oracle candidate
-`o` from unbounded or overlap labels:
+### WorldMem
 
-- `overlap_capture_ratio = overlap(s, target) / max_overlap(target)`
-- `overlap_gap = max_overlap(target) - overlap(s, target)`
-- `exact_oracle_match`
-- `near_oracle_match`, with a frame window such as 4 or 8 frames
-- `gap_gt_0_05_rate`, `gap_gt_0_10_rate`
+Source: https://arxiv.org/abs/2504.12369
 
-This is partly implemented in `utils/analyze_trace_usefulness.py`. The next
-improvement is logging all candidate overlaps and policy scores at selection
-time so we can compute top-k recall, MRR, and NDCG.
+WorldMem evaluates long-term world simulation with memory frames plus states
+such as poses and timestamps. The important parts are not just PSNR/LPIPS/rFID,
+but how they slice the evaluation:
 
-### Retrieval Rank Quality
+- Within-context-window versus beyond-context-window.
+- Memory retrieval strategy ablations: random, confidence filter, similarity
+  filter.
+- Timestamp/time-condition ablation for dynamic world state.
+- Memory context length ablation.
+- Predicted-pose versus ground-truth-pose ablation.
+- Retrieval latency, memory bank size, memory usage, and inference speed.
 
-When all candidate scores are logged:
+What matters for us:
 
-- `useful_hit_at_1`, `useful_hit_at_5`
-- `oracle_frame_rank`
-- `mrr_oracle`
-- `ndcg_overlap`
-- `spearman_policy_score_vs_future_use`
+- Report 60s policies by horizon/gap, not only one mean.
+- Separate static revisit memory from dynamic/time-state memory.
+- Add retrieval latency, memory footprint, and policy budget to summaries.
+- Track when extra memory becomes noise instead of help.
 
-This bridges current RI alignment with the retrieval-style metrics used in
-memory papers.
+### OmniMem
 
-### Redundancy and Long-Range Use
+Source: https://arxiv.org/abs/2605.30519
 
-Context-as-Memory and VMem both show that simple recent-frame selection can
-look okay short term but fail on revisits. Track:
+OmniMem is KV-memory retrieval rather than frame-memory retrieval, but its
+measurement framing is useful:
 
-- `recent_window_selected_frac`: selected age <= one segment
-- `long_range_selected_frac`: selected age > two segments
-- `non_adjacent_selected_frac`: selected frame not adjacent to another selected
-  context frame in the same section
-- `pose_spread_mean`: average pairwise pose distance among selected context
-  frames
-- `selected_entropy_norm` and `reuse_gini`, already partially available
+- Long-video quality.
+- Temporal consistency.
+- Dynamic degree / motion dynamics.
+- Long-range memory access versus local-window bias.
+- Union explosion / selected-memory buffer size.
+- Latency and memory footprint.
+- Head/query-specific retrieval specialization.
 
-### Pose-Control and Loop-Closure Error
+What matters for us:
 
-VMem evaluates camera alignment via estimated generated poses:
+- A good policy should not collapse to local recent frames.
+- Measure long-range retrieval rate and local-bias.
+- Measure selected-memory size/cost, not just output quality.
+- Dynamic content should not be suppressed by over-conservative memory.
 
-- `rdist`: rotation distance between estimated generated pose and GT/planned
-  pose
-- `tdist`: translation distance after sequence-relative normalization
-- `loop_rdist`: estimated return pose vs estimated start pose
-- `loop_tdist`: estimated return pose vs estimated start pose
+### I3DM
 
-This needs a pose estimator such as DUSt3R/COLMAP and should be treated as a
-heavier metric tier.
+Source: https://arxiv.org/abs/2603.23413
 
-### Occlusion-Aware Retrieval
+I3DM is directly relevant because it criticizes naive camera-FOV retrieval:
+FOV overlap ignores occlusion and can retrieve historical frames that are not
+actually visible from the target view. It also evaluates revisit consistency,
+generation fidelity, and camera-control precision.
 
-SPMem is not a video-generation paper, but its evaluation point is highly
-relevant: recall and visibility are different. For MemCam-style FOV retrieval,
-we should not reward a policy for retrieving a frame that is pose-near but
-occluded from the target view.
+What matters for us:
 
-Possible metrics:
+- Add an occlusion-aware retrieval audit if possible.
+- Distinguish "pose/FOV relevant" from "visibly useful".
+- Track camera control precision separately from visual consistency.
 
-- `false_visible_rate`: selected by FOV/covisibility but overlap/depth oracle
-  says hidden
-- `occlusion_precision`: selected memory has visible overlap with target
-- `behind_wall_hit_rate`: for synthetic occlusion stress tests
+## Metrics We Should Actually Add
 
-This needs geometry, depth, or stronger overlap labels than the current traces.
+### 1. Retrieval Quality Metrics
 
-### Quality-Cost Frontier
+These are the most important for comparing `baseline`, `fifo_*`, `ri_*`,
+`slam_*`, and future policies.
 
-For each policy and budget:
+- `oracle_overlap_capture`: selected overlap divided by the best available
+  overlap for that target.
+- `oracle_overlap_gap`: best available overlap minus selected overlap.
+- `hit_at_1_oracle`: selected frame equals oracle best frame.
+- `hit_at_k_oracle`: selected frame is within the oracle top-k candidates.
+- `mrr_oracle`: reciprocal rank of the selected frame under oracle overlap.
+- `ndcg_overlap`: ranking quality if we log all candidate overlap scores.
+- `long_range_hit_rate`: selected frame age above one or two chunks.
+- `local_bias_rate`: selected frame age inside the recent context window.
+- `redundant_selection_rate`: multiple selected frames in a section are near
+  duplicates by frame index or pose.
+- `unique_view_coverage`: number of distinct pose/view clusters covered by
+  selected memories.
+
+Already close in repo:
+
+- `utils/analyze_trace_usefulness.py` has upperbound alignment against
+  unbounded trace selections.
+- `utils/analyze_memory_policies.py` has overlap-label coverage/oracle recall.
+- Need all-candidate logging for MRR/NDCG/top-k ranking.
+
+### 2. Revisit / Cycle Metrics
+
+This should follow MemCam and VMem, but with better slicing:
+
+- Define return/cycle pairs from trajectory structure or overlap labels.
+- Compare outward and return views at matched or near-matched camera poses.
+- Report by gap bucket: one chunk, two chunks, four chunks, 60s tail.
+- Report worst-k failures, not only mean.
+
+Metrics:
+
+- `cycle_lpips`
+- `cycle_fid_or_fvd`
+- `cycle_clip_region_score` only if used as a secondary semantic diagnostic.
+- `cycle_identity_or_region_consistency` if object/region masks are available.
+- `return_failure_rate`: percentage of matched return views above a failure
+  threshold.
+
+Pixel metrics can be included only to match MemCam/VMem tables; they are not
+the central claim.
+
+### 3. Camera-Control Metrics
+
+From VMem/I3DM:
+
+- `Rdist`: rotation distance between intended/GT pose and generated estimated
+  pose.
+- `Tdist`: translation distance after sequence-relative normalization.
+- `loop_Rdist`: generated return pose versus generated starting pose.
+- `loop_Tdist`: generated return pose versus generated starting pose.
+
+Needed implementation:
+
+- Run DUSt3R/COLMAP/CUT3R pose extraction on generated frames.
+- Compare estimated generated poses with planned poses from the manifest.
+
+### 4. Occlusion-Aware Retrieval Metrics
+
+From SPMem, VMem, and I3DM:
+
+- `false_visible_rate`: selected memory has high pose/FOV score but should be
+  occluded or non-visible.
+- `visible_precision_at_1`: selected memory is actually visible/useful.
+- `behind_wall_hit_rate`: stress-test metric for occlusion scenes.
+- `fov_vs_visible_gap`: FOV overlap score minus visibility-aware score.
+
+Needed implementation:
+
+- Use depth/pointmap/geometry if available.
+- Or start with Context-as-Memory overlap labels as a proxy, then add an
+  occlusion stress subset later.
+
+### 5. Long-Range Memory Behavior
+
+From VMem/OmniMem/WorldMem:
+
+- `age_distribution`: selected memory age histogram.
+- `long_range_selection_rate`: age > 152, age > 304, etc.
+- `memory_reuse_gini`: whether one frame dominates retrieval.
+- `selection_entropy`: whether policy uses diverse memories.
+- `view_cluster_entropy`: diversity of selected camera views.
+- `budget_saturation_rate`: how often budget is full.
+- `fallback_rate`: how often no useful memory was selected.
+
+Some of this already exists in `utils/analyze_access_traces.py`; the missing
+piece is pose/view clustering and explicit local-bias reporting.
+
+### 6. Dynamic / Time-State Metrics
+
+From WorldMem:
+
+- `event_state_recall`: if an object/state changes, does the later generation
+  preserve the changed state?
+- `stale_memory_error_rate`: policy retrieves an old state when a newer state
+  should override it.
+- `time_condition_ablation`: compare policies with/without recency or timestamp
+  awareness.
+
+This needs labeled dynamic scenes or synthetic probes.
+
+### 7. Cost And Scaling Metrics
+
+From MemCam, VMem, WorldMem, OmniMem:
 
 - `seconds_per_frame`
+- `retrieval_latency_ms`
 - `peak_vram_gb`
-- `stored_memory_size_mean`
-- `fallback_rate`
-- `revisit_lpips_p95`
-- `fvd`
-- `quality_per_gb` and `quality_per_second` style ratios for ranking
+- `stored_memory_size`
+- `candidate_count`
+- `selected_context_count`
+- `quality_vs_budget`
+- `quality_vs_latency`
 
-VMem, MemCam, Context-as-Memory, and OmniMem all report some form of
-quality-speed-memory trade-off. We should make this first-class for the Newton
-runs because a policy can be scientifically interesting but operationally poor.
+For Newton 60s, every policy summary should include cost columns next to
+retrieval and revisit columns.
 
-## Implementation Plan
+## Immediate Plan For Current Newton 60s Outputs
 
-### Tier 0: No Rerun Needed
+No new generation needed:
 
-1. Run generated-vs-generated revisit pair metrics using
-   `utils/analyze_revisit_consistency.py`.
-2. Add tail summaries for all frame and revisit metrics: p90, p95, worst.
-3. Add long-range retrieval fractions from existing `memory_age`.
-4. Combine evaluator summaries with access summaries into one policy/budget
-   report table.
+1. Use `trace_usefulness_analysis` as the first serious metric source.
+2. Add missing local-bias and long-range retrieval rates to
+   `utils/analyze_access_traces.py`.
+3. Add a policy summary joiner:
+   - eval metrics from `eval/`
+   - access trace metrics
+   - trace usefulness/oracle metrics
+   - runtime/status metrics
+4. Report every metric by policy and budget:
+   - `baseline`
+   - `fifo_b32`, `fifo_b64`, `fifo_b128`
+   - `ri_b32_dino_rgb`, `ri_b64_dino_rgb`
+   - `slam_b16_covisibility`, `slam_b32_covisibility`,
+     `slam_b64_covisibility`, `slam_b96_covisibility`
 
-### Tier 1: Light Instrumentation For Next Runs
+Light new analysis:
 
-1. Log all candidate memory frames, their overlap, and their policy score.
-2. Log selected rank under each policy score and under overlap oracle.
-3. Log per-section selected context frame lists.
-4. Log wall-clock seconds/frame and `torch.cuda.max_memory_allocated()`.
+1. Add cycle-return pair construction from the manifest trajectory.
+2. Use it to define *which frames should be compared*, but do not present raw
+   PSNR/SSIM as the main memory result.
+3. Add DUSt3R/COLMAP pose extraction if we want VMem-style Rdist/Tdist.
 
-### Tier 2: Heavy/Optional
+Next-run instrumentation:
 
-1. Add DUSt3R/COLMAP pose extraction for `rdist`, `tdist`, and loop closure.
-2. Add occlusion-aware overlap with depth/geometry.
-3. Add object/region identity metrics with masks or tracks for revisit regions.
+1. Log all retrieval candidates per query:
+   - frame index
+   - age
+   - overlap / covisibility
+   - policy score
+   - rank
+   - selected flag
+2. Log retrieval latency and memory size.
+3. Log per-section selected context set.
 
-## Priority For The Current Newton 60s Sweep
+## What Not To Do
 
-The highest-value additions are:
-
-1. Generated-vs-generated revisit consistency.
-2. P95/worst revisit failure metrics.
-3. Long-range retrieval rate and redundancy collapse.
-4. Overlap capture ratio vs oracle/unbounded.
-5. Quality-cost frontier per policy and budget.
-
-These use the artifacts we already expect from the current jobs and should make
-the policy comparison much more diagnostic than mean PSNR/SSIM/LPIPS/FVD alone.
+- Do not claim PSNR/SSIM/MAE/RMSE are memory metrics.
+- Do not add a random script just because it is easy to compute.
+- Do not call DINO/CLIP/LPIPS "retrieval metrics"; they are output similarity
+  diagnostics unless tied to a retrieval/cycle/visibility protocol.
+- Do not average away the 60s tail; memory failures are tail failures.
