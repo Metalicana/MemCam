@@ -26,8 +26,8 @@ CUT3R checkpoints are not committed to this repo. Put one of these under
 `CUT3R/src/` on Newton:
 
 ```bash
-cd ~/MemCam/CUT3R
-gdown --fuzzy https://drive.google.com/file/d/1Asz-ZB3FfpzZYwunhQvNPZEUA8XUNAYD/view?usp=drive_link
+cd ~/MemCam/CUT3R/src
+gdown 1Asz-ZB3FfpzZYwunhQvNPZEUA8XUNAYD -O cut3r_512_dpt_4_64.pth
 ```
 
 Expected default path:
@@ -37,6 +37,38 @@ Expected default path:
 ```
 
 If you use the 224 checkpoint, pass `CUT3R_SIZE=224` and set `CUT3R_MODEL`.
+
+## CUT3R Environment
+
+Install the CUT3R Python dependencies once inside the `memcam` env:
+
+```bash
+cd ~/MemCam
+python -m pip install hydra-core omegaconf roma trimesh viser gradio matplotlib tqdm opencv-python scipy einops tensorboard 'pyglet<2' 'huggingface-hub[torch]>=0.22' pillow==10.3.0 h5py accelerate transformers scikit-learn
+```
+
+Before running CUT3R, make sure the shell is inside a GPU allocation:
+
+```bash
+nvidia-smi
+python - <<'PY'
+import torch
+print("torch", torch.__version__)
+print("cuda available", torch.cuda.is_available())
+print("device count", torch.cuda.device_count())
+print("device", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)
+PY
+```
+
+If CUDA is not available, start a fresh GPU shell:
+
+```bash
+srun -p normal --gres=gpu:nvidia_h100_pcie:1 --time=5:00:00 --cpus-per-task=16 --mem=128G --exclude=evc22 --pty bash
+module load cuda
+module load ffmpeg
+module load anaconda
+conda activate memcam
+```
 
 ## Smoke Test
 

@@ -202,8 +202,11 @@ def main():
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():
-        print("CUDA unavailable; falling back to CPU.")
-        device = "cpu"
+        raise RuntimeError(
+            "CUT3R was requested with --device cuda, but torch.cuda.is_available() is false. "
+            "Run inside an allocated GPU job/srun, check nvidia-smi, and verify PyTorch can see CUDA "
+            "before starting CUT3R."
+        )
 
     print(f"Loading CUT3R model: {args.model_path}")
     model = ARCroco3DStereo.from_pretrained(str(args.model_path)).to(device)
