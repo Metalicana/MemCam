@@ -29,7 +29,7 @@ MANIFEST="${MANIFEST:-$MEMCAM_ROOT/testbeds/context_memory/manifest.jsonl}"
 ROOT="${ROOT:-$HOME/memcam_results/context_memory_60s}"
 METRICS_DIR="${METRICS_DIR:-$ROOT/eval_metrics_60s}"
 OUT_DIR="${OUT_DIR:-$ROOT/prof_60s_analysis}"
-MECHANISM_OUT_DIR="${MECHANISM_OUT_DIR:-$OUT_DIR/memory_mechanisms}"
+MECHANISM_OUT_DIR="${MECHANISM_OUT_DIR:-$OUT_DIR/bounded_memory_drivers}"
 DATASET_ROOT="${DATASET_ROOT:-}"
 
 RUNS="${RUNS:-baseline,fifo_b32,fifo_b64,ri_b32_dino_rgb,ri_b64_dino_rgb,slam_b16_covisibility,slam_b32_covisibility,slam_b64_covisibility}"
@@ -49,9 +49,6 @@ FVD_IMAGE_SIZE="${FVD_IMAGE_SIZE:-224}"
 FVD_BACKEND="${FVD_BACKEND:-styleganv_i3d}"
 FVD_CACHE_DIR="${FVD_CACHE_DIR:-$HF_HOME/memcam_fvd}"
 TOP_K="${TOP_K:-8}"
-NEAR_FRAME_WINDOW="${NEAR_FRAME_WINDOW:-4}"
-MAX_TIMELINE_VIDEOS="${MAX_TIMELINE_VIDEOS:-3}"
-WRITE_RETAINED_LONG="${WRITE_RETAINED_LONG:-0}"
 
 mkdir -p "$MEMCAM_ROOT/logs" "$METRICS_DIR" "$OUT_DIR" "$MECHANISM_OUT_DIR"
 cd "$MEMCAM_ROOT"
@@ -181,21 +178,16 @@ fi
 "${report_cmd[@]}"
 
 echo
-echo "Building trace-backed memory mechanism figures"
+echo "Building bounded-vs-unbounded memory driver figures"
 mechanism_cmd=(
-  python utils/analyze_memory_mechanisms.py
+  python utils/analyze_bounded_memory_drivers.py
   --root "$ROOT"
+  --metrics_dir "$METRICS_DIR"
   --runs "$RUNS"
   --baseline_run "$BASELINE_RUN"
-  --durations 60
+  --duration 60
   --output_dir "$MECHANISM_OUT_DIR"
-  --near_frame_window "$NEAR_FRAME_WINDOW"
-  --max_timeline_videos "$MAX_TIMELINE_VIDEOS"
 )
-
-if [ "$WRITE_RETAINED_LONG" = "1" ]; then
-  mechanism_cmd+=(--write_retained_long)
-fi
 
 "${mechanism_cmd[@]}"
 

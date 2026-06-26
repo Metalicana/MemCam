@@ -26,21 +26,20 @@ $HOME/memcam_results/context_memory_60s/prof_60s_analysis/
     ├── joined_memory_quality.csv
     ├── lpips_time_buckets.csv
     └── top_lpips_wins.csv
-└── memory_mechanisms/
+└── bounded_memory_drivers/
     ├── report.md
     ├── figures/
-    │   ├── 01_retrieval_overlap_vs_unbounded.png
-    │   ├── 02_preserved_needed_frames_vs_fifo.png
-    │   ├── 03_eviction_regret.png
-    │   ├── 04_retained_age_distribution.png
-    │   └── 05_retained_timeline_row_*.png
+    │   ├── 01_quality_headline.png
+    │   ├── 02_reference_age_shift_vs_unbounded.png
+    │   ├── 03_stale_reference_rate.png
+    │   ├── 04_age_overlap_tradeoff.png
+    │   └── 05_lpips_driver_scatter.png
     └── tables/
-        ├── retrieval_overlap_targets.csv
-        ├── retrieval_overlap_summary.csv
-        ├── preservation_vs_fifo.csv
-        ├── eviction_regret_events.csv
-        ├── eviction_regret_summary.csv
-        └── retained_age_summary.csv
+        ├── run_trace_summary.csv
+        ├── paired_target_deltas.csv
+        ├── paired_run_summary.csv
+        ├── quality_summary.csv
+        └── video_driver_quality.csv
 ```
 
 The default run set excludes incomplete 60s policies:
@@ -91,34 +90,34 @@ python utils/build_prof_60s_analysis.py \
   --manifest testbeds/context_memory/manifest.jsonl
 ```
 
-## Mechanism-Only Trace Analysis
+## Bounded-Vs-Unbounded Driver Analysis
 
 If the generated runs already have `access_traces/*.jsonl`, this is the fastest
-analysis for the advisor question:
+trace-side analysis for the advisor question. If `eval_metrics_60s` is also
+present, it joins per-video LPIPS deltas to the trace behavior.
 
 ```bash
 cd ~/MemCam
 ROOT="$HOME/memcam_results/context_memory_60s"
 RUNS="baseline,fifo_b32,fifo_b64,ri_b32_dino_rgb,ri_b64_dino_rgb,slam_b16_covisibility,slam_b32_covisibility,slam_b64_covisibility"
 
-python utils/analyze_memory_mechanisms.py \
+python utils/analyze_bounded_memory_drivers.py \
   --root "$ROOT" \
+  --metrics_dir "$ROOT/eval_metrics_60s" \
   --runs "$RUNS" \
   --baseline_run baseline \
-  --durations 60 \
-  --output_dir "$ROOT/prof_60s_analysis/memory_mechanisms" \
-  --near_frame_window 4 \
-  --max_timeline_videos 3
+  --duration 60 \
+  --output_dir "$ROOT/prof_60s_analysis/bounded_memory_drivers"
 ```
 
-The three claims it tests are:
+This is the advisor-facing mechanism analysis. It treats unbounded as the
+comparison baseline, not as an oracle. It tests:
 
-- Retrieval overlap: when unbounded retrieves frame X, does a bounded run still
-  have X available, and does it actually select X?
-- Preservation versus FIFO: how often does the bounded method keep an
-  unbounded-needed frame that matched-budget FIFO no longer has?
-- Eviction regret: after a policy evicts frame X, does unbounded later retrieve
-  X or a nearby frame?
+- Did the bounded policy reduce the candidate menu size?
+- Did it shift selected references newer or older than unbounded?
+- Did it reduce very stale selected references?
+- Did it trade geometric overlap for better LPIPS?
+- At video level, do LPIPS wins line up with those retrieval shifts?
 
 ## Interpretation
 
@@ -135,5 +134,5 @@ Then point to:
 - `02_percent_improvement_vs_unbounded.png` for the bounded-vs-unbounded gap.
 - `03_memory_behavior_vs_quality.png` for the mechanism.
 - `05_biggest_lpips_wins_contact_sheet.png` for examples.
-- `memory_mechanisms/report.md` for the trace-backed answer to what each policy
-  retained, what FIFO discarded, and whether evictions were later regretted.
+- `bounded_memory_drivers/report.md` for the trace-backed bounded-vs-unbounded
+  mechanism story.

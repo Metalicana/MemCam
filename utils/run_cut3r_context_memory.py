@@ -192,9 +192,23 @@ def main():
 
     # CUT3R expects imports relative to its repository root and checkpoint dir.
     sys.path.insert(0, str(args.cut3r_root.resolve()))
+    sys.path.insert(0, str((args.cut3r_root / "src" / "croco").resolve()))
     from add_ckpt_path import add_path_to_dust3r
 
     add_path_to_dust3r(str(args.model_path.resolve()))
+    if args.device == "cuda":
+        try:
+            from models.curope import cuRoPE2D  # noqa: F401
+        except Exception as exc:
+            raise RuntimeError(
+                "CUT3R CUDA inference requires the compiled RoPE2D extension. "
+                "Compile it on the GPU node with:\n"
+                "  cd $HOME/MemCam/CUT3R/src/croco/models/curope\n"
+                "  python setup.py build_ext --inplace\n"
+                "Then rerun the CUT3R smoke job. Without this extension CUT3R falls "
+                "back to a slow PyTorch RoPE path that crashes on CUT3R's pose-token "
+                "position sentinel."
+            ) from exc
     from demo import prepare_input, prepare_output
     from src.dust3r.inference import inference
     from src.dust3r.model import ARCroco3DStereo
