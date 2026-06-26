@@ -239,6 +239,9 @@ def describe_quality_summaries(summary_paths):
             continue
 
         by_duration = summary.get("by_duration", {})
+        metric_config = summary.get("metric_config", {})
+        learned_metrics = metric_config.get("learned_metrics", [])
+        video_distribution_metrics = metric_config.get("video_distribution_metrics", [])
         metric_names = set()
         for duration_summary in by_duration.values():
             for key, value in duration_summary.items():
@@ -250,6 +253,8 @@ def describe_quality_summaries(summary_paths):
                 "run_name": infer_run_name(summary_path),
                 "durations": ",".join(sorted(by_duration.keys(), key=lambda item: int(item))),
                 "metrics_present": ",".join(sorted(metric_names)),
+                "learned_metrics_config": ",".join(learned_metrics),
+                "video_distribution_metrics_config": ",".join(video_distribution_metrics),
             }
         )
     return rows
@@ -350,6 +355,69 @@ def write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def print_inventory(source_rows, requested_runs, requested_metrics, requested_durations):
+    if not source_rows:
+        print("[diagnostic] No summary files were discovered in --metrics_dirs.")
+        return
+
+    print("[diagnostic] Discovered summary files:")
+    for row in source_rows:
+        path = row.get("source_path", "")
+        run_name = row.get("run_name") or row.get("runs") or "unknown"
+        durations = row.get("durations") or row.get("duration_inferred") or ""
+        metrics = row.get("metrics_present", "")
+        learned = row.get("learned_metrics_config", "")
+        video_metrics = row.get("video_distribution_metrics_config", "")
+        suffix_parts = []
+        if learned:
+            suffix_parts.append(f"learned_config={learned}")
+        if video_metrics:
+            suffix_parts.append(f"video_config={video_metrics}")
+        suffix = f" ({'; '.join(suffix_parts)})" if suffix_parts else ""
+        print(f"  - run={run_name} durations={durations} metrics={metrics}{suffix}")
+        print(f"    {path}")
+
+    rows_by_run = {}
+    for row in source_rows:
+        run_name = row.get("run_name")
+        if run_name:
+            rows_by_run.setdefault(run_name, []).append(row)
+
+    missing_runs = [run_name for run_name in requested_runs if run_name not in rows_by_run]
+    if missing_runs:
+        print(
+            "[diagnostic] Requested runs with no discovered summary.json: "
+            + ", ".join(missing_runs)
+        )
+
+    for run_name in requested_runs:
+        run_rows = rows_by_run.get(run_name, [])
+        if not run_rows:
+            continue
+        available_durations = set()
+        available_metrics = set()
+        for row in run_rows:
+            available_durations.update(parse_list(row.get("durations", "")))
+            available_metrics.update(parse_list(row.get("metrics_present", "")))
+        for metric in requested_metrics:
+            if metric not in available_metrics:
+                print(
+                    f"[diagnostic] {run_name}: missing metric '{metric}'. "
+                    f"Available metrics: {', '.join(sorted(available_metrics)) or 'none'}"
+                )
+            missing_durations = [
+                str(duration)
+                for duration in requested_durations
+                if str(duration) not in available_durations
+            ]
+            if missing_durations:
+                print(
+                    f"[diagnostic] {run_name}: missing requested durations "
+                    f"{', '.join(missing_durations)}. "
+                    f"Available durations: {', '.join(sorted(available_durations, key=int)) or 'none'}"
+                )
 
 
 def table_rows(rows, runs, labels, durations, metrics):
@@ -560,6 +628,7 @@ def main():
     rows = table_rows(raw_rows, runs=runs, labels=labels, durations=durations, metrics=metrics)
     if source_rows:
         print(f"Wrote: {args.output_dir / 'discovered_summary_files.csv'}")
+    print_inventory(source_rows, runs, metrics, durations)
     write_csv(args.output_dir / "duration_metric_values.csv", rows)
     print(f"Wrote: {args.output_dir / 'duration_metric_values.csv'}")
 
