@@ -111,7 +111,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate duration-prefix curves from longer Context-as-Memory outputs. "
-            "Example: compute 10/20/40/60s FVD from generated 60s videos."
+            "Example: compute 10/20/30/60s FVD/LPIPS from generated 60s videos."
         )
     )
     parser.add_argument("--manifest", type=Path, default=Path("testbeds/context_memory/manifest.jsonl"))
@@ -119,7 +119,7 @@ def main():
     parser.add_argument("--metrics_dir", type=Path, required=True)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--source_duration", type=int, default=60)
-    parser.add_argument("--eval_durations", type=str, default="10,20,40,60")
+    parser.add_argument("--eval_durations", type=str, default="10,20,30,60")
     parser.add_argument("--rows", type=str, default=None)
     parser.add_argument("--start_row", type=int, default=None)
     parser.add_argument("--end_row", type=int, default=None)
@@ -130,7 +130,7 @@ def main():
     parser.add_argument(
         "--learned_metrics",
         type=str,
-        default="fvd",
+        default="lpips,fvd",
         help="Comma list: fvd, lpips, dino, clip. Use lpips,fvd for LPIPS plus FVD.",
     )
     parser.add_argument("--metric_device", type=str, default="cuda")
