@@ -47,6 +47,50 @@ cd ~/MemCam
 python -m pip install hydra-core omegaconf roma trimesh viser gradio matplotlib tqdm opencv-python scipy einops tensorboard 'pyglet<2' 'huggingface-hub[torch]>=0.22' pillow==10.3.0 h5py accelerate transformers scikit-learn
 ```
 
+Compile CUT3R's RoPE CUDA extension once on a GPU node. CUT3R may start without
+this extension, but CUDA inference can crash in the fallback PyTorch RoPE path.
+
+```bash
+cd ~/MemCam/CUT3R/src/croco/models/curope
+
+module load gcc || true
+which gcc
+which g++
+gcc --version
+g++ --version
+
+MAX_JOBS=4 TORCH_CUDA_ARCH_LIST="9.0" \
+CC="$(which gcc)" CXX="$(which g++)" CUDAHOSTCXX="$(which g++)" \
+python setup.py build_ext --inplace
+```
+
+If `g++` is missing or compilation fails with `cannot execute 'cc1plus'`, install
+a compiler in the conda environment and retry:
+
+```bash
+conda install -c conda-forge gcc_linux-64 gxx_linux-64
+
+cd ~/MemCam/CUT3R/src/croco/models/curope
+MAX_JOBS=4 TORCH_CUDA_ARCH_LIST="9.0" \
+CC="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-gcc" \
+CXX="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++" \
+CUDAHOSTCXX="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++" \
+python setup.py build_ext --inplace
+```
+
+Verify the extension import from the repo root:
+
+```bash
+cd ~/MemCam
+python - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("CUT3R/src/croco").resolve()))
+from models.curope import cuRoPE2D
+print("cuRoPE2D OK:", cuRoPE2D)
+PY
+```
+
 Before running CUT3R, make sure the shell is inside a GPU allocation:
 
 ```bash
