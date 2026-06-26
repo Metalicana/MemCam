@@ -57,6 +57,22 @@ METRIC_LABELS = {
     "worldscore_camera_control_score_mean": "WorldScore-style camera score ↑",
 }
 
+LOWER_IS_BETTER = {
+    "fvd",
+    "lpips_alex",
+    "dino_distance",
+    "clip_image_distance",
+    "rotation_error_deg_mean_mean",
+    "rotation_error_deg_p90_mean",
+    "translation_error_scale_only_mean_mean",
+    "translation_error_scale_only_p90_mean",
+    "translation_error_sim3_mean_mean",
+    "translation_error_sim3_p90_mean",
+    "endpoint_rotation_error_deg_mean",
+    "endpoint_translation_error_scale_only_mean",
+    "loop_endpoint_distance_error_mean",
+}
+
 COLORS = {
     "Unbounded": "#555555",
     "FIFO": "#2f7fbc",
@@ -357,6 +373,55 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+def metric_improvement_pct(metric, reference_value, value):
+    reference_value = safe_float(reference_value)
+    value = safe_float(value)
+    if reference_value is None or value is None or abs(reference_value) < 1e-12:
+        return None
+    if metric in LOWER_IS_BETTER:
+        return 100.0 * (reference_value - value) / abs(reference_value)
+    return 100.0 * (value - reference_value) / abs(reference_value)
+
+
+def relative_rows(rows, runs, labels, durations, metrics, reference_run):
+    by_key = {
+        (row["run_name"], int(row["duration_sec"]), row["metric"]): row
+        for row in rows
+    }
+    output = []
+    for metric in metrics:
+        for duration in durations:
+            reference = by_key.get((reference_run, duration, metric))
+            reference_value = reference.get("value") if reference else None
+            for run_name in runs:
+                if run_name == reference_run:
+                    continue
+                row = by_key.get((run_name, duration, metric))
+                value = row.get("value") if row else None
+                delta = None
+                if safe_float(value) is not None and safe_float(reference_value) is not None:
+                    delta = safe_float(value) - safe_float(reference_value)
+                output.append(
+                    {
+                        "metric": metric,
+                        "reference_run": reference_run,
+                        "reference_label": labels.get(reference_run, reference_run),
+                        "run_name": run_name,
+                        "label": labels.get(run_name, run_name),
+                        "duration_sec": duration,
+                        "value": value,
+                        "reference_value": reference_value,
+                        "delta_value_minus_reference": delta,
+                        "improvement_pct_vs_reference": metric_improvement_pct(
+                            metric, reference_value, value
+                        ),
+                        "source_path": row.get("source_path") if row else None,
+                        "reference_source_path": reference.get("source_path") if reference else None,
+                    }
+                )
+    return output
+
+
 def print_inventory(source_rows, requested_runs, requested_metrics, requested_durations):
     if not source_rows:
         print("[diagnostic] No summary files were discovered in --metrics_dirs.")
@@ -549,6 +614,57 @@ def save_combined_plot(rows, runs, labels, durations, metrics, output_dir, title
     return path
 
 
+def save_relative_plot(rows, runs, labels, durations, metric, output_dir, title_prefix, reference_run):
+    rel_rows = [
+        row
+        for row in rows
+        if row["metric"] == metric and row["run_name"] != reference_run
+    ]
+    if not any(safe_float(row.get("improvement_pct_vs_reference")) is not None for row in rel_rows):
+        return None
+
+    fig, ax = plt.subplots(figsize=(8.8, 5.4))
+    for run_name in runs:
+        if run_name == reference_run:
+            continue
+        label = labels.get(run_name, run_name)
+        values = []
+        for duration in durations:
+            value = next(
+                (
+                    safe_float(row.get("improvement_pct_vs_reference"))
+                    for row in rel_rows
+                    if row["run_name"] == run_name and int(row["duration_sec"]) == duration
+                ),
+                None,
+            )
+            values.append(value)
+        if any(value is not None for value in values):
+            ax.plot(
+                durations,
+                values,
+                marker="o",
+                linewidth=2.4,
+                markersize=7,
+                label=label,
+                color=COLORS.get(label),
+            )
+
+    ax.axhline(0.0, color="#777777", linewidth=1.0, linestyle="--")
+    ax.set_xlabel("Duration (seconds)")
+    reference_label = labels.get(reference_run, reference_run)
+    ax.set_ylabel(f"Improvement vs {reference_label} (%)")
+    ax.set_xticks(durations)
+    setup_axis(ax, f"{title_prefix}{METRIC_LABELS.get(metric, metric)} improvement vs {reference_label}")
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    path = output_dir / f"duration_curve_{metric}_improvement_vs_{reference_run}.png"
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    print(f"Wrote: {path}")
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot FVD/LPIPS curves across Context-as-Memory durations."
@@ -574,6 +690,12 @@ def main():
     parser.add_argument("--run_labels", type=str, default=None)
     parser.add_argument("--durations", type=str, default="10,20,40,60")
     parser.add_argument("--metrics", type=str, default=None)
+    parser.add_argument(
+        "--reference_run",
+        type=str,
+        default="baseline",
+        help="Reference run used for improvement plots when present in --runs.",
+    )
     parser.add_argument(
         "--cut3r_duration",
         type=int,
@@ -632,6 +754,20 @@ def main():
     write_csv(args.output_dir / "duration_metric_values.csv", rows)
     print(f"Wrote: {args.output_dir / 'duration_metric_values.csv'}")
 
+    rel_rows = []
+    if args.reference_run in runs:
+        rel_rows = relative_rows(
+            rows=rows,
+            runs=runs,
+            labels=labels,
+            durations=durations,
+            metrics=metrics,
+            reference_run=args.reference_run,
+        )
+        relative_path = args.output_dir / f"duration_metric_values_relative_to_{args.reference_run}.csv"
+        write_csv(relative_path, rel_rows)
+        print(f"Wrote: {relative_path}")
+
     title_prefix = args.title_prefix
     if title_prefix and not title_prefix.endswith(" "):
         title_prefix += " "
@@ -646,6 +782,17 @@ def main():
             output_dir=args.output_dir,
             title_prefix=title_prefix,
         )
+        if rel_rows:
+            save_relative_plot(
+                rows=rel_rows,
+                runs=runs,
+                labels=labels,
+                durations=durations,
+                metric=metric,
+                output_dir=args.output_dir,
+                title_prefix=title_prefix,
+                reference_run=args.reference_run,
+            )
     save_combined_plot(
         rows=rows,
         runs=runs,
