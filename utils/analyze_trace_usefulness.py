@@ -620,6 +620,22 @@ def eviction_summary_rows(rows):
                     "eviction_rgb_nearest_distance",
                     [to_float(row.get("eviction_rgb_nearest_distance")) for row in group],
                 ),
+                **numeric_stats(
+                    "eviction_kcenter_radius",
+                    [to_float(row.get("eviction_kcenter_radius")) for row in group],
+                ),
+                **numeric_stats(
+                    "eviction_kcenter_nearest_archive_distance",
+                    [to_float(row.get("eviction_kcenter_nearest_archive_distance")) for row in group],
+                ),
+                **numeric_stats(
+                    "eviction_h2o_read_weight",
+                    [to_float(row.get("eviction_h2o_read_weight")) for row in group],
+                ),
+                **numeric_stats(
+                    "eviction_h2o_heavy_score",
+                    [to_float(row.get("eviction_h2o_heavy_score")) for row in group],
+                ),
             }
         )
     return output

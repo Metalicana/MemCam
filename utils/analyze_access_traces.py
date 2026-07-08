@@ -32,6 +32,21 @@ NUMERIC_EVICTION_FIELDS = [
     "eviction_coreset_quality",
     "eviction_coreset_similarity_mean",
     "eviction_coreset_similarity_max",
+    "eviction_kcenter_rank",
+    "eviction_kcenter_radius",
+    "eviction_kcenter_mean_radius",
+    "eviction_kcenter_removal_radius_increase",
+    "eviction_kcenter_archive_size",
+    "eviction_kcenter_nearest_archive_frame",
+    "eviction_kcenter_nearest_archive_distance",
+    "eviction_kcenter_selected_for_archive_frame",
+    "eviction_h2o_read_weight",
+    "eviction_h2o_selected_count",
+    "eviction_h2o_best_overlap",
+    "eviction_h2o_heavy_score",
+    "eviction_h2o_heavy_rank",
+    "eviction_h2o_recency_rank",
+    "eviction_h2o_recency_budget",
 ]
 
 

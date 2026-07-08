@@ -10,6 +10,8 @@ memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
 compute_facility_coreset_scores = memory_policies.compute_facility_coreset_scores
+compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
+compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 
@@ -80,6 +82,22 @@ def check_facility_coreset_requires_budget():
     except ValueError:
         return
     raise AssertionError("facility_coreset without a budget should fail")
+
+
+def check_kcenter_coreset_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="kcenter_coreset")
+    except ValueError:
+        return
+    raise AssertionError("kcenter_coreset without a budget should fail")
+
+
+def check_h2o_heavy_hitter_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="h2o_heavy_hitter")
+    except ValueError:
+        return
+    raise AssertionError("h2o_heavy_hitter without a budget should fail")
 
 
 def check_rarity_irreplaceability_scores():
@@ -191,6 +209,62 @@ def check_facility_coreset_scores():
     assert forced_scores[0] == float("inf")
 
 
+def check_kcenter_coreset_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        frame_idx: np.array([float(frame_idx), 1.0], dtype=np.float32)
+        for frame_idx in range(8)
+    }
+    scores, details = compute_kcenter_coreset_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        archive_frame_indices=list(range(8)),
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={7},
+        dino_features=dino_features,
+        visual_weight=0.0,
+        pose_weight=1.0,
+        return_details=True,
+    )
+    selected = {frame_idx for frame_idx, row in details.items() if row["kcenter_selected"]}
+    assert selected == {0, 7}
+    assert scores[7] == float("inf")
+    assert scores[0] > 0
+    assert scores[1] < 0 and scores[2] < 0
+    assert details[0]["kcenter_radius"] >= 0
+
+
+def check_h2o_heavy_hitter_scores():
+    stats = {
+        0: {"selection_overlap_sum": 0.0, "selected_count": 0, "best_selection_overlap": 0.0},
+        1: {"selection_overlap_sum": 6.0, "selected_count": 6, "best_selection_overlap": 0.9},
+        2: {"selection_overlap_sum": 0.1, "selected_count": 1, "best_selection_overlap": 0.1},
+        3: {"selection_overlap_sum": 0.0, "selected_count": 0, "best_selection_overlap": 0.0},
+        4: {"selection_overlap_sum": 0.0, "selected_count": 0, "best_selection_overlap": 0.0},
+    }
+    scores, details = compute_h2o_heavy_hitter_scores(
+        memory_frame_indices=[0, 1, 2, 3, 4],
+        memory_stats=stats,
+        budget=3,
+        forced_keep_frames={4},
+        recency_fraction=1 / 3,
+        return_details=True,
+    )
+    memory = FrameMemoryBuffer(policy="h2o_heavy_hitter", budget=3)
+    evicted = memory.update(
+        [0, 1, 2, 3, 4],
+        eviction_scores=scores,
+        protected_frames={4},
+    )
+    kept = set(memory.candidates())
+    assert 4 in kept
+    assert 1 in kept
+    assert len(kept) == 3
+    assert 0 in evicted or 2 in evicted or 3 in evicted
+    assert details[1]["h2o_read_weight"] == 6.0
+    assert details[4]["h2o_recent_keep"]
+
+
 if __name__ == "__main__":
     check_unbounded()
     check_fifo()
@@ -202,4 +276,8 @@ if __name__ == "__main__":
     check_slam_covisibility_scores()
     check_facility_coreset_requires_budget()
     check_facility_coreset_scores()
+    check_kcenter_coreset_requires_budget()
+    check_kcenter_coreset_scores()
+    check_h2o_heavy_hitter_requires_budget()
+    check_h2o_heavy_hitter_scores()
     print("memory policy checks passed")

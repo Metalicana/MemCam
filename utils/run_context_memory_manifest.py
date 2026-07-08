@@ -41,6 +41,8 @@ def main():
             "rarity_irreplaceability",
             "slam_covisibility",
             "facility_coreset",
+            "kcenter_coreset",
+            "h2o_heavy_hitter",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)

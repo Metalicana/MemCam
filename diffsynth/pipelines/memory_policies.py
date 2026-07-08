@@ -10,12 +10,16 @@ SUPPORTED_MEMORY_POLICIES = (
     "rarity_irreplaceability",
     "slam_covisibility",
     "facility_coreset",
+    "kcenter_coreset",
+    "h2o_heavy_hitter",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
     "rarity_irreplaceability",
     "slam_covisibility",
     "facility_coreset",
+    "kcenter_coreset",
+    "h2o_heavy_hitter",
 )
 
 
@@ -123,6 +127,9 @@ class FrameMemoryBuffer:
         if not stats or stats["selected_count"] == 0:
             return 0.0
         return stats["selection_overlap_sum"] / stats["selected_count"]
+
+    def stats_snapshot(self):
+        return {frame_idx: dict(stats) for frame_idx, stats in self._stats.items()}
 
     def __len__(self):
         return len(self._frames)
@@ -696,6 +703,305 @@ def compute_facility_coreset_scores(
             "coreset_pose_weight": float(pose_weight),
             "coreset_time_weight": float(time_weight),
             "coreset_similarity_sigma": float(similarity_sigma),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_kcenter_coreset_scores(
+    memory_frame_indices,
+    archive_frame_indices,
+    c2ws,
+    budget,
+    forced_keep_frames=None,
+    dino_features=None,
+    visual_weight=0.5,
+    pose_weight=0.5,
+    time_weight=0.0,
+    return_details=False,
+):
+    """Select memory frames by active-learning-style k-center coverage.
+
+    The selected set is built greedily by repeatedly finding the archive frame
+    currently farthest from any selected center, then adding the candidate memory
+    frame nearest to that farthest archive point. Higher returned scores mean
+    "keep"; unselected frames get low scores and are evicted by the buffer.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    archive_frame_indices = list(archive_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError("kcenter_coreset requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("kcenter_coreset budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if not archive_frame_indices:
+        archive_frame_indices = list(memory_frame_indices)
+
+    use_visual = dino_features is not None and float(visual_weight) > 0.0
+    if use_visual:
+        missing_features = [
+            frame_idx
+            for frame_idx in set(memory_frame_indices) | set(archive_frame_indices)
+            if frame_idx not in dino_features
+        ]
+        if missing_features:
+            raise ValueError(f"Missing k-center DINO features for frames: {missing_features[:10]}")
+
+    if len(memory_frame_indices) <= budget:
+        scores = {
+            frame_idx: float("inf") if frame_idx in forced_keep_frames else 1.0
+            for frame_idx in memory_frame_indices
+        }
+        details = {
+            frame_idx: {
+                "score": scores[frame_idx],
+                "kcenter_selected": True,
+                "kcenter_forced_keep": frame_idx in forced_keep_frames,
+                "kcenter_rank": index,
+                "kcenter_radius": 0.0,
+                "kcenter_current_radius": 0.0,
+                "kcenter_removal_radius_increase": None,
+                "kcenter_archive_size": len(archive_frame_indices),
+            }
+            for index, frame_idx in enumerate(memory_frame_indices)
+        }
+        return (scores, details) if return_details else scores
+
+    components = []
+    if use_visual:
+        visual_similarity = _feature_cosine_similarity_cross(
+            archive_frame_indices,
+            memory_frame_indices,
+            dino_features,
+        )
+        visual_distance = (1.0 - visual_similarity) / 2.0
+        visual_distance = np.clip(visual_distance, 0.0, 1.0)
+        components.append((float(visual_weight), visual_distance))
+
+    if pose_weight:
+        pose_distance = pose_distances(c2ws, archive_frame_indices, memory_frame_indices)
+        pose_distance = 1.0 - np.exp(-pose_distance)
+        components.append((float(pose_weight), pose_distance))
+
+    if time_weight:
+        archive_times = np.asarray(archive_frame_indices, dtype=np.float64)
+        memory_times = np.asarray(memory_frame_indices, dtype=np.float64)
+        time_scale = max(
+            float(max(max(archive_frame_indices), max(memory_frame_indices)) + 1),
+            1.0,
+        )
+        time_distance = np.abs(archive_times[:, None] - memory_times[None, :]) / time_scale
+        components.append((float(time_weight), time_distance))
+
+    if not components:
+        raise ValueError("kcenter_coreset needs at least one positive distance component")
+
+    total_weight = max(sum(weight for weight, _ in components), 1e-12)
+    distance = sum(weight * matrix for weight, matrix in components) / total_weight
+
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+
+    selected_cols = []
+    selected_set = set()
+    selected_by_archive = {}
+
+    for col in forced_cols:
+        if col not in selected_set:
+            selected_set.add(col)
+            selected_cols.append(col)
+            selected_by_archive[col] = None
+
+    if selected_cols:
+        covered_distance = np.min(distance[:, selected_cols], axis=1)
+    else:
+        first_col = int(np.argmin(np.mean(distance, axis=0)))
+        selected_set.add(first_col)
+        selected_cols.append(first_col)
+        selected_by_archive[first_col] = None
+        covered_distance = distance[:, first_col].copy()
+
+    while len(selected_cols) < min(int(budget), len(memory_frame_indices)):
+        farthest_archive_row = int(np.argmax(covered_distance))
+        candidate_order = np.argsort(distance[farthest_archive_row])
+        best_col = None
+        for col in candidate_order:
+            col = int(col)
+            if col not in selected_set:
+                best_col = col
+                break
+        if best_col is None:
+            break
+
+        selected_set.add(best_col)
+        selected_cols.append(best_col)
+        selected_by_archive[best_col] = int(archive_frame_indices[farthest_archive_row])
+        covered_distance = np.minimum(covered_distance, distance[:, best_col])
+
+    selected_frames = [memory_frame_indices[col] for col in selected_cols]
+    selected_frame_set = set(selected_frames)
+    current_radius = float(np.max(covered_distance)) if covered_distance.size else 0.0
+    mean_radius = float(np.mean(covered_distance)) if covered_distance.size else 0.0
+
+    removal_radius_increases = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        if other_cols:
+            without_col = np.min(distance[:, other_cols], axis=1)
+            without_radius = float(np.max(without_col))
+        else:
+            without_radius = float("inf")
+        removal_radius_increases[col] = without_radius - current_radius
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + max(float(removal_radius_increases.get(col, 0.0)), 0.0)
+        else:
+            score = -1.0
+
+        nearest_archive_row = int(np.argmin(distance[:, col])) if distance.shape[0] else None
+        selected_archive_frame = selected_by_archive.get(col)
+        rank = selected_frames.index(frame_idx) if selected else None
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "kcenter_selected": bool(selected),
+            "kcenter_forced_keep": bool(forced),
+            "kcenter_rank": rank,
+            "kcenter_radius": current_radius,
+            "kcenter_mean_radius": mean_radius,
+            "kcenter_removal_radius_increase": (
+                float(removal_radius_increases.get(col, 0.0)) if selected else 0.0
+            ),
+            "kcenter_archive_size": len(archive_frame_indices),
+            "kcenter_nearest_archive_frame": (
+                None if nearest_archive_row is None else int(archive_frame_indices[nearest_archive_row])
+            ),
+            "kcenter_nearest_archive_distance": (
+                None if nearest_archive_row is None else float(distance[nearest_archive_row, col])
+            ),
+            "kcenter_selected_for_archive_frame": selected_archive_frame,
+            "kcenter_visual_weight": float(visual_weight if use_visual else 0.0),
+            "kcenter_pose_weight": float(pose_weight),
+            "kcenter_time_weight": float(time_weight),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_h2o_heavy_hitter_scores(
+    memory_frame_indices,
+    memory_stats,
+    budget,
+    forced_keep_frames=None,
+    recency_fraction=0.25,
+    count_weight=0.05,
+    best_overlap_weight=0.10,
+    return_details=False,
+):
+    """Score frames by H2O-style accumulated model read/use weight plus recency.
+
+    The pipeline does not expose raw denoising attention over memory frames, so
+    this policy uses the model's own memory retrieval decisions as the internal
+    read signal: each selected context frame accumulates its selected overlap as
+    attention-like mass. A fixed reserve of the newest frames is kept regardless
+    of read count, matching H2O's heavy-hitter plus recent-token split.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError("h2o_heavy_hitter requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("h2o_heavy_hitter budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+
+    recency_budget = max(1, int(round(float(budget) * float(recency_fraction))))
+    recency_budget = min(recency_budget, max(int(budget) - len(forced_keep_frames), 1))
+    newest_frames = sorted(memory_frame_indices, reverse=True)
+    recent_keep = set(newest_frames[:recency_budget])
+
+    read_weights = np.asarray(
+        [
+            float(memory_stats.get(frame_idx, {}).get("selection_overlap_sum", 0.0))
+            for frame_idx in memory_frame_indices
+        ],
+        dtype=np.float64,
+    )
+    selected_counts = np.asarray(
+        [
+            float(memory_stats.get(frame_idx, {}).get("selected_count", 0.0))
+            for frame_idx in memory_frame_indices
+        ],
+        dtype=np.float64,
+    )
+    best_overlaps = np.asarray(
+        [
+            float(memory_stats.get(frame_idx, {}).get("best_selection_overlap", 0.0))
+            for frame_idx in memory_frame_indices
+        ],
+        dtype=np.float64,
+    )
+
+    def scale(values):
+        max_value = float(np.max(values)) if values.size else 0.0
+        if max_value <= 1e-12:
+            return np.zeros_like(values)
+        return values / max_value
+
+    heavy_scores = (
+        scale(read_weights)
+        + float(count_weight) * scale(selected_counts)
+        + float(best_overlap_weight) * scale(best_overlaps)
+    )
+    score_by_frame = {
+        frame_idx: float(heavy_scores[index])
+        for index, frame_idx in enumerate(memory_frame_indices)
+    }
+    heavy_order = {
+        frame_idx: rank
+        for rank, frame_idx in enumerate(
+            sorted(memory_frame_indices, key=lambda idx: (-score_by_frame[idx], -idx))
+        )
+    }
+    recency_order = {frame_idx: rank for rank, frame_idx in enumerate(newest_frames)}
+
+    scores = {}
+    details = {}
+    for index, frame_idx in enumerate(memory_frame_indices):
+        forced = frame_idx in forced_keep_frames
+        recent = frame_idx in recent_keep
+        if forced:
+            score = float("inf")
+        elif recent:
+            score = 1_000_000.0 + float(recency_budget - recency_order[frame_idx])
+        else:
+            score = float(heavy_scores[index])
+
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "h2o_read_weight": float(read_weights[index]),
+            "h2o_selected_count": int(selected_counts[index]),
+            "h2o_best_overlap": float(best_overlaps[index]),
+            "h2o_heavy_score": float(heavy_scores[index]),
+            "h2o_heavy_rank": int(heavy_order[frame_idx]),
+            "h2o_recent_keep": bool(recent),
+            "h2o_recency_rank": int(recency_order[frame_idx]),
+            "h2o_recency_budget": int(recency_budget),
+            "h2o_recency_fraction": float(recency_fraction),
         }
 
     return (scores, details) if return_details else scores

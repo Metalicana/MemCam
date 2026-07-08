@@ -15,6 +15,8 @@ from .memory_policies import (
     FrameMemoryBuffer,
     VisualMemoryFeatureExtractor,
     compute_facility_coreset_scores,
+    compute_h2o_heavy_hitter_scores,
+    compute_kcenter_coreset_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
     image_quality_scores_from_pil_images,
@@ -46,6 +48,7 @@ VISUAL_MEMORY_POLICIES = {
     "rarity_irreplaceability",
     "slam_covisibility",
     "facility_coreset",
+    "kcenter_coreset",
 }
 CORESET_ARCHIVE_STRIDE = 4
 CORESET_MAX_ARCHIVE_SIZE = 5000
@@ -335,7 +338,14 @@ class WanVideoMemCamPipeline(BasePipeline):
         latent_W = start_latent.shape[3]  # W // 8
 
         if (
-            memory_policy in {"rarity_irreplaceability", "slam_covisibility"}
+            memory_policy
+            in {
+                "rarity_irreplaceability",
+                "slam_covisibility",
+                "facility_coreset",
+                "kcenter_coreset",
+                "h2o_heavy_hitter",
+            }
             and memory_budget is not None
             and memory_budget < 2
         ):
@@ -629,7 +639,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                     memory_rgb_features[frame_idx] = rgb_batch[feature_idx]
                     memory_quality_scores[frame_idx] = float(quality_batch[feature_idx])
 
-                if memory_policy == "facility_coreset":
+                if memory_policy in {"facility_coreset", "kcenter_coreset"}:
                     for frame_idx in feature_frame_indices:
                         if frame_idx in coreset_archive_seen:
                             continue
@@ -695,6 +705,36 @@ class WanVideoMemCamPipeline(BasePipeline):
                     frame_quality=memory_quality_scores,
                     return_details=True,
                 )
+            elif memory_policy == "kcenter_coreset":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_kcenter_coreset_scores(
+                    memory_frame_indices=prospective_memory,
+                    archive_frame_indices=coreset_archive_frame_indices,
+                    c2ws=c2ws,
+                    budget=memory_budget,
+                    forced_keep_frames=protected_frames,
+                    dino_features=memory_dino_features,
+                    return_details=True,
+                )
+            elif memory_policy == "h2o_heavy_hitter":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_h2o_heavy_hitter_scores(
+                    memory_frame_indices=prospective_memory,
+                    memory_stats=memory_buffer.stats_snapshot(),
+                    budget=memory_budget,
+                    forced_keep_frames=protected_frames,
+                    return_details=True,
+                )
 
             evicted_frames = memory_buffer.update(
                 new_frame_indices,
@@ -739,9 +779,27 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_coreset_quality": score_detail.get("coreset_quality"),
                         "eviction_coreset_similarity_mean": score_detail.get("coreset_similarity_mean"),
                         "eviction_coreset_similarity_max": score_detail.get("coreset_similarity_max"),
+                        "eviction_kcenter_selected": score_detail.get("kcenter_selected"),
+                        "eviction_kcenter_forced_keep": score_detail.get("kcenter_forced_keep"),
+                        "eviction_kcenter_rank": score_detail.get("kcenter_rank"),
+                        "eviction_kcenter_radius": score_detail.get("kcenter_radius"),
+                        "eviction_kcenter_mean_radius": score_detail.get("kcenter_mean_radius"),
+                        "eviction_kcenter_removal_radius_increase": score_detail.get("kcenter_removal_radius_increase"),
+                        "eviction_kcenter_archive_size": score_detail.get("kcenter_archive_size"),
+                        "eviction_kcenter_nearest_archive_frame": score_detail.get("kcenter_nearest_archive_frame"),
+                        "eviction_kcenter_nearest_archive_distance": score_detail.get("kcenter_nearest_archive_distance"),
+                        "eviction_kcenter_selected_for_archive_frame": score_detail.get("kcenter_selected_for_archive_frame"),
+                        "eviction_h2o_read_weight": score_detail.get("h2o_read_weight"),
+                        "eviction_h2o_selected_count": score_detail.get("h2o_selected_count"),
+                        "eviction_h2o_best_overlap": score_detail.get("h2o_best_overlap"),
+                        "eviction_h2o_heavy_score": score_detail.get("h2o_heavy_score"),
+                        "eviction_h2o_heavy_rank": score_detail.get("h2o_heavy_rank"),
+                        "eviction_h2o_recent_keep": score_detail.get("h2o_recent_keep"),
+                        "eviction_h2o_recency_rank": score_detail.get("h2o_recency_rank"),
+                        "eviction_h2o_recency_budget": score_detail.get("h2o_recency_budget"),
                     }
                 )
-                if memory_policy != "facility_coreset":
+                if memory_policy not in {"facility_coreset", "kcenter_coreset"}:
                     memory_dino_features.pop(evicted_frame_idx, None)
                     memory_rgb_features.pop(evicted_frame_idx, None)
                     memory_quality_scores.pop(evicted_frame_idx, None)
