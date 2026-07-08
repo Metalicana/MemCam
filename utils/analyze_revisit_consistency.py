@@ -455,6 +455,14 @@ def score_clusters_for_source(item, clusters, source_name, frames, patch_size):
     return rows
 
 
+def cluster_row_key(row):
+    return (str(row["revisit_type"]), int(row["cluster_id"]))
+
+
+def cluster_key(cluster):
+    return (str(cluster["revisit_type"]), int(cluster["cluster_id"]))
+
+
 def score_delta_clusters_against_oracle(
     item,
     clusters,
@@ -698,6 +706,21 @@ def main():
     parser.add_argument("--max_depth", type=float, default=80.0)
     parser.add_argument("--min_ray_angle_deg", type=float, default=5.0)
     parser.add_argument("--patch_size", type=int, default=96)
+    parser.add_argument(
+        "--revisit_types",
+        type=str,
+        default="exact_pose,gaze_point",
+        help="Comma list from exact_pose,gaze_point. Use exact_pose for the strict oracle-calibrated metric.",
+    )
+    parser.add_argument(
+        "--max_gt_worst_patch_rmse",
+        type=float,
+        default=None,
+        help=(
+            "If set, only score revisit clusters whose GT-oracle self-consistency "
+            "worst patch RMSE is at or below this threshold."
+        ),
+    )
     parser.add_argument("--montages_per_source", type=int, default=8)
     args = parser.parse_args()
 
@@ -707,6 +730,15 @@ def main():
         raise ValueError("--min_revisit_gap must be >= 0")
     if args.runs and args.model_root is None:
         raise ValueError("--model_root is required when --runs is provided")
+    revisit_type_filter = set(parse_list(args.revisit_types))
+    allowed_revisit_types = {"exact_pose", "gaze_point"}
+    unknown_revisit_types = sorted(revisit_type_filter - allowed_revisit_types)
+    if unknown_revisit_types:
+        raise ValueError(
+            f"Unknown --revisit_types {unknown_revisit_types}; expected {sorted(allowed_revisit_types)}"
+        )
+    if not revisit_type_filter:
+        raise ValueError("--revisit_types selected nothing.")
 
     figures_dir = args.output_dir / "figures"
     tables_dir = args.output_dir / "tables"
@@ -729,6 +761,7 @@ def main():
     all_scores = []
     all_delta_scores = []
     video_summaries = []
+    filter_summaries = []
     frames_for_montage = {}
 
     for item in items:
@@ -760,6 +793,16 @@ def main():
             min_ray_angle_deg=args.min_ray_angle_deg,
         )
         clusters = exact_clusters + gaze_clusters
+
+        exact_events = [event for event in exact_events if event["revisit_type"] in revisit_type_filter]
+        gaze_events = [event for event in gaze_events if event["revisit_type"] in revisit_type_filter]
+        exact_clusters = [
+            cluster for cluster in exact_clusters if cluster["revisit_type"] in revisit_type_filter
+        ]
+        gaze_clusters = [
+            cluster for cluster in gaze_clusters if cluster["revisit_type"] in revisit_type_filter
+        ]
+        clusters = [cluster for cluster in clusters if cluster["revisit_type"] in revisit_type_filter]
 
         for event in exact_events + gaze_events:
             event["row"] = item["_row"]
@@ -831,17 +874,59 @@ def main():
             frames=gt_frames,
             patch_size=args.patch_size,
         )
-        all_scores.extend(gt_rows)
+        trusted_keys = {cluster_row_key(row) for row in gt_rows}
+        if args.max_gt_worst_patch_rmse is not None:
+            trusted_keys = {
+                cluster_row_key(row)
+                for row in gt_rows
+                if float(row["worst_patch_rmse"]) <= args.max_gt_worst_patch_rmse
+            }
+        trusted_clusters = [cluster for cluster in clusters if cluster_key(cluster) in trusted_keys]
+        trusted_gt_rows = [row for row in gt_rows if cluster_row_key(row) in trusted_keys]
+
+        for revisit_type in sorted(revisit_type_filter):
+            before = [cluster for cluster in clusters if cluster["revisit_type"] == revisit_type]
+            after = [cluster for cluster in trusted_clusters if cluster["revisit_type"] == revisit_type]
+            before_gt = [row for row in gt_rows if row["revisit_type"] == revisit_type]
+            filter_summaries.append(
+                {
+                    "row": item["_row"],
+                    "scene": item["scene"],
+                    "start_frame": item["start_frame"],
+                    "duration_sec": item["duration_sec"],
+                    "revisit_type": revisit_type,
+                    "clusters_before_gt_filter": len(before),
+                    "clusters_after_gt_filter": len(after),
+                    "max_gt_worst_patch_rmse": args.max_gt_worst_patch_rmse,
+                    "mean_gt_worst_patch_rmse_before": (
+                        float(np.mean([float(row["worst_patch_rmse"]) for row in before_gt]))
+                        if before_gt
+                        else None
+                    ),
+                    "mean_gt_worst_patch_rmse_after": (
+                        float(np.mean([float(row["worst_patch_rmse"]) for row in trusted_gt_rows if row["revisit_type"] == revisit_type]))
+                        if after
+                        else None
+                    ),
+                }
+            )
+
+        all_scores.extend(trusted_gt_rows)
         frames_for_montage.update({("gt_oracle", item["_row"]): gt_frames})
+        if not trusted_clusters:
+            continue
+        trusted_cluster_indices = sorted(
+            {index for cluster in trusted_clusters for index in cluster["visit_indices"]}
+        )
 
         for run_name in runs:
             video_path = output_path(args.model_root, run_name, item)
             if not video_path.exists():
                 continue
-            gen_frames = read_video_frames(video_path, cluster_indices)
+            gen_frames = read_video_frames(video_path, trusted_cluster_indices)
             run_rows = score_clusters_for_source(
                 item=item,
-                clusters=clusters,
+                clusters=trusted_clusters,
                 source_name=run_name,
                 frames=gen_frames,
                 patch_size=args.patch_size,
@@ -850,7 +935,7 @@ def main():
             all_delta_scores.extend(
                 score_delta_clusters_against_oracle(
                     item=item,
-                    clusters=clusters,
+                    clusters=trusted_clusters,
                     source_name=run_name,
                     source_frames=gen_frames,
                     oracle_frames=gt_frames,
@@ -861,6 +946,7 @@ def main():
 
     write_csv(tables_dir / "revisit_events.csv", all_events)
     write_csv(tables_dir / "revisit_clusters.csv", all_clusters)
+    write_csv(tables_dir / "revisit_gt_filter_summary.csv", filter_summaries)
     write_csv(tables_dir / "trajectory_revisit_summary.csv", video_summaries)
     write_csv(tables_dir / "revisit_scores.csv", all_scores)
     summary_rows = summarize_scores(all_scores)
@@ -922,6 +1008,7 @@ def main():
             tables_dir / "trajectory_revisit_summary.csv",
             tables_dir / "revisit_events.csv",
             tables_dir / "revisit_clusters.csv",
+            tables_dir / "revisit_gt_filter_summary.csv",
             tables_dir / "revisit_scores.csv",
             tables_dir / "revisit_summary.csv",
             tables_dir / "revisit_delta_scores_vs_gt.csv",
@@ -934,6 +1021,7 @@ def main():
     print(f"Wrote: {tables_dir / 'trajectory_revisit_summary.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_events.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_clusters.csv'}")
+    print(f"Wrote: {tables_dir / 'revisit_gt_filter_summary.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_scores.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_summary.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_delta_scores_vs_gt.csv'}")
