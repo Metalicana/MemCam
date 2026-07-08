@@ -387,6 +387,34 @@ def patch_metrics(patches):
     }
 
 
+def patch_delta_metrics(source_patches, oracle_patches):
+    indices = sorted(set(source_patches) & set(oracle_patches))
+    pair_rmses = []
+    pair_maes = []
+    for outer, i in enumerate(indices):
+        source_i = np.asarray(source_patches[i], dtype=np.float64)
+        oracle_i = np.asarray(oracle_patches[i], dtype=np.float64)
+        for j in indices[outer + 1 :]:
+            source_j = np.asarray(source_patches[j], dtype=np.float64)
+            oracle_j = np.asarray(oracle_patches[j], dtype=np.float64)
+            source_delta = source_i - source_j
+            oracle_delta = oracle_i - oracle_j
+            diff = source_delta - oracle_delta
+            pair_rmses.append(math.sqrt(float(np.mean(diff * diff))))
+            pair_maes.append(float(np.mean(np.abs(diff))))
+    if not pair_rmses:
+        return None
+    return {
+        "pair_count": len(pair_rmses),
+        "mean_delta_rmse": float(np.mean(pair_rmses)),
+        "worst_delta_rmse": float(np.max(pair_rmses)),
+        "p90_delta_rmse": float(np.percentile(pair_rmses, 90)),
+        "mean_delta_mae": float(np.mean(pair_maes)),
+        "worst_delta_mae": float(np.max(pair_maes)),
+        "worst_delta_rmse_0_1": float(np.max(pair_rmses) / 255.0),
+    }
+
+
 def score_clusters_for_source(item, clusters, source_name, frames, patch_size):
     rows = []
     for cluster in clusters:
@@ -417,6 +445,54 @@ def score_clusters_for_source(item, clusters, source_name, frames, patch_size):
                 "support_pairs": cluster["support_pairs"],
                 "scored_visits": len(patches),
                 "missing_visits": len(missing),
+                "visit_indices": ",".join(str(index) for index in cluster["visit_indices"]),
+                "point_x": None if point is None else float(point[0]),
+                "point_y": None if point is None else float(point[1]),
+                "point_z": None if point is None else float(point[2]),
+                **metrics,
+            }
+        )
+    return rows
+
+
+def score_delta_clusters_against_oracle(
+    item,
+    clusters,
+    source_name,
+    source_frames,
+    oracle_frames,
+    patch_size,
+):
+    rows = []
+    for cluster in clusters:
+        source_patches = {}
+        oracle_patches = {}
+        for local_index in cluster["visit_indices"]:
+            source_image = source_frames.get(local_index)
+            oracle_image = oracle_frames.get(local_index)
+            if source_image is None or oracle_image is None:
+                continue
+            source_patches[local_index] = center_patch(source_image, patch_size)
+            oracle_patches[local_index] = center_patch(oracle_image, patch_size)
+
+        metrics = patch_delta_metrics(source_patches, oracle_patches)
+        if metrics is None:
+            continue
+
+        point = cluster["point"]
+        rows.append(
+            {
+                "source": source_name,
+                "oracle_source": "gt_oracle",
+                "row": item["_row"],
+                "scene": item["scene"],
+                "start_frame": item["start_frame"],
+                "duration_sec": item["duration_sec"],
+                "revisit_type": cluster["revisit_type"],
+                "cluster_id": cluster["cluster_id"],
+                "visit_count": cluster["visit_count"],
+                "support_pairs": cluster["support_pairs"],
+                "scored_visits": len(source_patches),
                 "visit_indices": ",".join(str(index) for index in cluster["visit_indices"]),
                 "point_x": None if point is None else float(point[0]),
                 "point_y": None if point is None else float(point[1]),
@@ -564,6 +640,34 @@ def summarize_scores(score_rows):
     return summaries
 
 
+def summarize_delta_scores(score_rows):
+    grouped = defaultdict(list)
+    for row in score_rows:
+        grouped[(row["source"], row["revisit_type"])].append(row)
+
+    summaries = []
+    for (source, revisit_type), group in sorted(grouped.items()):
+        worst = [float(row["worst_delta_rmse"]) for row in group]
+        mean = [float(row["mean_delta_rmse"]) for row in group]
+        visits = [int(row["visit_count"]) for row in group]
+        summaries.append(
+            {
+                "source": source,
+                "oracle_source": "gt_oracle",
+                "revisit_type": revisit_type,
+                "clusters": len(group),
+                "videos": len({row["row"] for row in group}),
+                "mean_visit_count": float(np.mean(visits)) if visits else None,
+                "mean_worst_delta_rmse": float(np.mean(worst)) if worst else None,
+                "median_worst_delta_rmse": float(np.percentile(worst, 50)) if worst else None,
+                "p90_worst_delta_rmse": float(np.percentile(worst, 90)) if worst else None,
+                "mean_delta_rmse": float(np.mean(mean)) if mean else None,
+                "mean_worst_delta_rmse_0_1": float(np.mean(worst) / 255.0) if worst else None,
+            }
+        )
+    return summaries
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -623,6 +727,7 @@ def main():
     all_events = []
     all_clusters = []
     all_scores = []
+    all_delta_scores = []
     video_summaries = []
     frames_for_montage = {}
 
@@ -742,6 +847,16 @@ def main():
                 patch_size=args.patch_size,
             )
             all_scores.extend(run_rows)
+            all_delta_scores.extend(
+                score_delta_clusters_against_oracle(
+                    item=item,
+                    clusters=clusters,
+                    source_name=run_name,
+                    source_frames=gen_frames,
+                    oracle_frames=gt_frames,
+                    patch_size=args.patch_size,
+                )
+            )
             frames_for_montage[(run_name, item["_row"])] = gen_frames
 
     write_csv(tables_dir / "revisit_events.csv", all_events)
@@ -750,9 +865,15 @@ def main():
     write_csv(tables_dir / "revisit_scores.csv", all_scores)
     summary_rows = summarize_scores(all_scores)
     write_csv(tables_dir / "revisit_summary.csv", summary_rows)
+    write_csv(tables_dir / "revisit_delta_scores_vs_gt.csv", all_delta_scores)
+    delta_summary_rows = summarize_delta_scores(all_delta_scores)
+    write_csv(tables_dir / "revisit_delta_summary_vs_gt.csv", delta_summary_rows)
 
     with (tables_dir / "revisit_summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary_rows, handle, indent=2)
+        handle.write("\n")
+    with (tables_dir / "revisit_delta_summary_vs_gt.json").open("w", encoding="utf-8") as handle:
+        json.dump(delta_summary_rows, handle, indent=2)
         handle.write("\n")
 
     for source in ["gt_oracle", *runs]:
@@ -774,9 +895,11 @@ def main():
         handle.write("# Revisit Consistency Analysis\n\n")
         handle.write(
             "Lower pixel RMSE means revisited views stayed more visually consistent. "
-            "`gt_oracle` scores the same revisit events on ground-truth frames.\n\n"
+            "`gt_oracle` scores the same revisit events on ground-truth frames. "
+            "The delta-vs-GT table is the safer oracle-aware score: it measures "
+            "whether pairwise revisit changes match the ground-truth pairwise changes.\n\n"
         )
-        handle.write("## Summary\n\n")
+        handle.write("## Self-Consistency Summary\n\n")
         if summary_rows:
             headers = list(summary_rows[0].keys())
             handle.write("| " + " | ".join(headers) + " |\n")
@@ -785,6 +908,15 @@ def main():
                 handle.write("| " + " | ".join(str(row.get(key, "")) for key in headers) + " |\n")
         else:
             handle.write("No revisit clusters were scored with the current thresholds.\n")
+        handle.write("\n## Delta-vs-GT Summary\n\n")
+        if delta_summary_rows:
+            headers = list(delta_summary_rows[0].keys())
+            handle.write("| " + " | ".join(headers) + " |\n")
+            handle.write("| " + " | ".join(["---"] * len(headers)) + " |\n")
+            for row in delta_summary_rows:
+                handle.write("| " + " | ".join(str(row.get(key, "")) for key in headers) + " |\n")
+        else:
+            handle.write("No generated revisit clusters were scored against GT.\n")
         handle.write("\n## Files\n\n")
         for path in [
             tables_dir / "trajectory_revisit_summary.csv",
@@ -792,6 +924,8 @@ def main():
             tables_dir / "revisit_clusters.csv",
             tables_dir / "revisit_scores.csv",
             tables_dir / "revisit_summary.csv",
+            tables_dir / "revisit_delta_scores_vs_gt.csv",
+            tables_dir / "revisit_delta_summary_vs_gt.csv",
         ]:
             handle.write(f"- `{path.relative_to(args.output_dir)}`\n")
         handle.write("- `figures/trajectory_row_*.png`\n")
@@ -802,6 +936,8 @@ def main():
     print(f"Wrote: {tables_dir / 'revisit_clusters.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_scores.csv'}")
     print(f"Wrote: {tables_dir / 'revisit_summary.csv'}")
+    print(f"Wrote: {tables_dir / 'revisit_delta_scores_vs_gt.csv'}")
+    print(f"Wrote: {tables_dir / 'revisit_delta_summary_vs_gt.csv'}")
     print(f"Wrote: {report_path}")
     print(f"Wrote trajectory figures under: {figures_dir}")
     print(f"Wrote worst-cluster montages under: {montages_dir}")
