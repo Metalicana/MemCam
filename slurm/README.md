@@ -257,6 +257,55 @@ Main outputs:
 /data/ab575577/MemCam/analysis/context_memory/trajectory_diversity_summary.csv
 ```
 
+## 180s Robust Tests On Newton
+
+Generate the 180s frontier policies:
+
+```bash
+cd ~/MemCam
+sbatch slurm/newton_memcam_h100_180s_frontier_array.sbatch
+```
+
+Generate the newer memory policies:
+
+```bash
+cd ~/MemCam
+sbatch slurm/newton_memcam_h100_180s_new_policies_array.sbatch
+```
+
+After the generated jobs finish, run the 180s robust analysis:
+
+```bash
+cd ~/MemCam
+sbatch slurm/newton_prof_180s_analysis.sbatch
+```
+
+The analysis job computes sparse 180s frame metrics, FVD clips, access-trace
+summaries, upperbound-vs-policy trace alignment, bounded-memory mechanism
+figures, and revisit-consistency tables. Main outputs:
+
+```bash
+$HOME/memcam_results/context_180s/eval_metrics_180s
+$HOME/memcam_results/context_180s/prof_180s_analysis/report.md
+$HOME/memcam_results/context_180s/prof_180s_analysis/bounded_memory_drivers/report.md
+$HOME/memcam_results/context_180s/prof_180s_analysis/memory_mechanisms/report.md
+$HOME/memcam_results/context_180s/revisit_consistency/tables/revisit_summary.csv
+```
+
+Run only a focused completed subset:
+
+```bash
+RUNS=baseline,fifo_b32,fifo_b64,ri_b32_dino_rgb,ri_b64_dino_rgb,slam_b32_covisibility,slam_b64_covisibility \
+REVISIT_RUNS=fifo_b32,ri_b32_dino_rgb,slam_b32_covisibility \
+sbatch slurm/newton_prof_180s_analysis.sbatch
+```
+
+Refresh reports from existing metrics/traces without recomputing LPIPS/FVD:
+
+```bash
+RUN_EVAL=0 sbatch slurm/newton_prof_180s_analysis.sbatch
+```
+
 FIFO requires an explicit memory budget:
 
 ```bash
