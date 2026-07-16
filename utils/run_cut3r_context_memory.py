@@ -178,12 +178,6 @@ def main():
     parser.add_argument("--rows", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument(
-        "--status_path",
-        type=Path,
-        default=None,
-        help="Optional status JSON path. Use a unique path for concurrent run arrays.",
-    )
     args = parser.parse_args()
 
     if args.frame_stride < 1:
@@ -368,9 +362,8 @@ def main():
                 if device == "cuda":
                     torch.cuda.empty_cache()
 
-    status_path = args.status_path or (output_dir / "cut3r_run_status.json")
-    write_json(status_path, status_rows)
-    print(f"Wrote: {status_path}")
+    write_json(output_dir / "cut3r_run_status.json", status_rows)
+    print(f"Wrote: {output_dir / 'cut3r_run_status.json'}")
 
 
 if __name__ == "__main__":
