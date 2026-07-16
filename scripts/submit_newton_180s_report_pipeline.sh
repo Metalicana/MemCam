@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+module load anaconda
+conda activate memcam
+
 cd "${MEMCAM_ROOT:-$HOME/MemCam}"
 mkdir -p logs
 
