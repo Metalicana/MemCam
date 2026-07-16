@@ -81,7 +81,7 @@ def assert_video_writer_available(output_dir):
             "Video writer preflight failed before model loading. Install imageio and numpy."
         ) from exc
 
-    probe_path = output_dir / ".ffmpeg_preflight.mp4"
+    probe_path = output_dir / f".ffmpeg_preflight.{os.getpid()}.mp4"
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
     try:
         writer = imageio.get_writer(str(probe_path), format="FFMPEG", fps=1, quality=5)
