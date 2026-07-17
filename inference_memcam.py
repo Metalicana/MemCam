@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+from pathlib import Path
 from PIL import Image
 
 from dataset.poses import load_c2ws_from_json
@@ -84,7 +85,20 @@ if __name__ == "__main__":
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument(
+        "--memory_bank_device",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda"],
+        help="Device that persistently stores retained memory-frame tensors.",
+    )
     parser.add_argument("--access_trace_path", type=str, default=None)
+    parser.add_argument(
+        "--profile_path",
+        type=str,
+        default=None,
+        help="Optional JSONL path for section-level latency and memory profiling.",
+    )
     args = parser.parse_args()
 
     pipe = setup_pipeline(
@@ -108,6 +122,15 @@ if __name__ == "__main__":
         filename = f"{args.output_prefix}{name}.mp4"
         return os.path.join(args.output_dir, filename)
 
+    def profile_path(name):
+        if args.profile_path is None:
+            return None
+        path = Path(args.profile_path)
+        if args.trajectory_mode == "custom":
+            return str(path)
+        suffix = path.suffix or ".jsonl"
+        return str(path.with_name(f"{path.stem}_{name}{suffix}"))
+
     def run_generation(name, trajectory):
         video = pipe(
             prompt=args.prompt,
@@ -121,12 +144,22 @@ if __name__ == "__main__":
             seed=args.seed,
             memory_policy=args.memory_policy,
             memory_budget=args.memory_budget,
+            memory_bank_device=args.memory_bank_device,
             access_trace_path=args.access_trace_path,
             access_trace_metadata={
                 "run_name": args.output_prefix.rstrip("_"),
                 "trajectory_mode": args.trajectory_mode,
                 "dataset_start_frame": args.start_frame,
                 "num_frames": args.num_frames,
+            },
+            profile_path=profile_path(name),
+            profile_metadata={
+                "run_name": args.output_prefix.rstrip("_") or name,
+                "trajectory_mode": args.trajectory_mode,
+                "dataset_start_frame": args.start_frame,
+                "duration_sec": (args.num_frames - 1) / 30.0,
+                "num_frames": args.num_frames,
+                "output": output_path(name),
             },
             tiled=False
         )

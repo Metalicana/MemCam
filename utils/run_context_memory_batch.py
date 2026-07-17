@@ -133,10 +133,23 @@ def main():
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument(
+        "--memory_bank_device",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda"],
+        help="Device that persistently stores retained memory-frame tensors.",
+    )
+    parser.add_argument(
         "--access_trace_dir",
         type=Path,
         default=None,
         help="Directory for per-video JSONL memory access traces. Defaults to output_dir/access_traces.",
+    )
+    parser.add_argument(
+        "--profile_dir",
+        type=Path,
+        default=None,
+        help="Optional directory for per-video rollout latency/VRAM JSONL profiles.",
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
@@ -154,6 +167,9 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     access_trace_dir = args.access_trace_dir or (output_dir / "access_traces")
     access_trace_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir = args.profile_dir
+    if profile_dir is not None:
+        profile_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run_status.jsonl"
 
     items = load_manifest(args.manifest)
@@ -180,6 +196,7 @@ def main():
                     "time_sec": 0,
                     "memory_policy": args.memory_policy,
                     "memory_budget": args.memory_budget,
+                    "memory_bank_device": args.memory_bank_device,
                 },
             )
         else:
@@ -212,12 +229,19 @@ def main():
     print(f"CUDA_VISIBLE_DEVICES: {visible_gpu}")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    print(f"Memory bank device: {args.memory_bank_device}")
+    print(f"Profile dir: {profile_dir}")
     print(f"Output dir: {output_dir}")
 
     for item in pending:
         row = item["_row"]
         save_path = output_path(output_dir, item)
         access_trace_path = access_trace_dir / f"{item['output_prefix']}custom.jsonl"
+        profile_path = (
+            profile_dir / f"{item['output_prefix']}custom.jsonl"
+            if profile_dir is not None
+            else None
+        )
         print(
             f"[row {row}] {item['scene']} start={item['start_frame']} "
             f"frames={item['num_frames']} duration={item['duration_sec']}s"
@@ -245,6 +269,7 @@ def main():
                 seed=args.seed,
                 memory_policy=args.memory_policy,
                 memory_budget=args.memory_budget,
+                memory_bank_device=args.memory_bank_device,
                 access_trace_path=str(access_trace_path),
                 access_trace_metadata={
                     "row": row,
@@ -256,6 +281,19 @@ def main():
                     "output_prefix": item["output_prefix"],
                     "run_memory_policy": args.memory_policy,
                     "run_memory_budget": args.memory_budget,
+                    "run_memory_bank_device": args.memory_bank_device,
+                },
+                profile_path=None if profile_path is None else str(profile_path),
+                profile_metadata={
+                    "run_name": output_dir.name,
+                    "row": row,
+                    "scene": item["scene"],
+                    "dataset_start_frame": item["start_frame"],
+                    "duration_sec": item["duration_sec"],
+                    "num_frames": item["num_frames"],
+                    "fps": item["fps"],
+                    "output": str(save_path),
+                    "output_prefix": item["output_prefix"],
                 },
                 tiled=False,
             )
@@ -272,6 +310,7 @@ def main():
                     "time_sec": elapsed,
                     "memory_policy": args.memory_policy,
                     "memory_budget": args.memory_budget,
+                    "memory_bank_device": args.memory_bank_device,
                 },
             )
             raise
@@ -289,6 +328,7 @@ def main():
                 "steps": num_inference_steps,
                 "memory_policy": args.memory_policy,
                 "memory_budget": args.memory_budget,
+                "memory_bank_device": args.memory_bank_device,
             },
         )
         print(f"[row {row}] completed in {elapsed}s -> {save_path}")

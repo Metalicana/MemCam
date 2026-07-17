@@ -21,6 +21,11 @@ from .memory_policies import (
     compute_slam_covisibility_scores,
     image_quality_scores_from_pil_images,
 )
+from .memory_profiling import (
+    MemoryRolloutProfiler,
+    numpy_mapping_nbytes,
+    tensor_mapping_nbytes,
+)
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
 
@@ -304,8 +309,11 @@ class WanVideoMemCamPipeline(BasePipeline):
         tile_stride=(15, 26),
         memory_policy="unbounded",
         memory_budget=None,
+        memory_bank_device="cpu",
         access_trace_path=None,
         access_trace_metadata=None,
+        profile_path=None,
+        profile_metadata=None,
         progress_bar_cmd=tqdm
     ):
         # Tiler parameters
@@ -350,10 +358,16 @@ class WanVideoMemCamPipeline(BasePipeline):
             and memory_budget < 2
         ):
             raise ValueError(f"{memory_policy} requires memory_budget >= 2")
+        if memory_bank_device not in {"cpu", "cuda"}:
+            raise ValueError("memory_bank_device must be either 'cpu' or 'cuda'")
+        if memory_bank_device == "cuda" and torch.device(self.device).type != "cuda":
+            raise ValueError("memory_bank_device='cuda' requires a CUDA pipeline device")
+        bank_device = torch.device(self.device if memory_bank_device == "cuda" else "cpu")
         
         # ============ 存储结构 ============
         all_section_latents = []  # (0:start_latent, else:1+19latents)
         all_generated_frames = {} # {frame_idx:frame_tensor}
+        output_frame_sections = []
         pinned_memory_frames = (
             {0}
             if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}
@@ -377,14 +391,37 @@ class WanVideoMemCamPipeline(BasePipeline):
         
         # 初始化: section 0 的 anchor 来自输入图片
         all_section_latents.append(start_latent)  # (C, 1, H, W) 作为 section -1 的 "latent"
-        all_generated_frames[0] = input_image_tensor.cpu()  # 帧0
+        all_generated_frames[0] = input_image_tensor.detach().to(bank_device).clone()
+        del input_image_tensor
         memory_buffer.add(0)
-        print(f"Memory policy: {memory_policy}, budget: {memory_budget}, stored frames: {len(memory_buffer)}")
+        print(
+            f"Memory policy: {memory_policy}, budget: {memory_budget}, "
+            f"bank device: {memory_bank_device}, stored frames: {len(memory_buffer)}"
+        )
         access_trace_handle = None
         access_trace_metadata = dict(access_trace_metadata or {})
         if access_trace_path is not None:
             os.makedirs(os.path.dirname(access_trace_path) or ".", exist_ok=True)
             access_trace_handle = open(access_trace_path, "w", encoding="utf-8")
+
+        profile_metadata = {
+            **dict(access_trace_metadata or {}),
+            **dict(profile_metadata or {}),
+            "memory_policy": memory_policy,
+            "memory_budget": memory_budget,
+            "memory_bank_device": memory_bank_device,
+            "total_frames": int(total_frames),
+            "total_sections": int(total_sections),
+        }
+        profiler = MemoryRolloutProfiler(
+            path=profile_path,
+            metadata=profile_metadata,
+            cuda_device=self.device,
+        )
+        profiler.start_rollout(
+            stored_memory_size=len(memory_buffer),
+            bank_frame_bytes=tensor_mapping_nbytes(all_generated_frames),
+        )
 
         def write_access_trace(payload):
             if access_trace_handle is None:
@@ -405,8 +442,11 @@ class WanVideoMemCamPipeline(BasePipeline):
         
         # Vanilla Sampling
         for section_idx in range(total_sections):
+            profiler.begin_section(section_idx)
             print(f"Generating section {section_idx + 1}/{total_sections}")
             section_start_frame = section_start_frames[section_idx]
+            section_candidate_count = 0
+            section_host_to_device_bytes = 0
             
             # ============ 获取anchor latent + 确定帧范围 ============
             if section_idx == 0:
@@ -446,105 +486,149 @@ class WanVideoMemCamPipeline(BasePipeline):
             # ============ 构建 Context ============
             context_latent_list = []
             context_frame_indices = []
-            
-            # 要排除的帧: anchor + predict 覆盖的所有帧
             exclude_frames = set(anchor_frame_range) | set(predict_frame_range)
-            context_target_frames = [section_start_frame + 1 + i * 1 for i in range(PREDICT_FRAMES)]
-            
+            context_target_frames = [section_start_frame + 1 + i for i in range(PREDICT_FRAMES)]
+            selected_contexts = []
+
             if section_idx == 0:
-                # Section 0: context全零 (与训练drop_context一致)
-                for slot_idx, frame_idx in enumerate(context_target_frames):
-                    context_latent_list.append(torch.zeros(latent_C, 1, latent_H, latent_W, dtype=anchor_latent.dtype, device=anchor_latent.device))
-                    context_frame_indices.append(anchor_pose_frame)
-                    write_access_trace(
-                        {
-                            "event": "context_access",
-                            "selected": False,
-                            "fallback_reason": "initial_section",
-                            "section_idx": section_idx,
-                            "context_slot": slot_idx,
-                            "target_frame": int(frame_idx),
-                            "anchor_pose_frame": int(anchor_pose_frame),
-                            "candidate_count": 0,
-                            "stored_memory_size": len(memory_buffer),
-                            "memory_policy": memory_policy,
-                            "memory_budget": memory_budget,
-                        }
-                    )
-            else:
-                # Section > 0: 按 context_target_frames 选择，每个目标帧选1个最佳重叠 context
-                candidate_frame_indices = memory_buffer.candidates(exclude_frames=exclude_frames)
-                
-                print(f"  Selecting context frames (1 per target, {PREDICT_FRAMES} targets)...")
-                print(f"  Excluding frames: anchor={anchor_frame_range}, predict={predict_frame_range[0]}-{predict_frame_range[-1]}")
-                print(f"  Candidate memory frames: {len(candidate_frame_indices)} / stored={len(memory_buffer)}")
-                
-                self.load_models_to_device(['vae'])
-                for slot_idx, frame_idx in enumerate(context_target_frames):  # 按 frame_interval 选择的目标帧
-                    # 计算与该帧重叠度最高的帧
-                    target_c2w = c2ws[frame_idx]
-                    best_idx = None
-                    best_iou = -1
-                    for candidate_idx in candidate_frame_indices:
-                        candidate_c2w = c2ws[candidate_idx]
-                        iou = calculate_overlap_from_c2w(
-                            target_c2w, candidate_c2w,
-                            fov_half_h=FOV_HALF_H, fov_half_v=FOV_HALF_V,
-                            num_samples=FOV_SAMPLES, radius=FOV_RADIUS,
-                            return_details=False
+                with profiler.phase("context_encode"):
+                    for slot_idx, frame_idx in enumerate(context_target_frames):
+                        context_latent_list.append(
+                            torch.zeros(
+                                latent_C,
+                                1,
+                                latent_H,
+                                latent_W,
+                                dtype=anchor_latent.dtype,
+                                device=anchor_latent.device,
+                            )
                         )
-                        if iou > best_iou:
-                            best_iou = iou
-                            best_idx = candidate_idx
-                    
-                    # 选择重叠度最高的1帧
-                    if best_idx is not None and best_idx in all_generated_frames:
-                        memory_buffer.record_selection(best_idx, best_iou)
-                        chosen_frame = all_generated_frames[best_idx]
-                        chosen_frame = chosen_frame.to(dtype=self.torch_dtype, device=self.device)
-                        chosen_latent = self.encode_video(chosen_frame, **tiler_kwargs)[0]
-                        context_latent_list.append(chosen_latent)
-                        context_frame_indices.append(best_idx)
-                        write_access_trace(
-                            {
-                                "event": "context_access",
-                                "selected": True,
-                                "fallback_reason": None,
-                                "section_idx": section_idx,
-                                "context_slot": slot_idx,
-                                "target_frame": int(frame_idx),
-                                "anchor_pose_frame": int(anchor_pose_frame),
-                                "selected_memory_frame": int(best_idx),
-                                "memory_age": int(frame_idx - best_idx),
-                                "selected_overlap": float(best_iou),
-                                "selected_count_after": memory_buffer.selected_count(best_idx),
-                                "candidate_count": len(candidate_frame_indices),
-                                "candidate_min_frame": int(min(candidate_frame_indices)) if candidate_frame_indices else None,
-                                "candidate_max_frame": int(max(candidate_frame_indices)) if candidate_frame_indices else None,
-                                "stored_memory_size": len(memory_buffer),
-                                "memory_policy": memory_policy,
-                                "memory_budget": memory_budget,
-                            }
-                        )
-                    else:
-                        # 没有有效context，用零填充
-                        context_latent_list.append(torch.zeros(latent_C, 1, latent_H, latent_W, dtype=anchor_latent.dtype, device=anchor_latent.device))
                         context_frame_indices.append(anchor_pose_frame)
                         write_access_trace(
                             {
                                 "event": "context_access",
                                 "selected": False,
-                                "fallback_reason": "no_valid_context",
+                                "fallback_reason": "initial_section",
                                 "section_idx": section_idx,
                                 "context_slot": slot_idx,
                                 "target_frame": int(frame_idx),
                                 "anchor_pose_frame": int(anchor_pose_frame),
-                                "candidate_count": len(candidate_frame_indices),
+                                "candidate_count": 0,
                                 "stored_memory_size": len(memory_buffer),
                                 "memory_policy": memory_policy,
                                 "memory_budget": memory_budget,
+                                "memory_bank_device": memory_bank_device,
                             }
                         )
+            else:
+                candidate_frame_indices = memory_buffer.candidates(exclude_frames=exclude_frames)
+                section_candidate_count = len(candidate_frame_indices)
+                print(f"  Selecting context frames (1 per target, {PREDICT_FRAMES} targets)...")
+                print(
+                    f"  Excluding frames: anchor={anchor_frame_range}, "
+                    f"predict={predict_frame_range[0]}-{predict_frame_range[-1]}"
+                )
+                print(
+                    f"  Candidate memory frames: {section_candidate_count} / "
+                    f"stored={len(memory_buffer)}"
+                )
+
+                with profiler.phase("context_selection"):
+                    for slot_idx, frame_idx in enumerate(context_target_frames):
+                        target_c2w = c2ws[frame_idx]
+                        best_idx = None
+                        best_iou = -1
+                        for candidate_idx in candidate_frame_indices:
+                            candidate_c2w = c2ws[candidate_idx]
+                            iou = calculate_overlap_from_c2w(
+                                target_c2w,
+                                candidate_c2w,
+                                fov_half_h=FOV_HALF_H,
+                                fov_half_v=FOV_HALF_V,
+                                num_samples=FOV_SAMPLES,
+                                radius=FOV_RADIUS,
+                                return_details=False,
+                            )
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_idx = candidate_idx
+                        selected_contexts.append((slot_idx, frame_idx, best_idx, best_iou))
+
+                with profiler.phase("context_encode"):
+                    self.load_models_to_device(["vae"])
+                    for slot_idx, frame_idx, best_idx, best_iou in selected_contexts:
+                        if best_idx is not None and best_idx in all_generated_frames:
+                            memory_buffer.record_selection(best_idx, best_iou)
+                            chosen_frame = all_generated_frames[best_idx]
+                            if chosen_frame.device.type == "cpu":
+                                section_host_to_device_bytes += (
+                                    chosen_frame.numel() * chosen_frame.element_size()
+                                )
+                            chosen_frame = chosen_frame.to(
+                                dtype=self.torch_dtype,
+                                device=self.device,
+                            )
+                            chosen_latent = self.encode_video(chosen_frame, **tiler_kwargs)[0]
+                            context_latent_list.append(chosen_latent)
+                            context_frame_indices.append(best_idx)
+                            write_access_trace(
+                                {
+                                    "event": "context_access",
+                                    "selected": True,
+                                    "fallback_reason": None,
+                                    "section_idx": section_idx,
+                                    "context_slot": slot_idx,
+                                    "target_frame": int(frame_idx),
+                                    "anchor_pose_frame": int(anchor_pose_frame),
+                                    "selected_memory_frame": int(best_idx),
+                                    "memory_age": int(frame_idx - best_idx),
+                                    "selected_overlap": float(best_iou),
+                                    "selected_count_after": memory_buffer.selected_count(best_idx),
+                                    "candidate_count": section_candidate_count,
+                                    "candidate_min_frame": (
+                                        int(min(candidate_frame_indices))
+                                        if candidate_frame_indices
+                                        else None
+                                    ),
+                                    "candidate_max_frame": (
+                                        int(max(candidate_frame_indices))
+                                        if candidate_frame_indices
+                                        else None
+                                    ),
+                                    "stored_memory_size": len(memory_buffer),
+                                    "memory_policy": memory_policy,
+                                    "memory_budget": memory_budget,
+                                    "memory_bank_device": memory_bank_device,
+                                }
+                            )
+                        else:
+                            context_latent_list.append(
+                                torch.zeros(
+                                    latent_C,
+                                    1,
+                                    latent_H,
+                                    latent_W,
+                                    dtype=anchor_latent.dtype,
+                                    device=anchor_latent.device,
+                                )
+                            )
+                            context_frame_indices.append(anchor_pose_frame)
+                            write_access_trace(
+                                {
+                                    "event": "context_access",
+                                    "selected": False,
+                                    "fallback_reason": "no_valid_context",
+                                    "section_idx": section_idx,
+                                    "context_slot": slot_idx,
+                                    "target_frame": int(frame_idx),
+                                    "anchor_pose_frame": int(anchor_pose_frame),
+                                    "candidate_count": section_candidate_count,
+                                    "stored_memory_size": len(memory_buffer),
+                                    "memory_policy": memory_policy,
+                                    "memory_budget": memory_budget,
+                                    "memory_bank_device": memory_bank_device,
+                                }
+                            )
 
                 print(f"  Selected [{context_frame_indices}] as context frames")
             
@@ -563,73 +647,116 @@ class WanVideoMemCamPipeline(BasePipeline):
             target_pose = compute_relative_pose(c2ws, anchor_pose_frame, target_latent_frames)  # (20, 12)
             
             # ============ Denoising ============
-            self.load_models_to_device(["dit"])
-            
-            # Input
-            context_latent_input = context_latent.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)  # (1, C, context_length, H, W)
-            context_pose_input = context_pose.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)  # (1, context_length, 12)
-            target_pose_input = target_pose.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)  # (1, 20, 12)
-            anchor_latent_batch = anchor_latent.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)  # (1, C, 1, H, W)
-                
-            for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
-                timestep = timestep.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)
-                
-                # Target input: 1个anchor(干净) + 19帧噪声 = 20帧
-                target_input = torch.cat([anchor_latent_batch, noise_latents], dim=2)  # (1, C, 20, H, W)
-                    
-                # 前向传播 (context 和 target 分开传入)
-                noise_pred_posi = self.forward(
-                    context_latents=context_latent_input,       # (1, C, context_length, H, W)
-                    target_latents=target_input,                # (1, C, 20, H, W)
-                    context_pose=context_pose_input,            # (1, context_length, 12)
-                    target_pose=target_pose_input,              # (1, 20, 12)
-                    timestep=timestep,
-                    context=prompt_emb_posi["context"],
+            with profiler.phase("denoising"):
+                self.load_models_to_device(["dit"])
+                context_latent_input = context_latent.unsqueeze(0).to(
+                    dtype=self.torch_dtype,
+                    device=self.device,
                 )
-                    
-                if cfg_scale != 1.0:
-                    noise_pred_nega = self.forward(
+                context_pose_input = context_pose.unsqueeze(0).to(
+                    dtype=self.torch_dtype,
+                    device=self.device,
+                )
+                target_pose_input = target_pose.unsqueeze(0).to(
+                    dtype=self.torch_dtype,
+                    device=self.device,
+                )
+                anchor_latent_batch = anchor_latent.unsqueeze(0).to(
+                    dtype=self.torch_dtype,
+                    device=self.device,
+                )
+
+                for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
+                    timestep = timestep.unsqueeze(0).to(
+                        dtype=self.torch_dtype,
+                        device=self.device,
+                    )
+                    target_input = torch.cat([anchor_latent_batch, noise_latents], dim=2)
+                    noise_pred_posi = self.forward(
                         context_latents=context_latent_input,
                         target_latents=target_input,
                         context_pose=context_pose_input,
                         target_pose=target_pose_input,
                         timestep=timestep,
-                        context=prompt_emb_nega["context"],
+                        context=prompt_emb_posi["context"],
                     )
-                    noise_pred = noise_pred_nega + cfg_scale * (noise_pred_posi - noise_pred_nega)
-                else:
-                    noise_pred = noise_pred_posi
-                
-                # Scheduler
-                noise_pred_rest = noise_pred[:, :, ANCHOR_LENGTH:, :, :]  # (1, C, 19, H, W)
-                noise_latents = self.scheduler.step(noise_pred_rest, self.scheduler.timesteps[progress_id], noise_latents)
 
-            # ============ 存储当前section的latent ============
-            # start (C, 1, H, W) + noise_latents (C, 19, H, W) = 20个latent
-            section_start_latent = self.encode_video(all_generated_frames[section_start_frame].to(dtype=self.torch_dtype, device=self.device), **tiler_kwargs)[0]
-            section_full_latent = torch.cat([section_start_latent, noise_latents.squeeze(0)], dim=1)  # (C, 20, H, W)
+                    if cfg_scale != 1.0:
+                        noise_pred_nega = self.forward(
+                            context_latents=context_latent_input,
+                            target_latents=target_input,
+                            context_pose=context_pose_input,
+                            target_pose=target_pose_input,
+                            timestep=timestep,
+                            context=prompt_emb_nega["context"],
+                        )
+                        noise_pred = noise_pred_nega + cfg_scale * (
+                            noise_pred_posi - noise_pred_nega
+                        )
+                    else:
+                        noise_pred = noise_pred_posi
+
+                    noise_pred_rest = noise_pred[:, :, ANCHOR_LENGTH:, :, :]
+                    noise_latents = self.scheduler.step(
+                        noise_pred_rest,
+                        self.scheduler.timesteps[progress_id],
+                        noise_latents,
+                    )
+
+            # Decode once. The same CPU section is retained for final output, avoiding
+            # a second full-video decode and its unrelated VRAM peak.
+            decode_phase_start = profiler.start_phase()
+            section_start_source = all_generated_frames[section_start_frame]
+            if section_start_source.device.type == "cpu":
+                section_host_to_device_bytes += (
+                    section_start_source.numel() * section_start_source.element_size()
+                )
+            section_start_latent = self.encode_video(
+                section_start_source.to(dtype=self.torch_dtype, device=self.device),
+                **tiler_kwargs,
+            )[0]
+            section_full_latent = torch.cat(
+                [section_start_latent, noise_latents.squeeze(0)],
+                dim=1,
+            )
             all_section_latents.append(section_full_latent.cpu())
-            
-            # ============ 解码当前section并存储帧 ============
-            self.load_models_to_device(['vae'])
-            section_frames = self.decode_video(section_full_latent.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device), **tiler_kwargs)  # (1, C, 77, H, W)
-            
-            # 将解码后的帧逐帧存储到all_generated_frames
-            section_frames_cpu = section_frames.cpu()  # (1, C, 77, H, W)
-            for local_frame_idx in range(section_frames_cpu.shape[2]):
-                global_frame_idx = section_start_frame + local_frame_idx
-                frame_tensor = section_frames_cpu[:, :, local_frame_idx:local_frame_idx+1, :, :]  # (1, C, 1, H, W)
-                all_generated_frames[global_frame_idx] = frame_tensor
 
-            new_frame_indices = range(section_start_frame, section_start_frame + section_frames_cpu.shape[2])
+            self.load_models_to_device(["vae"])
+            section_frames = self.decode_video(
+                section_full_latent.unsqueeze(0).to(
+                    dtype=self.torch_dtype,
+                    device=self.device,
+                ),
+                **tiler_kwargs,
+            )
+            section_frames_cpu = section_frames.detach().cpu()
+            output_section = section_frames_cpu.squeeze(0)
+            if section_idx > 0:
+                output_section = output_section[:, 1:, :, :]
+            output_frame_sections.append(output_section)
+            profiler.end_phase("section_decode", decode_phase_start)
+
+            new_frame_indices = range(
+                section_start_frame,
+                section_start_frame + section_frames_cpu.shape[2],
+            )
             eviction_scores = None
             eviction_score_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
+            policy_phase_start = profiler.start_phase()
             if memory_policy in VISUAL_MEMORY_POLICIES:
                 feature_frame_indices = list(new_frame_indices)
                 feature_images = [
-                    self.frame_tensor_to_pil(all_generated_frames[frame_idx])
+                    self.frame_tensor_to_pil(
+                        section_frames_cpu[
+                            :,
+                            :,
+                            frame_idx - section_start_frame : frame_idx - section_start_frame + 1,
+                            :,
+                            :,
+                        ]
+                    )
                     for frame_idx in feature_frame_indices
                 ]
                 dino_batch, rgb_batch = visual_feature_extractor.encode_pil_images(feature_images)
@@ -754,6 +881,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "stored_memory_size": len(memory_buffer),
                         "memory_policy": memory_policy,
                         "memory_budget": memory_budget,
+                        "memory_bank_device": memory_bank_device,
                         "eviction_score": score_detail.get("score"),
                         "eviction_rarity": score_detail.get("rarity"),
                         "eviction_irreplaceability": score_detail.get("irreplaceability"),
@@ -803,27 +931,73 @@ class WanVideoMemCamPipeline(BasePipeline):
                     memory_dino_features.pop(evicted_frame_idx, None)
                     memory_rgb_features.pop(evicted_frame_idx, None)
                     memory_quality_scores.pop(evicted_frame_idx, None)
+            profiler.end_phase("memory_policy_update", policy_phase_start)
+
+            # Store only frames that survived the policy update. Each frame owns its
+            # storage so evicting one frame releases that frame rather than retaining
+            # an entire decoded section through a tensor view.
+            bank_store_phase_start = profiler.start_phase()
+            retained_frames = set(memory_buffer.candidates())
+            bank_source_frames = (
+                section_frames if memory_bank_device == "cuda" else section_frames_cpu
+            )
+            for local_frame_idx in range(bank_source_frames.shape[2]):
+                global_frame_idx = section_start_frame + local_frame_idx
+                if global_frame_idx not in retained_frames:
+                    continue
+                all_generated_frames[global_frame_idx] = (
+                    bank_source_frames[
+                        :,
+                        :,
+                        local_frame_idx : local_frame_idx + 1,
+                        :,
+                        :,
+                    ]
+                    .detach()
+                    .clone()
+                )
+            profiler.end_phase("bank_store", bank_store_phase_start)
+
             if evicted_frames:
                 print(f"Evicted frames: {evicted_frames}")
             print(f"Memory stored frames after section {section_idx}: {len(memory_buffer)}")
             print(f"Section {section_idx} completed.")
 
-        # ============ Decode ============
-        print("Decoding all sections...")
-        self.load_models_to_device(['vae'])
-
-        all_frames = []
-        for section_idx, section_latent in enumerate(all_section_latents[1:]):
-            section_latent = section_latent.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)
-            section_frames = self.decode_video(section_latent, **tiler_kwargs).squeeze(0)
-
-            if section_idx == 0:
-                all_frames.append(section_frames)
+            bank_frame_bytes = tensor_mapping_nbytes(all_generated_frames)
+            bank_feature_bytes = (
+                numpy_mapping_nbytes(memory_dino_features)
+                + numpy_mapping_nbytes(memory_rgb_features)
+                + 8 * len(memory_quality_scores)
+            )
+            duration_sec = profile_metadata.get("duration_sec")
+            if duration_sec is not None and total_frames > 1:
+                generated_seconds = float(duration_sec) * section_end_frame / (total_frames - 1)
             else:
-                all_frames.append(section_frames[:, 1:, :, :])
+                generated_seconds = section_end_frame / 30.0
 
-        all_frames = torch.cat(all_frames, dim=1)
-        frames = self.tensor2video(all_frames.cpu())
+            del section_frames
+            profiler.end_section(
+                section_end_frame=section_end_frame,
+                generated_seconds=generated_seconds,
+                stored_memory_size=len(memory_buffer),
+                candidate_count=section_candidate_count,
+                bank_frame_bytes=bank_frame_bytes,
+                bank_feature_bytes=bank_feature_bytes,
+                host_to_device_bytes=section_host_to_device_bytes,
+            )
+
+        # The memory bank is no longer needed once the rollout is complete. Output
+        # sections were already decoded and moved to CPU during generation.
+        all_generated_frames.clear()
+        memory_dino_features.clear()
+        memory_rgb_features.clear()
+        memory_quality_scores.clear()
+        all_section_latents.clear()
+        visual_feature_extractor = None
+
+        all_frames = torch.cat(output_frame_sections, dim=1)
+        frames = self.tensor2video(all_frames)
+        profiler.finish_rollout()
         if access_trace_handle is not None:
             access_trace_handle.close()
         self.load_models_to_device([])

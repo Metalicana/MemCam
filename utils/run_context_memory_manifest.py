@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
 from utils.run_context_memory_batch import assert_video_writer_available
 
 
@@ -46,7 +49,14 @@ def main():
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument(
+        "--memory_bank_device",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda"],
+    )
     parser.add_argument("--access_trace_dir", type=Path, default=None)
+    parser.add_argument("--profile_dir", type=Path, default=None)
     args = parser.parse_args()
 
     item = read_manifest_row(args.manifest, args.row)
@@ -57,6 +67,10 @@ def main():
     access_trace_dir = args.access_trace_dir or (output_dir / "access_traces")
     access_trace_dir.mkdir(parents=True, exist_ok=True)
     access_trace_path = access_trace_dir / f"{item['output_prefix']}custom.jsonl"
+    profile_path = None
+    if args.profile_dir is not None:
+        args.profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_path = args.profile_dir / f"{item['output_prefix']}custom.jsonl"
 
     command = [
         sys.executable,
@@ -83,6 +97,8 @@ def main():
         str(args.seed),
         "--memory_policy",
         args.memory_policy,
+        "--memory_bank_device",
+        args.memory_bank_device,
         "--device",
         "cuda",
         "--output_dir",
@@ -94,6 +110,8 @@ def main():
     ]
     if args.memory_budget is not None:
         command.extend(["--memory_budget", str(args.memory_budget)])
+    if profile_path is not None:
+        command.extend(["--profile_path", str(profile_path)])
 
     env = os.environ.copy()
     visible_gpu = env.get("CUDA_VISIBLE_DEVICES")
@@ -108,6 +126,8 @@ def main():
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    print(f"Memory bank device: {args.memory_bank_device}")
+    print(f"Profile path: {profile_path}")
     print(f"Output dir: {output_dir}")
     print(f"Caption key: {item['caption_key']}")
     subprocess.run(command, check=True, env=env)
