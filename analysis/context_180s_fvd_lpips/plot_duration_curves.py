@@ -64,14 +64,22 @@ def parse_args():
     parser.add_argument(
         "--metrics-dir",
         type=Path,
-        required=True,
         help="Directory containing one <run>/summary.json per variant.",
+    )
+    parser.add_argument(
+        "--data-json",
+        type=Path,
+        help="Single JSON file containing summaries keyed by run name.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)
     return parser.parse_args()
 
 
-def load_summary(metrics_dir, run_name):
+def load_summary(metrics_dir, summaries, run_name):
+    if summaries is not None:
+        return summaries.get(run_name)
+    if metrics_dir is None:
+        return None
     path = metrics_dir / run_name / "summary.json"
     if not path.exists():
         return None
@@ -86,7 +94,7 @@ def duration_values(summary, metric):
     return [by_duration.get(str(duration), {}).get(metric) for duration in DURATIONS]
 
 
-def plot_metric(metric, metrics_dir, output_dir):
+def plot_metric(metric, metrics_dir, summaries, output_dir):
     config = METRICS[metric]
     plt.rcParams.update(
         {
@@ -102,15 +110,18 @@ def plot_metric(metric, metrics_dir, output_dir):
         }
     )
 
-    fig, ax = plt.subplots(figsize=(11, 7), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(11, 7))
+    fig.subplots_adjust(left=0.10, right=0.98, bottom=0.12, top=0.78)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
     plotted = 0
+    plotted_families = set()
+    plotted_budgets = set()
 
-    for family in FAMILIES.values():
+    for family_key, family in FAMILIES.items():
         for budget, style in BUDGET_STYLES.items():
             run_name = family["run"].format(budget=budget)
-            values = duration_values(load_summary(metrics_dir, run_name), metric)
+            values = duration_values(load_summary(metrics_dir, summaries, run_name), metric)
             points = [(duration, value) for duration, value in zip(DURATIONS, values) if value is not None]
             if not points:
                 continue
@@ -129,8 +140,10 @@ def plot_metric(metric, metrics_dir, output_dir):
                 zorder=3,
             )
             plotted += 1
+            plotted_families.add(family_key)
+            plotted_budgets.add(budget)
 
-    baseline_summary = load_summary(metrics_dir, "baseline")
+    baseline_summary = load_summary(metrics_dir, summaries, "baseline")
     baseline_values = duration_values(baseline_summary, metric)
     baseline_points = [
         (duration, value)
@@ -149,9 +162,16 @@ def plot_metric(metric, metrics_dir, output_dir):
         )
 
     if plotted == 0 and not baseline_points:
-        raise RuntimeError(f"No {metric} duration values found under {metrics_dir}")
+        raise RuntimeError(f"No {metric} duration values found")
 
-    ax.set_title(f"{config['label']} vs. Video Duration", loc="left", pad=18, weight="bold")
+    fig.suptitle(
+        f"{config['label']} vs. Video Duration",
+        x=0.10,
+        y=0.97,
+        ha="left",
+        fontsize=18,
+        weight="bold",
+    )
     ax.set_xlabel("Video duration (seconds)")
     ax.set_ylabel(f"{config['label']} (lower is better)")
     ax.set_xticks(DURATIONS)
@@ -162,8 +182,15 @@ def plot_metric(metric, metrics_dir, output_dir):
     ax.spines["right"].set_visible(False)
 
     family_handles = [
-        Line2D([0], [0], color=family["color"], linewidth=2.5, label=family["label"])
-        for family in FAMILIES.values()
+        Line2D(
+            [0],
+            [0],
+            color=FAMILIES[family_key]["color"],
+            linewidth=2.5,
+            label=FAMILIES[family_key]["label"],
+        )
+        for family_key in FAMILIES
+        if family_key in plotted_families
     ]
     if baseline_points:
         family_handles.append(
@@ -188,12 +215,14 @@ def plot_metric(metric, metrics_dir, output_dir):
             label=f"B={budget}",
         )
         for budget, style in BUDGET_STYLES.items()
+        if budget in plotted_budgets
     ]
 
     family_legend = ax.legend(
         handles=family_handles,
         title="Policy",
-        loc="upper left",
+        loc="lower left",
+        bbox_to_anchor=(0.0, 1.02),
         frameon=False,
         ncol=len(family_handles),
         columnspacing=1.4,
@@ -203,9 +232,10 @@ def plot_metric(metric, metrics_dir, output_dir):
     ax.legend(
         handles=budget_handles,
         title="Memory budget",
-        loc="upper right",
+        loc="lower right",
+        bbox_to_anchor=(1.0, 1.02),
         frameon=False,
-        ncol=2,
+        ncol=len(budget_handles),
         columnspacing=1.4,
         handlelength=2.5,
     )
@@ -220,8 +250,16 @@ def plot_metric(metric, metrics_dir, output_dir):
 
 def main():
     args = parse_args()
+    summaries = None
+    metrics_dir = args.metrics_dir.expanduser() if args.metrics_dir else None
+    data_json = args.data_json
+    if metrics_dir is None and data_json is None:
+        data_json = Path(__file__).resolve().with_name("duration_metrics.json")
+    if data_json is not None:
+        with data_json.expanduser().open("r", encoding="utf-8") as handle:
+            summaries = json.load(handle)
     for metric in METRICS:
-        plot_metric(metric, args.metrics_dir.expanduser(), args.output_dir.expanduser())
+        plot_metric(metric, metrics_dir, summaries, args.output_dir.expanduser())
 
 
 if __name__ == "__main__":

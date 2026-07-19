@@ -112,6 +112,12 @@ def main():
     parser.add_argument("--start_row", type=int, default=None)
     parser.add_argument("--end_row", type=int, default=None)
     parser.add_argument("--durations", type=str, default=None, help="Optional durations like '10,20'.")
+    parser.add_argument(
+        "--max_items",
+        type=int,
+        default=None,
+        help="Run at most this many manifest items after applying all row and duration filters.",
+    )
     parser.add_argument("--height", type=int, default=352)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--num_inference_steps", type=int, default=50)
@@ -176,6 +182,10 @@ def main():
     row_filter = parse_rows(args.rows)
     durations = [int(part) for part in args.durations.split(",")] if args.durations else None
     selected = select_rows(items, row_filter, args.start_row, args.end_row, durations)
+    if args.max_items is not None:
+        if args.max_items < 1:
+            raise ValueError("--max_items must be at least 1")
+        selected = selected[: args.max_items]
 
     if not selected:
         raise RuntimeError("No manifest rows selected.")
