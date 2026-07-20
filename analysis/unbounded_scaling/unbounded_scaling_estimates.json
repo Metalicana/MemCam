@@ -1,0 +1,76 @@
+{
+  "assumptions": {
+    "fps": 30,
+    "frames_per_section": 76,
+    "context_targets_per_section": 76,
+    "width": 640,
+    "height": 352,
+    "channels": 3,
+    "bytes_per_value": 2,
+    "denoising_seconds_per_section": 160.5,
+    "overlap_call_microseconds": 466.1,
+    "overlap_samples_per_call": 5000
+  },
+  "estimates": [
+    {
+      "duration_sec": 10,
+      "sections": 4,
+      "stored_frames": 305,
+      "memory_bank_gb": 0.38394927978515625,
+      "overlap_evaluations": 33972,
+      "retrieval_latency_s": 15.8343492,
+      "denoising_latency_s": 642.0,
+      "rollout_latency_s": 657.8343492,
+      "rollout_latency_hours": 0.18273176366666669,
+      "rollout_latency_days": 0.007613823486111111
+    },
+    {
+      "duration_sec": 40,
+      "sections": 16,
+      "stored_frames": 1217,
+      "memory_bank_gb": 1.5320205688476562,
+      "overlap_evaluations": 689700,
+      "retrieval_latency_s": 321.46917,
+      "denoising_latency_s": 2568.0,
+      "rollout_latency_s": 2889.46917,
+      "rollout_latency_hours": 0.802630325,
+      "rollout_latency_days": 0.03344293020833333
+    },
+    {
+      "duration_sec": 60,
+      "sections": 24,
+      "stored_frames": 1825,
+      "memory_bank_gb": 2.2974014282226562,
+      "overlap_evaluations": 1588932,
+      "retrieval_latency_s": 740.6012052,
+      "denoising_latency_s": 3852.0,
+      "rollout_latency_s": 4592.6012052,
+      "rollout_latency_hours": 1.275722557,
+      "rollout_latency_days": 0.053155106541666663
+    },
+    {
+      "duration_sec": 600,
+      "sections": 237,
+      "stored_frames": 18013,
+      "memory_bank_gb": 22.67566680908203,
+      "overlap_evaluations": 161477808,
+      "retrieval_latency_s": 75264.8063088,
+      "denoising_latency_s": 38038.5,
+      "rollout_latency_s": 113303.3063088,
+      "rollout_latency_hours": 31.473140641333334,
+      "rollout_latency_days": 1.3113808600555557
+    },
+    {
+      "duration_sec": 3600,
+      "sections": 1422,
+      "stored_frames": 108073,
+      "memory_bank_gb": 136.0477066040039,
+      "overlap_evaluations": 5835347868,
+      "retrieval_latency_s": 2719855.6412748,
+      "denoising_latency_s": 228231.0,
+      "rollout_latency_s": 2948086.6412748,
+      "rollout_latency_hours": 818.9129559096667,
+      "rollout_latency_days": 34.12137316290278
+    }
+  ]
+}
