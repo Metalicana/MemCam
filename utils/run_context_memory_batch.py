@@ -1,4 +1,5 @@
 import argparse
+import gc
 import json
 import os
 import sys
@@ -220,6 +221,7 @@ def main():
 
     # Import after CUDA_VISIBLE_DEVICES is set.
     from PIL import Image
+    import torch
 
     from dataset.poses import load_c2ws_from_json
     from diffsynth import save_video
@@ -308,6 +310,9 @@ def main():
                 tiled=False,
             )
             save_video(video, str(save_path), fps=item["fps"], quality=5)
+            del video
+            gc.collect()
+            torch.cuda.empty_cache()
         except Exception as exc:
             elapsed = round(time.time() - start_time, 2)
             append_jsonl(
