@@ -84,7 +84,14 @@ def map_video_index_to_manifest_local(video_idx, total_video_frames, manifest_nu
     return int(min(max(scaled, 0), manifest_num_frames - 1))
 
 
-def extract_sampled_frames(video_path, frame_dir, frame_stride, max_frames, manifest_num_frames):
+def extract_sampled_frames(
+    video_path,
+    frame_dir,
+    frame_stride,
+    max_frames,
+    manifest_num_frames,
+    video_frame_limit=None,
+):
     try:
         import cv2
     except ImportError as exc:
@@ -100,7 +107,10 @@ def extract_sampled_frames(video_path, frame_dir, frame_stride, max_frames, mani
         cap.release()
         raise RuntimeError(f"Video has no readable frames: {video_path}")
 
-    indices = list(range(0, total_frames, frame_stride))
+    considered_frames = total_frames
+    if video_frame_limit is not None:
+        considered_frames = min(total_frames, int(video_frame_limit))
+    indices = list(range(0, considered_frames, frame_stride))
     if max_frames is not None and len(indices) > max_frames:
         positions = np.linspace(0, len(indices) - 1, max_frames)
         indices = [indices[int(round(pos))] for pos in positions]
@@ -121,7 +131,7 @@ def extract_sampled_frames(video_path, frame_dir, frame_stride, max_frames, mani
         manifest_local_indices.append(
             map_video_index_to_manifest_local(
                 video_idx=video_idx,
-                total_video_frames=total_frames,
+                total_video_frames=considered_frames,
                 manifest_num_frames=manifest_num_frames,
             )
         )
@@ -135,8 +145,20 @@ def extract_sampled_frames(video_path, frame_dir, frame_stride, max_frames, mani
         "video_frame_indices": indices[: len(frame_paths)],
         "manifest_local_indices": manifest_local_indices,
         "total_video_frames": total_frames,
+        "video_frames_considered": considered_frames,
         "video_fps": fps,
     }
+
+
+def prefix_num_frames(source_num_frames, source_duration, prefix_duration):
+    if prefix_duration is None:
+        return int(source_num_frames)
+    if prefix_duration < 1 or prefix_duration > source_duration:
+        raise ValueError(
+            f"prefix_duration must be in [1, {source_duration}], got {prefix_duration}"
+        )
+    frames = round(int(source_num_frames) * float(prefix_duration) / float(source_duration))
+    return max(1, min(int(source_num_frames), int(frames)))
 
 
 def write_json(path, payload):
@@ -175,6 +197,12 @@ def main():
     parser.add_argument("--frame_stride", type=int, default=30)
     parser.add_argument("--max_frames", type=int, default=120)
     parser.add_argument("--durations", type=str, default="60")
+    parser.add_argument(
+        "--prefix_duration",
+        type=int,
+        default=None,
+        help="Only reconstruct this leading prefix of each selected source video.",
+    )
     parser.add_argument("--rows", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
@@ -241,6 +269,14 @@ def main():
     for run_name in runs:
         run_dir = args.root / run_name
         for item in items:
+            source_duration = int(item["duration_sec"])
+            source_num_frames = int(item["num_frames"])
+            effective_duration = args.prefix_duration or source_duration
+            effective_num_frames = prefix_num_frames(
+                source_num_frames,
+                source_duration,
+                args.prefix_duration,
+            )
             video_path = output_path(run_dir, item)
             run_output_dir = item_output_dir(output_dir, run_name, item)
             metadata_path = run_output_dir / "metadata.json"
@@ -281,7 +317,8 @@ def main():
                     frame_dir=temp_dir,
                     frame_stride=args.frame_stride,
                     max_frames=args.max_frames,
-                    manifest_num_frames=int(item["num_frames"]),
+                    manifest_num_frames=effective_num_frames,
+                    video_frame_limit=effective_num_frames,
                 )
 
                 print(
@@ -306,8 +343,10 @@ def main():
                     "manifest_row": item["_row"],
                     "scene": item["scene"],
                     "start_frame": item["start_frame"],
-                    "duration_sec": item["duration_sec"],
-                    "num_frames": item["num_frames"],
+                    "duration_sec": effective_duration,
+                    "num_frames": effective_num_frames,
+                    "source_duration_sec": source_duration,
+                    "source_num_frames": source_num_frames,
                     "pose_path": item["pose_path"],
                     "output_prefix": item["output_prefix"],
                     "video_path": str(video_path),
@@ -322,6 +361,7 @@ def main():
                         for idx in sampled["manifest_local_indices"]
                     ],
                     "total_video_frames": sampled["total_video_frames"],
+                    "video_frames_considered": sampled["video_frames_considered"],
                     "video_fps": sampled["video_fps"],
                     "time_sec": elapsed,
                 }

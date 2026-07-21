@@ -995,8 +995,15 @@ class WanVideoMemCamPipeline(BasePipeline):
         all_section_latents.clear()
         visual_feature_extractor = None
 
-        all_frames = torch.cat(output_frame_sections, dim=1)
-        frames = self.tensor2video(all_frames)
+        # Convert one decoded section at a time. Concatenating the full rollout
+        # creates another 180-second tensor, and tensor2video then creates a
+        # full-size float copy; together those temporaries can exhaust host RAM.
+        frames = []
+        for section_idx, output_section in enumerate(output_frame_sections):
+            frames.extend(self.tensor2video(output_section))
+            output_frame_sections[section_idx] = None
+            del output_section
+        output_frame_sections.clear()
         profiler.finish_rollout()
         if access_trace_handle is not None:
             access_trace_handle.close()

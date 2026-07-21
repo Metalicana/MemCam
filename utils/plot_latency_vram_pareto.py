@@ -301,7 +301,8 @@ def plot_points(points, output_dir, title):
             label=label,
             zorder=3,
         )
-    max_duration = max(point["duration_sec"] for point in points)
+    plotted_durations = sorted({point["duration_sec"] for point in points})
+    max_duration = max(plotted_durations)
     final_points = [point for point in points if point["duration_sec"] == max_duration]
     frontier = pareto_frontier(final_points)
     if len(frontier) > 1:
@@ -320,7 +321,9 @@ def plot_points(points, output_dir, title):
     ax.text(
         0.0,
         1.015,
-        "Prefixes: 10, 20, 40, 60, 120, 180 s; median and IQR; lower-left is better",
+        "Prefixes: "
+        + ", ".join(str(duration) for duration in plotted_durations)
+        + " s; median and IQR; lower-left is better",
         transform=ax.transAxes,
         fontsize=9.5,
         color="#555555",
