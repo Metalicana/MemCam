@@ -53,7 +53,7 @@ class LatencyVramParetoTest(unittest.TestCase):
             points = PLOTTER.aggregate_profiles([path], [10, 40], {})
 
         self.assertEqual([point["duration_sec"] for point in points], [10, 40])
-        self.assertEqual(points[0]["label"], "RI-B32-GPU")
+        self.assertEqual(points[0]["label"], "Ours-B32-GPU")
         self.assertAlmostEqual(points[1]["latency_median"], 4.0)
         self.assertAlmostEqual(points[1]["peak_vram_median"], 8.0)
 
@@ -65,6 +65,18 @@ class LatencyVramParetoTest(unittest.TestCase):
         ]
         frontier = PLOTTER.pareto_frontier(points)
         self.assertEqual([point["label"] for point in frontier], ["fast-large", "balanced"])
+
+    def test_full_grid_validation_rejects_partial_plot(self):
+        partial = [
+            {
+                "memory_policy": "unbounded",
+                "memory_budget": None,
+                "memory_bank_device": "cpu",
+                "duration_sec": 60,
+            }
+        ]
+        with self.assertRaisesRegex(RuntimeError, "missing 25 of 26 points"):
+            PLOTTER.validate_full_grid(partial, [60])
 
     def test_plot_writes_png_pdf_and_csv(self):
         points = [
@@ -85,7 +97,7 @@ class LatencyVramParetoTest(unittest.TestCase):
             },
             {
                 "run_name": "ri_b32_gpu",
-                "label": "RI-B32-GPU",
+                "label": "Ours-B32-GPU",
                 "memory_policy": "rarity_irreplaceability",
                 "memory_budget": 32,
                 "memory_bank_device": "cuda",

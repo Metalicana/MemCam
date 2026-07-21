@@ -25,10 +25,14 @@ except ImportError as exc:
 
 
 DEFAULT_DURATIONS = (10, 20, 40, 60, 120, 180)
-DEVICE_MARKERS = {"cpu": "o", "cuda": "^"}
+FULL_GRID_BUDGETS = (16, 32, 64, 128)
+FULL_GRID_POLICIES = ("fifo", "rarity_irreplaceability", "slam_covisibility")
+FULL_GRID_DEVICES = ("cpu", "cuda")
+DEVICE_MARKERS = {"cpu": "o", "cuda": "s"}
 DEVICE_LINESTYLES = {"cpu": (0, (4, 2)), "cuda": "-"}
 RI_COLORS = {16: "#9ECAE1", 32: "#6BAED6", 64: "#3182BD", 128: "#08519C"}
-OTHER_BUDGET_COLORS = {16: "#FDD49E", 32: "#FDBB84", 64: "#FC8D59", 128: "#D7301F"}
+FIFO_COLORS = {16: "#FDD0A2", 32: "#FDAE6B", 64: "#F16913", 128: "#A63603"}
+SLAM_COLORS = {16: "#A1D99B", 32: "#74C476", 64: "#31A354", 128: "#006D2C"}
 
 
 def parse_int_list(value):
@@ -86,7 +90,7 @@ def default_config_label(record):
     if policy == "unbounded":
         policy_label = "Unbounded"
     elif policy == "rarity_irreplaceability":
-        policy_label = "RI"
+        policy_label = "Ours"
     elif policy == "slam_covisibility":
         policy_label = "SLAM"
     elif policy == "kcenter_coreset":
@@ -142,7 +146,11 @@ def config_color(point):
         return "#4D4D4D"
     if policy == "rarity_irreplaceability":
         return RI_COLORS.get(budget, "#0072B2")
-    return OTHER_BUDGET_COLORS.get(budget, "#E69F00")
+    if policy == "fifo":
+        return FIFO_COLORS.get(budget, "#D55E00")
+    if policy == "slam_covisibility":
+        return SLAM_COLORS.get(budget, "#009E73")
+    return "#7F7F7F"
 
 
 def aggregate_profiles(profile_paths, durations, label_overrides):
@@ -217,6 +225,45 @@ def pareto_frontier(points):
             frontier.append(point)
             best_y = point["peak_vram_median"]
     return frontier
+
+
+def validate_full_grid(points, durations):
+    expected = {
+        ("unbounded", None, device, duration)
+        for device in FULL_GRID_DEVICES
+        for duration in durations
+    }
+    expected.update(
+        {
+            (policy, budget, device, duration)
+            for policy in FULL_GRID_POLICIES
+            for budget in FULL_GRID_BUDGETS
+            for device in FULL_GRID_DEVICES
+            for duration in durations
+        }
+    )
+    available = {
+        (
+            point.get("memory_policy"),
+            point.get("memory_budget"),
+            point.get("memory_bank_device"),
+            point.get("duration_sec"),
+        )
+        for point in points
+    }
+    missing = sorted(
+        expected - available,
+        key=lambda item: (item[3], item[0], item[1] or 0, item[2]),
+    )
+    if missing:
+        formatted = [
+            f"{policy} b{budget if budget is not None else '-'} {device} {duration}s"
+            for policy, budget, device, duration in missing
+        ]
+        raise RuntimeError(
+            f"Incomplete latency/VRAM grid: missing {len(missing)} of {len(expected)} points:\n  "
+            + "\n  ".join(formatted)
+        )
 
 
 def write_points_csv(points, path):
@@ -334,7 +381,16 @@ def plot_points(points, output_dir, title):
     ax.grid(color="#DADCE0", linewidth=0.8, alpha=0.8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(frameon=False, loc="best", ncol=2, columnspacing=1.2)
+    if len(labels) > 8:
+        ax.legend(
+            frameon=False,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            ncol=2,
+            columnspacing=1.2,
+        )
+    else:
+        ax.legend(frameon=False, loc="best", ncol=2, columnspacing=1.2)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for extension in ("png", "pdf"):
@@ -357,6 +413,11 @@ def parse_args():
         default=",".join(str(duration) for duration in DEFAULT_DURATIONS),
     )
     parser.add_argument("--labels", default=None, help="Overrides like run_name=Paper label.")
+    parser.add_argument(
+        "--require_full_grid",
+        action="store_true",
+        help="Require Unbounded and FIFO/SLAM/Ours b16/b32/b64/b128 on CPU and CUDA.",
+    )
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--title", default="Latency vs. Peak GPU Memory")
     return parser.parse_args()
@@ -364,14 +425,17 @@ def parse_args():
 
 def main():
     args = parse_args()
+    durations = parse_int_list(args.durations)
     profile_paths = discover_profiles(args.profiles)
     if not profile_paths:
         raise RuntimeError("No profile JSONL files found.")
     points = aggregate_profiles(
         profile_paths,
-        parse_int_list(args.durations),
+        durations,
         parse_labels(args.labels),
     )
+    if args.require_full_grid:
+        validate_full_grid(points, durations)
     output_dir = args.output_dir.expanduser()
     write_points_csv(points, output_dir / "latency_vram_points.csv")
     plot_points(points, output_dir, args.title)
