@@ -19,6 +19,7 @@ from .memory_policies import (
     compute_kcenter_coreset_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
+    compute_trajectory_coverage_scores,
     image_quality_scores_from_pil_images,
 )
 from .memory_profiling import (
@@ -54,6 +55,11 @@ VISUAL_MEMORY_POLICIES = {
     "slam_covisibility",
     "facility_coreset",
     "kcenter_coreset",
+}
+ARCHIVE_MEMORY_POLICIES = {
+    "facility_coreset",
+    "kcenter_coreset",
+    "trajectory_coverage",
 }
 CORESET_ARCHIVE_STRIDE = 4
 CORESET_MAX_ARCHIVE_SIZE = 5000
@@ -352,6 +358,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_covisibility",
                 "facility_coreset",
                 "kcenter_coreset",
+                "trajectory_coverage",
                 "h2o_heavy_hitter",
             }
             and memory_budget is not None
@@ -370,7 +377,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         output_frame_sections = []
         pinned_memory_frames = (
             {0}
-            if memory_policy in {"rarity_irreplaceability", "slam_covisibility"}
+            if memory_policy
+            in {"rarity_irreplaceability", "slam_covisibility", "trajectory_coverage"}
             else set()
         )
         memory_buffer = FrameMemoryBuffer(
@@ -766,25 +774,25 @@ class WanVideoMemCamPipeline(BasePipeline):
                     memory_rgb_features[frame_idx] = rgb_batch[feature_idx]
                     memory_quality_scores[frame_idx] = float(quality_batch[feature_idx])
 
-                if memory_policy in {"facility_coreset", "kcenter_coreset"}:
-                    for frame_idx in feature_frame_indices:
-                        if frame_idx in coreset_archive_seen:
-                            continue
-                        if frame_idx == 0 or frame_idx % CORESET_ARCHIVE_STRIDE == 0:
-                            coreset_archive_frame_indices.append(frame_idx)
-                            coreset_archive_seen.add(frame_idx)
-                    if len(coreset_archive_frame_indices) > CORESET_MAX_ARCHIVE_SIZE:
-                        keep_positions = np.linspace(
-                            0,
-                            len(coreset_archive_frame_indices) - 1,
-                            CORESET_MAX_ARCHIVE_SIZE,
-                            dtype=np.int64,
-                        )
-                        coreset_archive_frame_indices = [
-                            coreset_archive_frame_indices[int(position)]
-                            for position in keep_positions
-                        ]
-                        coreset_archive_seen = set(coreset_archive_frame_indices)
+            if memory_policy in ARCHIVE_MEMORY_POLICIES:
+                for frame_idx in new_frame_indices:
+                    if frame_idx in coreset_archive_seen:
+                        continue
+                    if frame_idx == 0 or frame_idx % CORESET_ARCHIVE_STRIDE == 0:
+                        coreset_archive_frame_indices.append(frame_idx)
+                        coreset_archive_seen.add(frame_idx)
+                if len(coreset_archive_frame_indices) > CORESET_MAX_ARCHIVE_SIZE:
+                    keep_positions = np.linspace(
+                        0,
+                        len(coreset_archive_frame_indices) - 1,
+                        CORESET_MAX_ARCHIVE_SIZE,
+                        dtype=np.int64,
+                    )
+                    coreset_archive_frame_indices = [
+                        coreset_archive_frame_indices[int(position)]
+                        for position in keep_positions
+                    ]
+                    coreset_archive_seen = set(coreset_archive_frame_indices)
 
             if memory_policy == "rarity_irreplaceability":
                 current_memory = list(memory_buffer.candidates())
@@ -846,6 +854,24 @@ class WanVideoMemCamPipeline(BasePipeline):
                     budget=memory_budget,
                     forced_keep_frames=protected_frames,
                     dino_features=memory_dino_features,
+                    return_details=True,
+                )
+            elif memory_policy == "trajectory_coverage":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_trajectory_coverage_scores(
+                    memory_frame_indices=prospective_memory,
+                    archive_frame_indices=coreset_archive_frame_indices,
+                    c2ws=c2ws,
+                    budget=memory_budget,
+                    forced_keep_frames=protected_frames | pinned_memory_frames,
+                    fov_half_h=FOV_HALF_H,
+                    fov_half_v=FOV_HALF_V,
+                    radius=FOV_RADIUS,
                     return_details=True,
                 )
             elif memory_policy == "h2o_heavy_hitter":
@@ -917,6 +943,19 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_kcenter_nearest_archive_frame": score_detail.get("kcenter_nearest_archive_frame"),
                         "eviction_kcenter_nearest_archive_distance": score_detail.get("kcenter_nearest_archive_distance"),
                         "eviction_kcenter_selected_for_archive_frame": score_detail.get("kcenter_selected_for_archive_frame"),
+                        "eviction_trajectory_selected": score_detail.get("trajectory_selected"),
+                        "eviction_trajectory_forced_keep": score_detail.get("trajectory_forced_keep"),
+                        "eviction_trajectory_rank": score_detail.get("trajectory_rank"),
+                        "eviction_trajectory_marginal_gain": score_detail.get("trajectory_marginal_gain"),
+                        "eviction_trajectory_candidate_gain": score_detail.get("trajectory_candidate_gain"),
+                        "eviction_trajectory_removal_loss": score_detail.get("trajectory_removal_loss"),
+                        "eviction_trajectory_archive_size": score_detail.get("trajectory_archive_size"),
+                        "eviction_trajectory_value": score_detail.get("trajectory_value"),
+                        "eviction_trajectory_coverage_mean": score_detail.get("trajectory_coverage_mean"),
+                        "eviction_trajectory_coverage_min": score_detail.get("trajectory_coverage_min"),
+                        "eviction_trajectory_coverage_p10": score_detail.get("trajectory_coverage_p10"),
+                        "eviction_trajectory_similarity_mean": score_detail.get("trajectory_similarity_mean"),
+                        "eviction_trajectory_similarity_max": score_detail.get("trajectory_similarity_max"),
                         "eviction_h2o_read_weight": score_detail.get("h2o_read_weight"),
                         "eviction_h2o_selected_count": score_detail.get("h2o_selected_count"),
                         "eviction_h2o_best_overlap": score_detail.get("h2o_best_overlap"),

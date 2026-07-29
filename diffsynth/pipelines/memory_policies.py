@@ -11,6 +11,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "slam_covisibility",
     "facility_coreset",
     "kcenter_coreset",
+    "trajectory_coverage",
     "h2o_heavy_hitter",
 )
 BUDGETED_MEMORY_POLICIES = (
@@ -19,6 +20,7 @@ BUDGETED_MEMORY_POLICIES = (
     "slam_covisibility",
     "facility_coreset",
     "kcenter_coreset",
+    "trajectory_coverage",
     "h2o_heavy_hitter",
 )
 
@@ -167,6 +169,82 @@ def pose_distances(c2ws, frame_indices, target_indices, rotation_weight=2.0):
             rotation_dists[row, col] = rotation_distance(rotation_a, rotation_b)
 
     return position_dists + rotation_weight * rotation_dists
+
+
+def camera_trajectory_similarity(
+    c2ws,
+    query_frame_indices,
+    memory_frame_indices,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+):
+    """Approximate direct camera-FOV overlap for trajectory coverage.
+
+    The score is one for identical poses and falls to zero when either camera
+    centers are more than two FOV radii apart or their viewing cones no longer
+    overlap. Unlike ``pose_distances``, its physical scale does not change with
+    the current candidate set.
+    """
+    query_frame_indices = list(query_frame_indices)
+    memory_frame_indices = list(memory_frame_indices)
+    if not query_frame_indices or not memory_frame_indices:
+        return np.zeros(
+            (len(query_frame_indices), len(memory_frame_indices)),
+            dtype=np.float64,
+        )
+    if radius <= 0:
+        raise ValueError("trajectory coverage radius must be positive")
+    if fov_half_h <= 0 or fov_half_v <= 0:
+        raise ValueError("trajectory coverage FOV half angles must be positive")
+
+    query_poses = np.asarray(c2ws[query_frame_indices], dtype=np.float64)
+    memory_poses = np.asarray(c2ws[memory_frame_indices], dtype=np.float64)
+
+    query_positions = query_poses[:, :3, 3]
+    memory_positions = memory_poses[:, :3, 3]
+    position_distance = np.linalg.norm(
+        query_positions[:, None, :] - memory_positions[None, :, :],
+        axis=-1,
+    )
+    position_similarity = np.clip(
+        1.0 - position_distance / (2.0 * float(radius)),
+        0.0,
+        1.0,
+    )
+
+    # MemCam's UE camera convention uses the first rotation column as forward.
+    query_forward = query_poses[:, :3, 0]
+    memory_forward = memory_poses[:, :3, 0]
+    query_forward /= np.maximum(np.linalg.norm(query_forward, axis=1, keepdims=True), 1e-12)
+    memory_forward /= np.maximum(np.linalg.norm(memory_forward, axis=1, keepdims=True), 1e-12)
+
+    query_yaw = np.arctan2(query_forward[:, 1], query_forward[:, 0])
+    memory_yaw = np.arctan2(memory_forward[:, 1], memory_forward[:, 0])
+    yaw_distance = np.abs(query_yaw[:, None] - memory_yaw[None, :])
+    yaw_distance = np.minimum(yaw_distance, 2.0 * np.pi - yaw_distance)
+
+    query_pitch = np.arctan2(
+        query_forward[:, 2],
+        np.linalg.norm(query_forward[:, :2], axis=1),
+    )
+    memory_pitch = np.arctan2(
+        memory_forward[:, 2],
+        np.linalg.norm(memory_forward[:, :2], axis=1),
+    )
+    pitch_distance = np.abs(query_pitch[:, None] - memory_pitch[None, :])
+
+    horizontal_similarity = np.clip(
+        1.0 - yaw_distance / (2.0 * np.deg2rad(float(fov_half_h))),
+        0.0,
+        1.0,
+    )
+    vertical_similarity = np.clip(
+        1.0 - pitch_distance / (2.0 * np.deg2rad(float(fov_half_v))),
+        0.0,
+        1.0,
+    )
+    return position_similarity * horizontal_similarity * vertical_similarity
 
 
 def normalize(values):
@@ -703,6 +781,159 @@ def compute_facility_coreset_scores(
             "coreset_pose_weight": float(pose_weight),
             "coreset_time_weight": float(time_weight),
             "coreset_similarity_sigma": float(similarity_sigma),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_trajectory_coverage_scores(
+    memory_frame_indices,
+    archive_frame_indices,
+    c2ws,
+    budget,
+    forced_keep_frames=None,
+    archive_weights=None,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Select memories that maximize coverage of the observed camera trajectory.
+
+    For every past trajectory pose, coverage is the best direct camera-FOV
+    similarity supplied by any selected memory. Greedy facility-location
+    selection gives the standard diminishing-returns coreset and only receives
+    archive indices at or before the current generation section.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    archive_frame_indices = list(archive_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError("trajectory_coverage requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("trajectory_coverage budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if not archive_frame_indices:
+        archive_frame_indices = list(memory_frame_indices)
+
+    unknown_forced = forced_keep_frames - set(memory_frame_indices)
+    if unknown_forced:
+        raise ValueError(
+            "trajectory_coverage forced-keep frames are not candidates: "
+            f"{sorted(unknown_forced)[:10]}"
+        )
+    if len(forced_keep_frames) > budget:
+        raise ValueError("trajectory_coverage has more forced frames than its budget")
+
+    weights = (
+        np.ones(len(archive_frame_indices), dtype=np.float64)
+        if archive_weights is None
+        else np.asarray(archive_weights, dtype=np.float64)
+    )
+    if weights.shape != (len(archive_frame_indices),):
+        raise ValueError("archive_weights length must match archive_frame_indices")
+    if np.any(weights < 0):
+        raise ValueError("archive_weights must be non-negative")
+    weight_sum = float(np.sum(weights))
+    if weight_sum <= 0:
+        raise ValueError("trajectory_coverage archive weights must have positive mass")
+    weights = weights / weight_sum
+
+    similarity = camera_trajectory_similarity(
+        c2ws=c2ws,
+        query_frame_indices=archive_frame_indices,
+        memory_frame_indices=memory_frame_indices,
+        fov_half_h=fov_half_h,
+        fov_half_v=fov_half_v,
+        radius=radius,
+    )
+
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+    selected_cols = list(forced_cols)
+    selected_set = set(forced_cols)
+    marginal_gains = {col: float("inf") for col in forced_cols}
+
+    if selected_cols:
+        covered = np.max(similarity[:, selected_cols], axis=1)
+    else:
+        covered = np.zeros(len(archive_frame_indices), dtype=np.float64)
+
+    selected_limit = min(int(budget), len(memory_frame_indices))
+    while len(selected_cols) < selected_limit:
+        gains = np.sum(
+            weights[:, None] * np.maximum(similarity - covered[:, None], 0.0),
+            axis=0,
+        )
+        if selected_set:
+            gains[list(selected_set)] = -np.inf
+        best_col = int(np.argmax(gains))
+        if not np.isfinite(gains[best_col]):
+            break
+
+        selected_cols.append(best_col)
+        selected_set.add(best_col)
+        marginal_gains[best_col] = float(gains[best_col])
+        covered = np.maximum(covered, similarity[:, best_col])
+
+    selected_frames = [memory_frame_indices[col] for col in selected_cols]
+    selected_frame_set = set(selected_frames)
+    trajectory_value = float(np.sum(weights * covered))
+
+    removal_losses = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        without_col = (
+            np.max(similarity[:, other_cols], axis=1)
+            if other_cols
+            else np.zeros(len(archive_frame_indices), dtype=np.float64)
+        )
+        removal_losses[col] = float(np.sum(weights * (covered - without_col)))
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + removal_losses.get(col, 0.0)
+        else:
+            score = -1.0
+
+        gain = marginal_gains.get(col)
+        candidate_gain = float(
+            np.sum(weights * np.maximum(similarity[:, col] - covered, 0.0))
+        )
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "trajectory_selected": bool(selected),
+            "trajectory_forced_keep": bool(forced),
+            "trajectory_rank": selected_frames.index(frame_idx) if selected else None,
+            "trajectory_marginal_gain": (
+                None if gain is None or np.isinf(gain) else float(gain)
+            ),
+            "trajectory_candidate_gain": candidate_gain,
+            "trajectory_removal_loss": (
+                float(removal_losses.get(col, 0.0)) if selected else 0.0
+            ),
+            "trajectory_archive_size": len(archive_frame_indices),
+            "trajectory_value": trajectory_value,
+            "trajectory_coverage_mean": float(np.mean(covered)),
+            "trajectory_coverage_min": float(np.min(covered)),
+            "trajectory_coverage_p10": float(np.quantile(covered, 0.10)),
+            "trajectory_similarity_mean": float(np.mean(similarity[:, col])),
+            "trajectory_similarity_max": float(np.max(similarity[:, col])),
+            "trajectory_fov_half_h": float(fov_half_h),
+            "trajectory_fov_half_v": float(fov_half_v),
+            "trajectory_radius": float(radius),
         }
 
     return (scores, details) if return_details else scores

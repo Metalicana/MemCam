@@ -45,6 +45,7 @@ def main():
             "slam_covisibility",
             "facility_coreset",
             "kcenter_coreset",
+            "trajectory_coverage",
             "h2o_heavy_hitter",
         ],
     )

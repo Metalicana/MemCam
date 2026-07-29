@@ -81,6 +81,7 @@ if __name__ == "__main__":
             "slam_covisibility",
             "facility_coreset",
             "kcenter_coreset",
+            "trajectory_coverage",
             "h2o_heavy_hitter",
         ],
     )

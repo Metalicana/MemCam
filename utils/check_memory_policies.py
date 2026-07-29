@@ -9,11 +9,13 @@ spec = importlib.util.spec_from_file_location("memory_policies", MEMORY_POLICIES
 memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
+camera_trajectory_similarity = memory_policies.camera_trajectory_similarity
 compute_facility_coreset_scores = memory_policies.compute_facility_coreset_scores
 compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
+compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
 
 
 def check_unbounded():
@@ -90,6 +92,14 @@ def check_kcenter_coreset_requires_budget():
     except ValueError:
         return
     raise AssertionError("kcenter_coreset without a budget should fail")
+
+
+def check_trajectory_coverage_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="trajectory_coverage")
+    except ValueError:
+        return
+    raise AssertionError("trajectory_coverage without a budget should fail")
 
 
 def check_h2o_heavy_hitter_requires_budget():
@@ -234,6 +244,81 @@ def check_kcenter_coreset_scores():
     assert details[0]["kcenter_radius"] >= 0
 
 
+def check_camera_trajectory_similarity():
+    c2ws = np.repeat(np.eye(4, dtype=np.float64)[None], 3, axis=0)
+    yaw_180 = np.diag([-1.0, -1.0, 1.0])
+    c2ws[1, :3, :3] = yaw_180
+    c2ws[2, 0, 3] = 101.0
+
+    similarity = camera_trajectory_similarity(
+        c2ws=c2ws,
+        query_frame_indices=[0],
+        memory_frame_indices=[0, 1, 2],
+        radius=50.0,
+    )
+    np.testing.assert_allclose(similarity[0], [1.0, 0.0, 0.0], atol=1e-8)
+
+
+def check_trajectory_coverage_scores():
+    c2ws = make_line_c2ws(8)
+    c2ws[3:, 0, 3] += 20.0
+    candidates = [0, 1, 6, 7]
+    archive = list(range(8))
+
+    scores, details = compute_trajectory_coverage_scores(
+        memory_frame_indices=candidates,
+        archive_frame_indices=archive,
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        radius=5.0,
+        return_details=True,
+    )
+    selected = {
+        frame_idx
+        for frame_idx, row in details.items()
+        if row["trajectory_selected"]
+    }
+    assert 0 in selected
+    assert len(selected) == 2
+    assert selected & {6, 7}
+    assert not ({0, 1} <= selected)
+    assert scores[0] == float("inf")
+    assert details[0]["trajectory_archive_size"] == len(archive)
+    assert 0.0 <= details[0]["trajectory_value"] <= 1.0
+
+    changed_future = c2ws.copy()
+    changed_future[6:, :3, 3] += 1000.0
+    causal_scores, causal_details = compute_trajectory_coverage_scores(
+        memory_frame_indices=[0, 1, 4, 5],
+        archive_frame_indices=list(range(6)),
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        radius=5.0,
+        return_details=True,
+    )
+    changed_scores, changed_details = compute_trajectory_coverage_scores(
+        memory_frame_indices=[0, 1, 4, 5],
+        archive_frame_indices=list(range(6)),
+        c2ws=changed_future,
+        budget=2,
+        forced_keep_frames={0},
+        radius=5.0,
+        return_details=True,
+    )
+    assert causal_scores == changed_scores
+    assert {
+        frame_idx
+        for frame_idx, row in causal_details.items()
+        if row["trajectory_selected"]
+    } == {
+        frame_idx
+        for frame_idx, row in changed_details.items()
+        if row["trajectory_selected"]
+    }
+
+
 def check_h2o_heavy_hitter_scores():
     stats = {
         0: {"selection_overlap_sum": 0.0, "selected_count": 0, "best_selection_overlap": 0.0},
@@ -278,6 +363,9 @@ if __name__ == "__main__":
     check_facility_coreset_scores()
     check_kcenter_coreset_requires_budget()
     check_kcenter_coreset_scores()
+    check_trajectory_coverage_requires_budget()
+    check_camera_trajectory_similarity()
+    check_trajectory_coverage_scores()
     check_h2o_heavy_hitter_requires_budget()
     check_h2o_heavy_hitter_scores()
     print("memory policy checks passed")
