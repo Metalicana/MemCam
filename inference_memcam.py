@@ -82,10 +82,14 @@ if __name__ == "__main__":
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
+            "density_balanced_view_coverage",
             "h2o_heavy_hitter",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
+    parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
+    parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
     parser.add_argument(
         "--memory_bank_device",
         type=str,
@@ -146,6 +150,9 @@ if __name__ == "__main__":
             memory_policy=args.memory_policy,
             memory_budget=args.memory_budget,
             memory_bank_device=args.memory_bank_device,
+            density_coverage_alpha=args.density_coverage_alpha,
+            density_coverage_dino_weight=args.density_coverage_dino_weight,
+            density_coverage_rgb_weight=args.density_coverage_rgb_weight,
             access_trace_path=args.access_trace_path,
             access_trace_metadata={
                 "run_name": args.output_prefix.rstrip("_"),

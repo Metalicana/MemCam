@@ -12,6 +12,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "facility_coreset",
     "kcenter_coreset",
     "trajectory_coverage",
+    "density_balanced_view_coverage",
     "h2o_heavy_hitter",
 )
 BUDGETED_MEMORY_POLICIES = (
@@ -21,6 +22,7 @@ BUDGETED_MEMORY_POLICIES = (
     "facility_coreset",
     "kcenter_coreset",
     "trajectory_coverage",
+    "density_balanced_view_coverage",
     "h2o_heavy_hitter",
 )
 
@@ -485,10 +487,19 @@ def _feature_cosine_similarity(memory_frame_indices, features):
     if missing_features:
         raise ValueError(f"Missing visual memory features for frames: {missing_features[:10]}")
 
-    feature_matrix = np.stack([features[frame_idx] for frame_idx in memory_frame_indices])
+    feature_matrix = np.asarray(
+        np.stack([features[frame_idx] for frame_idx in memory_frame_indices]),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(feature_matrix)):
+        raise ValueError("Visual memory features must be finite")
     norms = np.linalg.norm(feature_matrix, axis=1, keepdims=True)
     feature_matrix = feature_matrix / np.maximum(norms, 1e-12)
-    return np.clip(feature_matrix @ feature_matrix.T, -1.0, 1.0)
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        similarities = feature_matrix @ feature_matrix.T
+    if not np.all(np.isfinite(similarities)):
+        raise ValueError("Visual cosine similarities must be finite")
+    return np.clip(similarities, -1.0, 1.0)
 
 
 def compute_slam_covisibility_scores(
@@ -781,6 +792,274 @@ def compute_facility_coreset_scores(
             "coreset_pose_weight": float(pose_weight),
             "coreset_time_weight": float(time_weight),
             "coreset_similarity_sigma": float(similarity_sigma),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_density_balanced_view_coverage_scores(
+    memory_frame_indices,
+    c2ws,
+    budget,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    coverage_masses=None,
+    density_alpha=0.5,
+    dino_weight=0.5,
+    rgb_weight=0.25,
+    density_epsilon=1e-3,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Select a bounded online coreset by probabilistic view coverage.
+
+    The candidate and query universe is exactly the retained bank plus the new
+    frames. Each retained query carries the mass of observations it represented
+    during the previous update, so no separate historical descriptor archive is
+    required. Density-balanced demand protects sparse view regions, while a soft
+    pose/DINO/RGB kernel estimates whether one memory can substitute for another.
+    With fixed demand weights and kernel, the noisy-OR set objective is monotone
+    submodular, so the budgeted subset is built by forward greedy selection.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError(
+            "density_balanced_view_coverage requires an explicit memory budget"
+        )
+    if budget <= 0:
+        raise ValueError("density_balanced_view_coverage budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if len(set(memory_frame_indices)) != len(memory_frame_indices):
+        raise ValueError("density_balanced_view_coverage candidates must be unique")
+    if dino_features is None or rgb_features is None:
+        raise ValueError(
+            "density_balanced_view_coverage requires DINO and RGB features"
+        )
+    if not 0.0 <= density_alpha <= 1.0:
+        raise ValueError("density_alpha must be in [0, 1]")
+    if dino_weight < 0 or rgb_weight < 0:
+        raise ValueError("density kernel weights must be non-negative")
+    if density_epsilon <= 0:
+        raise ValueError("density_epsilon must be positive")
+
+    candidate_set = set(memory_frame_indices)
+    unknown_forced = forced_keep_frames - candidate_set
+    if unknown_forced:
+        raise ValueError(
+            "density_balanced_view_coverage forced-keep frames are not candidates: "
+            f"{sorted(unknown_forced)[:10]}"
+        )
+    if len(forced_keep_frames) > budget:
+        raise ValueError(
+            "density_balanced_view_coverage has more forced frames than its budget"
+        )
+
+    missing_dino = [
+        frame_idx
+        for frame_idx in memory_frame_indices
+        if frame_idx not in dino_features
+    ]
+    missing_rgb = [
+        frame_idx
+        for frame_idx in memory_frame_indices
+        if frame_idx not in rgb_features
+    ]
+    if missing_dino or missing_rgb:
+        raise ValueError(
+            "Missing density coverage features for frames: "
+            f"DINO={missing_dino[:10]}, RGB={missing_rgb[:10]}"
+        )
+
+    coverage_masses = coverage_masses or {}
+    base_masses = np.asarray(
+        [coverage_masses.get(frame_idx, 1.0) for frame_idx in memory_frame_indices],
+        dtype=np.float64,
+    )
+    if np.any(~np.isfinite(base_masses)) or np.any(base_masses < 0):
+        raise ValueError("coverage masses must be finite and non-negative")
+    total_mass = float(np.sum(base_masses))
+    if total_mass <= 0:
+        raise ValueError("coverage masses must have positive total mass")
+
+    geometry_similarity = camera_trajectory_similarity(
+        c2ws=c2ws,
+        query_frame_indices=memory_frame_indices,
+        memory_frame_indices=memory_frame_indices,
+        fov_half_h=fov_half_h,
+        fov_half_v=fov_half_v,
+        radius=radius,
+    )
+    dino_similarity = _feature_cosine_similarity(
+        memory_frame_indices,
+        dino_features,
+    )
+    dino_distance = np.clip(1.0 - dino_similarity, 0.0, 2.0)
+    rgb_matrix = np.stack(
+        [rgb_features[frame_idx] for frame_idx in memory_frame_indices]
+    )
+    rgb_distance = pairwise_mean_abs_distances(rgb_matrix)
+    if not np.all(np.isfinite(rgb_distance)):
+        raise ValueError("RGB memory features must be finite")
+    appearance_similarity = np.exp(
+        -float(dino_weight) * dino_distance
+        -float(rgb_weight) * rgb_distance
+    )
+
+    # Geometry gates substitutability, while appearance discounts geometrically
+    # compatible views whose generated content no longer agrees.
+    kernel = np.clip(
+        geometry_similarity * appearance_similarity,
+        0.0,
+        1.0 - 1e-6,
+    )
+    np.fill_diagonal(kernel, 1.0 - 1e-6)
+
+    # A retained frame's mass is the number of past observations it represents.
+    # Including self-similarity makes this compressed density equivalent to the
+    # density of the original local cluster rather than forgetting its size.
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        density = kernel @ base_masses
+    if not np.all(np.isfinite(density)):
+        raise ValueError("density estimates must be finite")
+    raw_demand_weights = base_masses * np.power(
+        density + float(density_epsilon),
+        -float(density_alpha),
+    )
+    demand_weight_sum = float(np.sum(raw_demand_weights))
+    if not np.isfinite(demand_weight_sum) or demand_weight_sum <= 0:
+        raise ValueError("density-balanced demand weights must have positive mass")
+    demand_weights = raw_demand_weights / demand_weight_sum
+
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+    selected_cols = list(forced_cols)
+    selected_set = set(forced_cols)
+    marginal_gains = {col: float("inf") for col in forced_cols}
+
+    def uncovered_probability(columns):
+        if not columns:
+            return np.ones(len(memory_frame_indices), dtype=np.float64)
+        return np.exp(
+            np.sum(np.log1p(-kernel[:, columns]), axis=1)
+        )
+
+    uncovered = uncovered_probability(selected_cols)
+
+    selected_limit = min(int(budget), len(memory_frame_indices))
+    while len(selected_cols) < selected_limit:
+        gains = np.sum(
+            demand_weights[:, None] * uncovered[:, None] * kernel,
+            axis=0,
+        )
+        if selected_set:
+            gains[list(selected_set)] = -np.inf
+        best_col = int(np.argmax(gains))
+        if not np.isfinite(gains[best_col]):
+            break
+
+        selected_cols.append(best_col)
+        selected_set.add(best_col)
+        marginal_gains[best_col] = float(gains[best_col])
+        uncovered *= 1.0 - kernel[:, best_col]
+
+    selected_frames = [memory_frame_indices[col] for col in selected_cols]
+    selected_frame_set = set(selected_frames)
+    selected_ranks = {col: rank for rank, col in enumerate(selected_cols)}
+    coverage_probability = 1.0 - uncovered
+    coverage_value = float(np.sum(demand_weights * coverage_probability))
+
+    representative_masses = {col: 0.0 for col in selected_cols}
+    if len(selected_cols) == len(memory_frame_indices):
+        representative_masses = {
+            col: float(base_masses[col]) for col in selected_cols
+        }
+    elif selected_cols:
+        assignments = np.argmax(kernel[:, selected_cols], axis=1)
+        for row, selected_position in enumerate(assignments):
+            selected_col = selected_cols[int(selected_position)]
+            representative_masses[selected_col] += float(base_masses[row])
+
+    removal_losses = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        uncovered_without_col = uncovered_probability(other_cols)
+        removal_losses[col] = float(
+            np.sum(
+                demand_weights
+                * kernel[:, col]
+                * uncovered_without_col
+            )
+        )
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + removal_losses.get(col, 0.0)
+        else:
+            score = -1.0
+
+        candidate_gain = (
+            0.0
+            if selected
+            else float(
+                np.sum(demand_weights * uncovered * kernel[:, col])
+            )
+        )
+        gain = marginal_gains.get(col)
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "density_coverage_selected": bool(selected),
+            "density_coverage_forced_keep": bool(forced),
+            "density_coverage_rank": selected_ranks.get(col),
+            "density_coverage_marginal_gain": (
+                None if gain is None or np.isinf(gain) else float(gain)
+            ),
+            "density_coverage_candidate_gain": candidate_gain,
+            "density_coverage_removal_loss": (
+                float(removal_losses.get(col, 0.0)) if selected else 0.0
+            ),
+            "density_coverage_base_mass": float(base_masses[col]),
+            "density_coverage_assigned_mass": float(
+                representative_masses.get(col, 0.0)
+            ),
+            "density_coverage_total_mass": total_mass,
+            "density_coverage_density": float(density[col]),
+            "density_coverage_demand_weight": float(demand_weights[col]),
+            "density_coverage_value": coverage_value,
+            "density_coverage_mean": coverage_value,
+            "density_coverage_min": float(np.min(coverage_probability)),
+            "density_coverage_p10": float(
+                np.quantile(coverage_probability, 0.10)
+            ),
+            "density_coverage_geometry_mean": float(
+                np.mean(geometry_similarity[:, col])
+            ),
+            "density_coverage_dino_mean": float(
+                np.mean(dino_similarity[:, col])
+            ),
+            "density_coverage_rgb_distance_mean": float(
+                np.mean(rgb_distance[:, col])
+            ),
+            "density_coverage_kernel_mean": float(np.mean(kernel[:, col])),
+            "density_coverage_alpha": float(density_alpha),
+            "density_coverage_dino_weight": float(dino_weight),
+            "density_coverage_rgb_weight": float(rgb_weight),
+            "density_coverage_epsilon": float(density_epsilon),
         }
 
     return (scores, details) if return_details else scores

@@ -10,6 +10,9 @@ memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
 camera_trajectory_similarity = memory_policies.camera_trajectory_similarity
+compute_density_balanced_view_coverage_scores = (
+    memory_policies.compute_density_balanced_view_coverage_scores
+)
 compute_facility_coreset_scores = memory_policies.compute_facility_coreset_scores
 compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
@@ -108,6 +111,16 @@ def check_h2o_heavy_hitter_requires_budget():
     except ValueError:
         return
     raise AssertionError("h2o_heavy_hitter without a budget should fail")
+
+
+def check_density_balanced_view_coverage_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="density_balanced_view_coverage")
+    except ValueError:
+        return
+    raise AssertionError(
+        "density_balanced_view_coverage without a budget should fail"
+    )
 
 
 def check_rarity_irreplaceability_scores():
@@ -350,6 +363,43 @@ def check_h2o_heavy_hitter_scores():
     assert details[4]["h2o_recent_keep"]
 
 
+def check_density_balanced_view_coverage_scores():
+    c2ws = make_line_c2ws(7)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([1.0, 0.0], dtype=np.float32),
+        6: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.zeros(12, dtype=np.float32),
+        6: np.ones(12, dtype=np.float32),
+    }
+    masses = {0: 10.0, 1: 2.0, 6: 3.0}
+    scores, details = compute_density_balanced_view_coverage_scores(
+        memory_frame_indices=[0, 1, 6],
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        coverage_masses=masses,
+        radius=2.0,
+        return_details=True,
+    )
+    selected = {
+        frame_idx
+        for frame_idx, row in details.items()
+        if row["density_coverage_selected"]
+    }
+    assert selected == {0, 6}
+    assert scores[0] == float("inf")
+    assert sum(
+        details[frame_idx]["density_coverage_assigned_mass"]
+        for frame_idx in selected
+    ) == sum(masses.values())
+
+
 if __name__ == "__main__":
     check_unbounded()
     check_fifo()
@@ -368,4 +418,6 @@ if __name__ == "__main__":
     check_trajectory_coverage_scores()
     check_h2o_heavy_hitter_requires_budget()
     check_h2o_heavy_hitter_scores()
+    check_density_balanced_view_coverage_requires_budget()
+    check_density_balanced_view_coverage_scores()
     print("memory policy checks passed")

@@ -136,10 +136,14 @@ def main():
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
+            "density_balanced_view_coverage",
             "h2o_heavy_hitter",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
+    parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
+    parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
     parser.add_argument(
         "--memory_bank_device",
         type=str,
@@ -209,6 +213,9 @@ def main():
                     "memory_policy": args.memory_policy,
                     "memory_budget": args.memory_budget,
                     "memory_bank_device": args.memory_bank_device,
+                    "density_coverage_alpha": args.density_coverage_alpha,
+                    "density_coverage_dino_weight": args.density_coverage_dino_weight,
+                    "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
                 },
             )
         else:
@@ -242,6 +249,13 @@ def main():
     print(f"CUDA_VISIBLE_DEVICES: {visible_gpu}")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    if args.memory_policy == "density_balanced_view_coverage":
+        print(
+            "Density coverage: "
+            f"alpha={args.density_coverage_alpha}, "
+            f"DINO weight={args.density_coverage_dino_weight}, "
+            f"RGB weight={args.density_coverage_rgb_weight}"
+        )
     print(f"Memory bank device: {args.memory_bank_device}")
     print(f"Profile dir: {profile_dir}")
     print(f"Output dir: {output_dir}")
@@ -283,6 +297,9 @@ def main():
                 memory_policy=args.memory_policy,
                 memory_budget=args.memory_budget,
                 memory_bank_device=args.memory_bank_device,
+                density_coverage_alpha=args.density_coverage_alpha,
+                density_coverage_dino_weight=args.density_coverage_dino_weight,
+                density_coverage_rgb_weight=args.density_coverage_rgb_weight,
                 access_trace_path=str(access_trace_path),
                 access_trace_metadata={
                     "row": row,
@@ -295,6 +312,9 @@ def main():
                     "run_memory_policy": args.memory_policy,
                     "run_memory_budget": args.memory_budget,
                     "run_memory_bank_device": args.memory_bank_device,
+                    "density_coverage_alpha": args.density_coverage_alpha,
+                    "density_coverage_dino_weight": args.density_coverage_dino_weight,
+                    "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
                 },
                 profile_path=None if profile_path is None else str(profile_path),
                 profile_metadata={
@@ -327,6 +347,9 @@ def main():
                     "memory_policy": args.memory_policy,
                     "memory_budget": args.memory_budget,
                     "memory_bank_device": args.memory_bank_device,
+                    "density_coverage_alpha": args.density_coverage_alpha,
+                    "density_coverage_dino_weight": args.density_coverage_dino_weight,
+                    "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
                 },
             )
             raise
@@ -345,6 +368,9 @@ def main():
                 "memory_policy": args.memory_policy,
                 "memory_budget": args.memory_budget,
                 "memory_bank_device": args.memory_bank_device,
+                "density_coverage_alpha": args.density_coverage_alpha,
+                "density_coverage_dino_weight": args.density_coverage_dino_weight,
+                "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
             },
         )
         print(f"[row {row}] completed in {elapsed}s -> {save_path}")

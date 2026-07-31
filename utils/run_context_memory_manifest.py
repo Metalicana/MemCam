@@ -46,10 +46,14 @@ def main():
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
+            "density_balanced_view_coverage",
             "h2o_heavy_hitter",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
+    parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
+    parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
     parser.add_argument(
         "--memory_bank_device",
         type=str,
@@ -100,6 +104,12 @@ def main():
         args.memory_policy,
         "--memory_bank_device",
         args.memory_bank_device,
+        "--density_coverage_alpha",
+        str(args.density_coverage_alpha),
+        "--density_coverage_dino_weight",
+        str(args.density_coverage_dino_weight),
+        "--density_coverage_rgb_weight",
+        str(args.density_coverage_rgb_weight),
         "--device",
         "cuda",
         "--output_dir",
@@ -127,6 +137,13 @@ def main():
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    if args.memory_policy == "density_balanced_view_coverage":
+        print(
+            "Density coverage: "
+            f"alpha={args.density_coverage_alpha}, "
+            f"DINO weight={args.density_coverage_dino_weight}, "
+            f"RGB weight={args.density_coverage_rgb_weight}"
+        )
     print(f"Memory bank device: {args.memory_bank_device}")
     print(f"Profile path: {profile_path}")
     print(f"Output dir: {output_dir}")
