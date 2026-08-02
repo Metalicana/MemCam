@@ -131,6 +131,7 @@ class SelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim)
         self.norm_q = RMSNorm(dim, eps=eps)
         self.norm_k = RMSNorm(dim, eps=eps)
+        self.memory_attention_probe = None
         
         self.attn = AttentionModule(self.num_heads)
 
@@ -140,6 +141,8 @@ class SelfAttention(nn.Module):
         v = self.v(x)
         q = rope_apply(q, freqs, self.num_heads)
         k = rope_apply(k, freqs, self.num_heads)
+        if self.memory_attention_probe is not None:
+            self.memory_attention_probe(q.detach(), k.detach(), self.num_heads)
         x = self.attn(q, k, v)
         return self.o(x)
 

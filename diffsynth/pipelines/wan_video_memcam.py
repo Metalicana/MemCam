@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import torch
 
 import numpy as np
@@ -27,6 +28,11 @@ from .memory_profiling import (
     MemoryRolloutProfiler,
     numpy_mapping_nbytes,
     tensor_mapping_nbytes,
+)
+from .memory_attention_audit import (
+    MemoryAttentionCollector,
+    add_retrieval_controls,
+    select_intervention_candidates,
 )
 from ..prompters import WanPrompter
 from ..schedulers.flow_match import FlowMatchScheduler
@@ -323,6 +329,13 @@ class WanVideoMemCamPipeline(BasePipeline):
         density_coverage_rgb_weight=0.25,
         access_trace_path=None,
         access_trace_metadata=None,
+        attention_audit_path=None,
+        attention_audit_metadata=None,
+        attention_probe_sections=None,
+        attention_probe_steps=None,
+        attention_probe_layers=None,
+        attention_query_count=128,
+        attention_query_chunk_size=16,
         profile_path=None,
         profile_metadata=None,
         progress_bar_cmd=tqdm
@@ -345,6 +358,37 @@ class WanVideoMemCamPipeline(BasePipeline):
         assert total_frames % 76 == 1
         total_sections = (total_frames - 1) // 76
         print(f"Total sections: {total_sections}")
+
+        attention_audit_enabled = attention_audit_path is not None
+        probe_sections = {
+            int(value) for value in (attention_probe_sections or [])
+        }
+        probe_steps = {int(value) for value in (attention_probe_steps or [])}
+        probe_layers = sorted(
+            {int(value) for value in (attention_probe_layers or [])}
+        )
+        if attention_audit_enabled:
+            if not probe_sections or not probe_steps or not probe_layers:
+                raise ValueError(
+                    "Attention audit requires non-empty probe sections, steps, and layers"
+                )
+            invalid_sections = sorted(
+                value for value in probe_sections if value <= 0 or value >= total_sections
+            )
+            invalid_steps = sorted(
+                value for value in probe_steps if value < 0 or value >= num_inference_steps
+            )
+            invalid_layers = sorted(
+                value for value in probe_layers if value < 0 or value >= len(self.dit.blocks)
+            )
+            if invalid_sections:
+                raise ValueError(f"Invalid attention probe sections: {invalid_sections}")
+            if invalid_steps:
+                raise ValueError(f"Invalid attention probe steps: {invalid_steps}")
+            if invalid_layers:
+                raise ValueError(f"Invalid attention probe layers: {invalid_layers}")
+            if attention_query_count < 1 or attention_query_chunk_size < 1:
+                raise ValueError("Attention query counts and chunk sizes must be positive")
 
         # Encode input image
         self.load_models_to_device(['vae'])
@@ -428,6 +472,17 @@ class WanVideoMemCamPipeline(BasePipeline):
             os.makedirs(os.path.dirname(access_trace_path) or ".", exist_ok=True)
             access_trace_handle = open(access_trace_path, "w", encoding="utf-8")
 
+        attention_audit_handle = None
+        attention_audit_event_count = 0
+        attention_audit_metadata = dict(attention_audit_metadata or {})
+        if attention_audit_enabled:
+            os.makedirs(os.path.dirname(attention_audit_path) or ".", exist_ok=True)
+            attention_audit_handle = open(
+                attention_audit_path,
+                "w",
+                encoding="utf-8",
+            )
+
         profile_metadata = {
             **dict(access_trace_metadata or {}),
             **dict(profile_metadata or {}),
@@ -463,6 +518,37 @@ class WanVideoMemCamPipeline(BasePipeline):
                 if payload.get("evicted_memory_frame") is not None:
                     payload["evicted_dataset_frame"] = int(dataset_start_frame) + int(payload["evicted_memory_frame"])
             access_trace_handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+        def write_attention_audit(payload):
+            nonlocal attention_audit_event_count
+            if attention_audit_handle is None:
+                return
+            payload = {
+                **attention_audit_metadata,
+                **payload,
+            }
+            dataset_start_frame = payload.get("dataset_start_frame")
+            if dataset_start_frame is not None and payload.get("memory_frame") is not None:
+                payload["memory_dataset_frame"] = (
+                    int(dataset_start_frame) + int(payload["memory_frame"])
+                )
+            attention_audit_handle.write(
+                json.dumps(payload, ensure_ascii=False) + "\n"
+            )
+            attention_audit_handle.flush()
+            attention_audit_event_count += 1
+
+        def set_attention_collector(collector):
+            for layer_idx in probe_layers:
+                self.dit.blocks[layer_idx].self_attn.memory_attention_probe = (
+                    collector.callback(layer_idx)
+                )
+
+        def clear_attention_collector():
+            for layer_idx in probe_layers:
+                self.dit.blocks[layer_idx].self_attn.memory_attention_probe = None
+
+        clear_attention_collector()
         
         # Vanilla Sampling
         for section_idx in range(total_sections):
@@ -690,20 +776,41 @@ class WanVideoMemCamPipeline(BasePipeline):
                     device=self.device,
                 )
 
+                context_spatial = (
+                    ((latent_H + 3) // 4) * ((latent_W + 3) // 4)
+                )
+
                 for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
                     timestep = timestep.unsqueeze(0).to(
                         dtype=self.torch_dtype,
                         device=self.device,
                     )
                     target_input = torch.cat([anchor_latent_batch, noise_latents], dim=2)
-                    noise_pred_posi = self.forward(
-                        context_latents=context_latent_input,
-                        target_latents=target_input,
-                        context_pose=context_pose_input,
-                        target_pose=target_pose_input,
-                        timestep=timestep,
-                        context=prompt_emb_posi["context"],
+                    run_attention_probe = (
+                        attention_audit_enabled
+                        and section_idx in probe_sections
+                        and progress_id in probe_steps
                     )
+                    attention_collector = None
+                    if run_attention_probe:
+                        attention_collector = MemoryAttentionCollector(
+                            context_spatial=context_spatial,
+                            context_frame_indices=context_frame_indices,
+                            query_count=attention_query_count,
+                            query_chunk_size=attention_query_chunk_size,
+                        )
+                        set_attention_collector(attention_collector)
+                    try:
+                        noise_pred_posi = self.forward(
+                            context_latents=context_latent_input,
+                            target_latents=target_input,
+                            context_pose=context_pose_input,
+                            target_pose=target_pose_input,
+                            timestep=timestep,
+                            context=prompt_emb_posi["context"],
+                        )
+                    finally:
+                        clear_attention_collector()
 
                     if cfg_scale != 1.0:
                         noise_pred_nega = self.forward(
@@ -719,6 +826,176 @@ class WanVideoMemCamPipeline(BasePipeline):
                         )
                     else:
                         noise_pred = noise_pred_posi
+
+                    if run_attention_probe:
+                        attention_summary = attention_collector.aggregate()
+                        memory_scores = add_retrieval_controls(
+                            attention_summary["memory_scores"],
+                            selected_contexts,
+                            section_start_frame,
+                        )
+                        for row in memory_scores:
+                            dataset_start_frame = attention_audit_metadata.get(
+                                "dataset_start_frame"
+                            )
+                            if dataset_start_frame is not None:
+                                row["memory_dataset_frame"] = (
+                                    int(dataset_start_frame)
+                                    + int(row["memory_frame"])
+                                )
+
+                        write_attention_audit(
+                            {
+                                "event": "attention_probe",
+                                "section_idx": int(section_idx),
+                                "section_start_frame": int(section_start_frame),
+                                "progress_id": int(progress_id),
+                                "timestep": float(timestep.float().item()),
+                                "probe_layers": attention_summary["probe_layers"],
+                                "query_count": attention_summary["query_count"],
+                                "context_token_count": attention_summary[
+                                    "context_token_count"
+                                ],
+                                "target_token_count": attention_summary[
+                                    "target_token_count"
+                                ],
+                                "context_attention_mass": attention_summary[
+                                    "context_attention_mass"
+                                ],
+                                "unique_retrieved_memories": len(memory_scores),
+                                "memory_scores": memory_scores,
+                            }
+                        )
+
+                        intervention_seed = (
+                            int(seed or 0) * 1_000_003
+                            + int(section_idx) * 1_009
+                            + int(progress_id)
+                        )
+                        candidates = select_intervention_candidates(
+                            memory_scores,
+                            intervention_seed,
+                        )
+                        baseline_prediction = noise_pred[
+                            :, :, ANCHOR_LENGTH:, :, :
+                        ].float()
+                        baseline_energy = float(
+                            baseline_prediction.square().mean().item()
+                        )
+
+                        for candidate in candidates:
+                            slots = [
+                                int(value) for value in candidate["context_slots"]
+                            ]
+                            ablated_context_latents = context_latent_input.clone()
+                            ablated_context_pose = context_pose_input.clone()
+                            ablated_context_latents[:, :, slots, :, :] = 0
+                            ablated_context_pose[:, slots, :] = target_pose_input[
+                                :, :1, :
+                            ].expand(-1, len(slots), -1)
+
+                            ablated_posi = self.forward(
+                                context_latents=ablated_context_latents,
+                                target_latents=target_input,
+                                context_pose=ablated_context_pose,
+                                target_pose=target_pose_input,
+                                timestep=timestep,
+                                context=prompt_emb_posi["context"],
+                            )
+                            if cfg_scale != 1.0:
+                                ablated_nega = self.forward(
+                                    context_latents=ablated_context_latents,
+                                    target_latents=target_input,
+                                    context_pose=ablated_context_pose,
+                                    target_pose=target_pose_input,
+                                    timestep=timestep,
+                                    context=prompt_emb_nega["context"],
+                                )
+                                ablated_prediction = ablated_nega + cfg_scale * (
+                                    ablated_posi - ablated_nega
+                                )
+                            else:
+                                ablated_nega = None
+                                ablated_prediction = ablated_posi
+
+                            ablated_prediction = ablated_prediction[
+                                :, :, ANCHOR_LENGTH:, :, :
+                            ].float()
+                            prediction_delta = (
+                                ablated_prediction - baseline_prediction
+                            )
+                            delta_mse = float(
+                                prediction_delta.square().mean().item()
+                            )
+                            relative_l2 = math.sqrt(
+                                delta_mse / max(baseline_energy, 1e-12)
+                            )
+                            prediction_cosine = float(
+                                F.cosine_similarity(
+                                    baseline_prediction.flatten(),
+                                    ablated_prediction.flatten(),
+                                    dim=0,
+                                ).item()
+                            )
+
+                            write_attention_audit(
+                                {
+                                    "event": "memory_intervention",
+                                    "section_idx": int(section_idx),
+                                    "section_start_frame": int(section_start_frame),
+                                    "progress_id": int(progress_id),
+                                    "timestep": float(timestep.float().item()),
+                                    "probe_layers": attention_summary[
+                                        "probe_layers"
+                                    ],
+                                    "query_count": attention_summary[
+                                        "query_count"
+                                    ],
+                                    "context_attention_mass": attention_summary[
+                                        "context_attention_mass"
+                                    ],
+                                    "intervention": "null_all_retrieval_slots",
+                                    "intervention_role": candidate[
+                                        "intervention_role"
+                                    ],
+                                    "memory_frame": int(
+                                        candidate["memory_frame"]
+                                    ),
+                                    "context_slots": slots,
+                                    "slot_count": int(candidate["slot_count"]),
+                                    "attention_total": float(
+                                        candidate["attention_total"]
+                                    ),
+                                    "attention_per_slot": float(
+                                        candidate["attention_per_slot"]
+                                    ),
+                                    "retrieval_overlap_mean": candidate[
+                                        "retrieval_overlap_mean"
+                                    ],
+                                    "retrieval_overlap_max": candidate[
+                                        "retrieval_overlap_max"
+                                    ],
+                                    "memory_age_mean": float(
+                                        candidate["memory_age_mean"]
+                                    ),
+                                    "prediction_delta_mse": delta_mse,
+                                    "prediction_relative_l2": relative_l2,
+                                    "prediction_cosine": prediction_cosine,
+                                    "baseline_prediction_energy": baseline_energy,
+                                    "ablated_prediction_energy": float(
+                                        ablated_prediction.square().mean().item()
+                                    ),
+                                }
+                            )
+                            del (
+                                ablated_context_latents,
+                                ablated_context_pose,
+                                ablated_posi,
+                                ablated_prediction,
+                                prediction_delta,
+                            )
+                            if ablated_nega is not None:
+                                del ablated_nega
 
                     noise_pred_rest = noise_pred[:, :, ANCHOR_LENGTH:, :, :]
                     noise_latents = self.scheduler.step(
@@ -1153,7 +1430,18 @@ class WanVideoMemCamPipeline(BasePipeline):
             del output_section
         output_frame_sections.clear()
         profiler.finish_rollout()
+        write_attention_audit(
+            {
+                "event": "attention_audit_complete",
+                "probe_event_count": int(attention_audit_event_count),
+                "probe_sections": sorted(probe_sections),
+                "probe_steps": sorted(probe_steps),
+                "probe_layers": probe_layers,
+            }
+        )
         if access_trace_handle is not None:
             access_trace_handle.close()
+        if attention_audit_handle is not None:
+            attention_audit_handle.close()
         self.load_models_to_device([])
         return frames

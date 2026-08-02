@@ -45,6 +45,12 @@ def parse_rows(value):
     return rows
 
 
+def parse_int_csv(value):
+    if not value:
+        return []
+    return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
 def select_rows(items, row_filter, start_row, end_row, durations):
     selected = []
     duration_filter = set(durations) if durations else None
@@ -71,6 +77,20 @@ def output_path(output_dir, item):
 def append_jsonl(path, payload):
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def jsonl_has_event(path, event):
+    if path is None or not path.is_file():
+        return False
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("event") == event:
+                return True
+    return False
 
 
 def assert_video_writer_available(output_dir):
@@ -163,6 +183,35 @@ def main():
         default=None,
         help="Optional directory for per-video rollout latency/VRAM JSONL profiles.",
     )
+    parser.add_argument(
+        "--attention_audit_dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory for target-to-memory attention and controlled "
+            "memory-ablation JSONL traces."
+        ),
+    )
+    parser.add_argument(
+        "--attention_probe_sections",
+        type=str,
+        default="3,7,11",
+        help="Zero-based generation sections at which to audit attention.",
+    )
+    parser.add_argument(
+        "--attention_probe_steps",
+        type=str,
+        default="5,25,45",
+        help="Zero-based denoising steps at which to audit attention.",
+    )
+    parser.add_argument(
+        "--attention_probe_layers",
+        type=str,
+        default="5,15,25",
+        help="Zero-based DiT blocks from which to sample self-attention.",
+    )
+    parser.add_argument("--attention_query_count", type=int, default=128)
+    parser.add_argument("--attention_query_chunk_size", type=int, default=16)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -182,7 +231,14 @@ def main():
     profile_dir = args.profile_dir
     if profile_dir is not None:
         profile_dir.mkdir(parents=True, exist_ok=True)
+    attention_audit_dir = args.attention_audit_dir
+    if attention_audit_dir is not None:
+        attention_audit_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run_status.jsonl"
+
+    attention_probe_sections = parse_int_csv(args.attention_probe_sections)
+    attention_probe_steps = parse_int_csv(args.attention_probe_steps)
+    attention_probe_layers = parse_int_csv(args.attention_probe_layers)
 
     items = load_manifest(args.manifest)
     row_filter = parse_rows(args.rows)
@@ -200,7 +256,16 @@ def main():
     for item in selected:
         row = item["_row"]
         save_path = output_path(output_dir, item)
-        if save_path.exists() and not args.overwrite:
+        attention_audit_path = (
+            attention_audit_dir / f"{item['output_prefix']}custom.jsonl"
+            if attention_audit_dir is not None
+            else None
+        )
+        audit_is_complete = (
+            attention_audit_dir is None
+            or jsonl_has_event(attention_audit_path, "attention_audit_complete")
+        )
+        if save_path.exists() and not args.overwrite and audit_is_complete:
             print(f"[row {row}] skip existing: {save_path}")
             append_jsonl(
                 status_path,
@@ -219,6 +284,10 @@ def main():
                 },
             )
         else:
+            if save_path.exists() and not args.overwrite and not audit_is_complete:
+                print(
+                    f"[row {row}] video exists but attention audit is incomplete; rerunning"
+                )
             pending.append(item)
 
     if not pending:
@@ -258,6 +327,15 @@ def main():
         )
     print(f"Memory bank device: {args.memory_bank_device}")
     print(f"Profile dir: {profile_dir}")
+    print(f"Attention audit dir: {attention_audit_dir}")
+    if attention_audit_dir is not None:
+        print(
+            "Attention probes: "
+            f"sections={attention_probe_sections}, "
+            f"steps={attention_probe_steps}, "
+            f"layers={attention_probe_layers}, "
+            f"queries={args.attention_query_count}"
+        )
     print(f"Output dir: {output_dir}")
 
     for item in pending:
@@ -267,6 +345,11 @@ def main():
         profile_path = (
             profile_dir / f"{item['output_prefix']}custom.jsonl"
             if profile_dir is not None
+            else None
+        )
+        attention_audit_path = (
+            attention_audit_dir / f"{item['output_prefix']}custom.jsonl"
+            if attention_audit_dir is not None
             else None
         )
         print(
@@ -316,6 +399,28 @@ def main():
                     "density_coverage_dino_weight": args.density_coverage_dino_weight,
                     "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
                 },
+                attention_audit_path=(
+                    None
+                    if attention_audit_path is None
+                    else str(attention_audit_path)
+                ),
+                attention_audit_metadata={
+                    "row": row,
+                    "scene": item["scene"],
+                    "dataset_start_frame": item["start_frame"],
+                    "duration_sec": item["duration_sec"],
+                    "num_frames": item["num_frames"],
+                    "output": str(save_path),
+                    "output_prefix": item["output_prefix"],
+                    "run_memory_policy": args.memory_policy,
+                    "run_memory_budget": args.memory_budget,
+                    "run_memory_bank_device": args.memory_bank_device,
+                },
+                attention_probe_sections=attention_probe_sections,
+                attention_probe_steps=attention_probe_steps,
+                attention_probe_layers=attention_probe_layers,
+                attention_query_count=args.attention_query_count,
+                attention_query_chunk_size=args.attention_query_chunk_size,
                 profile_path=None if profile_path is None else str(profile_path),
                 profile_metadata={
                     "run_name": output_dir.name,
