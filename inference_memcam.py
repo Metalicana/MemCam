@@ -84,12 +84,26 @@ if __name__ == "__main__":
             "trajectory_coverage",
             "density_balanced_view_coverage",
             "h2o_heavy_hitter",
+            "surprise_forcing",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
+    parser.add_argument("--surprise_alpha", type=float, default=0.7)
+    parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
+    parser.add_argument("--surprise_controller_step", type=float, default=0.1)
+    parser.add_argument(
+        "--surprise_target_admission_ratio", type=float, default=0.3
+    )
+    parser.add_argument("--surprise_initial_threshold", type=float, default=0.002)
+    parser.add_argument("--surprise_surprise_weight", type=float, default=1.8)
+    parser.add_argument("--surprise_usage_weight", type=float, default=1.0)
+    parser.add_argument("--surprise_age_weight", type=float, default=0.4)
+    parser.add_argument("--surprise_route_top_k", type=int, default=3)
+    parser.add_argument("--surprise_value_layer", type=int, default=15)
+    parser.add_argument("--surprise_warmup_sections", type=int, default=3)
     parser.add_argument(
         "--memory_bank_device",
         type=str,
@@ -153,12 +167,36 @@ if __name__ == "__main__":
             density_coverage_alpha=args.density_coverage_alpha,
             density_coverage_dino_weight=args.density_coverage_dino_weight,
             density_coverage_rgb_weight=args.density_coverage_rgb_weight,
+            surprise_alpha=args.surprise_alpha,
+            surprise_ema_momentum=args.surprise_ema_momentum,
+            surprise_controller_step=args.surprise_controller_step,
+            surprise_target_admission_ratio=args.surprise_target_admission_ratio,
+            surprise_initial_threshold=args.surprise_initial_threshold,
+            surprise_surprise_weight=args.surprise_surprise_weight,
+            surprise_usage_weight=args.surprise_usage_weight,
+            surprise_age_weight=args.surprise_age_weight,
+            surprise_route_top_k=args.surprise_route_top_k,
+            surprise_value_layer=args.surprise_value_layer,
+            surprise_warmup_sections=args.surprise_warmup_sections,
             access_trace_path=args.access_trace_path,
             access_trace_metadata={
                 "run_name": args.output_prefix.rstrip("_"),
                 "trajectory_mode": args.trajectory_mode,
                 "dataset_start_frame": args.start_frame,
                 "num_frames": args.num_frames,
+                "surprise_alpha": args.surprise_alpha,
+                "surprise_ema_momentum": args.surprise_ema_momentum,
+                "surprise_controller_step": args.surprise_controller_step,
+                "surprise_target_admission_ratio": (
+                    args.surprise_target_admission_ratio
+                ),
+                "surprise_initial_threshold": args.surprise_initial_threshold,
+                "surprise_surprise_weight": args.surprise_surprise_weight,
+                "surprise_usage_weight": args.surprise_usage_weight,
+                "surprise_age_weight": args.surprise_age_weight,
+                "surprise_route_top_k": args.surprise_route_top_k,
+                "surprise_value_layer": args.surprise_value_layer,
+                "surprise_warmup_sections": args.surprise_warmup_sections,
             },
             profile_path=profile_path(name),
             profile_metadata={

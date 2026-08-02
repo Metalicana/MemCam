@@ -14,6 +14,7 @@ from dataset.poses import compute_relative_pose
 from .base import BasePipeline
 from .memory_policies import (
     FrameMemoryBuffer,
+    SurpriseForcingMemoryController,
     VisualMemoryFeatureExtractor,
     compute_density_balanced_view_coverage_scores,
     compute_facility_coreset_scores,
@@ -31,6 +32,7 @@ from .memory_profiling import (
 )
 from .memory_attention_audit import (
     MemoryAttentionCollector,
+    TargetValueDescriptorCollector,
     add_retrieval_controls,
     select_intervention_candidates,
 )
@@ -327,6 +329,17 @@ class WanVideoMemCamPipeline(BasePipeline):
         density_coverage_alpha=0.5,
         density_coverage_dino_weight=0.5,
         density_coverage_rgb_weight=0.25,
+        surprise_alpha=0.7,
+        surprise_ema_momentum=0.95,
+        surprise_controller_step=0.1,
+        surprise_target_admission_ratio=0.3,
+        surprise_initial_threshold=0.002,
+        surprise_surprise_weight=1.8,
+        surprise_usage_weight=1.0,
+        surprise_age_weight=0.4,
+        surprise_route_top_k=3,
+        surprise_value_layer=15,
+        surprise_warmup_sections=3,
         access_trace_path=None,
         access_trace_metadata=None,
         attention_audit_path=None,
@@ -410,6 +423,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "h2o_heavy_hitter",
+                "surprise_forcing",
             }
             and memory_budget is not None
             and memory_budget < 2
@@ -433,6 +447,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_covisibility",
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
+                "surprise_forcing",
             }
             else set()
         )
@@ -445,6 +460,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         memory_dino_features = {}
         memory_rgb_features = {}
         memory_quality_scores = {}
+        surprise_value_features = {}
         memory_coverage_masses = (
             {0: 1.0}
             if memory_policy == "density_balanced_view_coverage"
@@ -452,6 +468,31 @@ class WanVideoMemCamPipeline(BasePipeline):
         )
         coreset_archive_frame_indices = []
         coreset_archive_seen = set()
+        surprise_controller = None
+        surprise_query_frame = None
+        if memory_policy == "surprise_forcing":
+            if not 0 <= int(surprise_value_layer) < len(self.dit.blocks):
+                raise ValueError(
+                    f"Invalid Surprise Forcing value layer: {surprise_value_layer}"
+                )
+            external_capacity = int(memory_budget) - len(pinned_memory_frames)
+            if external_capacity < 1:
+                raise ValueError(
+                    "Surprise Forcing needs at least one external slot in addition "
+                    "to the pinned sink frame"
+                )
+            surprise_controller = SurpriseForcingMemoryController(
+                capacity=external_capacity,
+                alpha=surprise_alpha,
+                ema_momentum=surprise_ema_momentum,
+                controller_step=surprise_controller_step,
+                target_admission_ratio=surprise_target_admission_ratio,
+                initial_threshold=surprise_initial_threshold,
+                surprise_weight=surprise_surprise_weight,
+                usage_weight=surprise_usage_weight,
+                age_weight=surprise_age_weight,
+                warmup_sections=surprise_warmup_sections,
+            )
         if memory_policy in VISUAL_MEMORY_POLICIES:
             self.load_models_to_device([])
             visual_feature_extractor = VisualMemoryFeatureExtractor(device=self.device)
@@ -489,6 +530,19 @@ class WanVideoMemCamPipeline(BasePipeline):
             "memory_policy": memory_policy,
             "memory_budget": memory_budget,
             "memory_bank_device": memory_bank_device,
+            "surprise_alpha": float(surprise_alpha),
+            "surprise_ema_momentum": float(surprise_ema_momentum),
+            "surprise_controller_step": float(surprise_controller_step),
+            "surprise_target_admission_ratio": float(
+                surprise_target_admission_ratio
+            ),
+            "surprise_initial_threshold": float(surprise_initial_threshold),
+            "surprise_surprise_weight": float(surprise_surprise_weight),
+            "surprise_usage_weight": float(surprise_usage_weight),
+            "surprise_age_weight": float(surprise_age_weight),
+            "surprise_route_top_k": int(surprise_route_top_k),
+            "surprise_value_layer": int(surprise_value_layer),
+            "surprise_warmup_sections": int(surprise_warmup_sections),
             "total_frames": int(total_frames),
             "total_sections": int(total_sections),
         }
@@ -517,6 +571,10 @@ class WanVideoMemCamPipeline(BasePipeline):
                     payload["selected_dataset_frame"] = int(dataset_start_frame) + int(payload["selected_memory_frame"])
                 if payload.get("evicted_memory_frame") is not None:
                     payload["evicted_dataset_frame"] = int(dataset_start_frame) + int(payload["evicted_memory_frame"])
+                if payload.get("candidate_memory_frame") is not None:
+                    payload["candidate_dataset_frame"] = int(dataset_start_frame) + int(payload["candidate_memory_frame"])
+                if payload.get("query_memory_frame") is not None:
+                    payload["query_dataset_frame"] = int(dataset_start_frame) + int(payload["query_memory_frame"])
             access_trace_handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
         def write_attention_audit(payload):
@@ -548,7 +606,14 @@ class WanVideoMemCamPipeline(BasePipeline):
             for layer_idx in probe_layers:
                 self.dit.blocks[layer_idx].self_attn.memory_attention_probe = None
 
+        def clear_surprise_value_collector():
+            if memory_policy == "surprise_forcing":
+                self.dit.blocks[
+                    int(surprise_value_layer)
+                ].self_attn.memory_value_probe = None
+
         clear_attention_collector()
+        clear_surprise_value_collector()
         
         # Vanilla Sampling
         for section_idx in range(total_sections):
@@ -632,6 +697,56 @@ class WanVideoMemCamPipeline(BasePipeline):
                         )
             else:
                 candidate_frame_indices = memory_buffer.candidates(exclude_frames=exclude_frames)
+                if memory_policy == "surprise_forcing":
+                    query_descriptor = surprise_value_features.get(anchor_pose_frame)
+                    if query_descriptor is None:
+                        raise RuntimeError(
+                            "Missing Surprise Forcing query descriptor for anchor "
+                            f"frame {anchor_pose_frame}"
+                        )
+                    surprise_bank_frames = set(surprise_controller.frames())
+                    external_candidates = [
+                        frame_idx
+                        for frame_idx in candidate_frame_indices
+                        if frame_idx in surprise_bank_frames
+                    ]
+                    routed_frames, route_similarities = surprise_controller.route(
+                        query_descriptor=query_descriptor,
+                        candidate_frames=external_candidates,
+                        top_k=surprise_route_top_k,
+                        record_usage=False,
+                    )
+                    sink_frames = [
+                        frame_idx
+                        for frame_idx in candidate_frame_indices
+                        if frame_idx in pinned_memory_frames
+                    ]
+                    candidate_frame_indices = list(
+                        dict.fromkeys(sink_frames + routed_frames)
+                    )
+                    write_access_trace(
+                        {
+                            "event": "surprise_routing",
+                            "section_idx": int(section_idx),
+                            "anchor_pose_frame": int(anchor_pose_frame),
+                            "query_memory_frame": int(anchor_pose_frame),
+                            "bank_candidate_count": len(external_candidates),
+                            "route_top_k": int(surprise_route_top_k),
+                            "routed_memory_frames": [
+                                int(frame_idx) for frame_idx in routed_frames
+                            ],
+                            "sink_memory_frames": [
+                                int(frame_idx) for frame_idx in sink_frames
+                            ],
+                            "routed_similarities": {
+                                str(frame_idx): float(route_similarities[frame_idx])
+                                for frame_idx in routed_frames
+                            },
+                            "memory_policy": memory_policy,
+                            "memory_budget": memory_budget,
+                            "stored_memory_size": len(memory_buffer),
+                        }
+                    )
                 section_candidate_count = len(candidate_frame_indices)
                 print(f"  Selecting context frames (1 per target, {PREDICT_FRAMES} targets)...")
                 print(
@@ -663,6 +778,30 @@ class WanVideoMemCamPipeline(BasePipeline):
                                 best_iou = iou
                                 best_idx = candidate_idx
                         selected_contexts.append((slot_idx, frame_idx, best_idx, best_iou))
+
+                if memory_policy == "surprise_forcing":
+                    selected_surprise_frames = sorted(
+                        {
+                            int(best_idx)
+                            for _, _, best_idx, _ in selected_contexts
+                            if best_idx in surprise_bank_frames
+                        }
+                    )
+                    surprise_controller.record_usage(selected_surprise_frames)
+                    write_access_trace(
+                        {
+                            "event": "surprise_usage",
+                            "section_idx": int(section_idx),
+                            "actually_retrieved_memory_frames": (
+                                selected_surprise_frames
+                            ),
+                            "actually_retrieved_count": len(
+                                selected_surprise_frames
+                            ),
+                            "memory_policy": memory_policy,
+                            "memory_budget": memory_budget,
+                        }
+                    )
 
                 with profiler.phase("context_encode"):
                     self.load_models_to_device(["vae"])
@@ -779,6 +918,8 @@ class WanVideoMemCamPipeline(BasePipeline):
                 context_spatial = (
                     ((latent_H + 3) // 4) * ((latent_W + 3) // 4)
                 )
+                target_spatial = (latent_H // 2) * (latent_W // 2)
+                surprise_value_collector = None
 
                 for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
                     timestep = timestep.unsqueeze(0).to(
@@ -800,6 +941,21 @@ class WanVideoMemCamPipeline(BasePipeline):
                             query_chunk_size=attention_query_chunk_size,
                         )
                         set_attention_collector(attention_collector)
+                    capture_surprise_values = (
+                        memory_policy == "surprise_forcing"
+                        and progress_id == num_inference_steps - 1
+                    )
+                    if capture_surprise_values:
+                        surprise_value_collector = TargetValueDescriptorCollector(
+                            context_token_count=PREDICT_FRAMES * context_spatial,
+                            target_length=TARGET_LENGTH,
+                            target_spatial=target_spatial,
+                        )
+                        self.dit.blocks[
+                            int(surprise_value_layer)
+                        ].self_attn.memory_value_probe = (
+                            surprise_value_collector.capture
+                        )
                     try:
                         noise_pred_posi = self.forward(
                             context_latents=context_latent_input,
@@ -811,6 +967,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                         )
                     finally:
                         clear_attention_collector()
+                        clear_surprise_value_collector()
 
                     if cfg_scale != 1.0:
                         noise_pred_nega = self.forward(
@@ -1004,6 +1161,30 @@ class WanVideoMemCamPipeline(BasePipeline):
                         noise_latents,
                     )
 
+                if memory_policy == "surprise_forcing":
+                    if (
+                        surprise_value_collector is None
+                        or surprise_value_collector.descriptors is None
+                    ):
+                        raise RuntimeError(
+                            "Surprise Forcing failed to capture final-step value descriptors"
+                        )
+                    if len(target_latent_frames) != len(
+                        surprise_value_collector.descriptors
+                    ):
+                        raise RuntimeError(
+                            "Surprise Forcing descriptor count does not match target frames"
+                        )
+                    for descriptor_idx, frame_idx in enumerate(target_latent_frames):
+                        surprise_value_features[int(frame_idx)] = (
+                            np.array(
+                                surprise_value_collector.descriptors[descriptor_idx],
+                                dtype=np.float32,
+                                copy=True,
+                            )
+                        )
+                    surprise_query_frame = int(predict_latent_frames[-1])
+
             # Decode once. The same CPU section is retained for final output, avoiding
             # a second full-video decode and its unrelated VRAM peak.
             decode_phase_start = profiler.start_phase()
@@ -1016,6 +1197,11 @@ class WanVideoMemCamPipeline(BasePipeline):
                 section_start_source.to(dtype=self.torch_dtype, device=self.device),
                 **tiler_kwargs,
             )[0]
+            if (
+                memory_policy == "surprise_forcing"
+                and section_start_frame not in set(memory_buffer.candidates())
+            ):
+                all_generated_frames.pop(section_start_frame, None)
             section_full_latent = torch.cat(
                 [section_start_latent, noise_latents.squeeze(0)],
                 dim=1,
@@ -1197,6 +1383,113 @@ class WanVideoMemCamPipeline(BasePipeline):
                         return_details=True,
                     )
                 )
+            elif memory_policy == "surprise_forcing":
+                evicted_frames = []
+                for frame_idx in predict_latent_frames:
+                    descriptor = surprise_value_features.get(int(frame_idx))
+                    if descriptor is None:
+                        raise RuntimeError(
+                            "Missing Surprise Forcing value descriptor for frame "
+                            f"{frame_idx}"
+                        )
+                    decision = surprise_controller.consider(
+                        frame_idx=int(frame_idx),
+                        descriptor=descriptor,
+                        section_idx=int(section_idx),
+                        current_frame=int(frame_idx),
+                    )
+                    replaced_frame = decision.get("evicted_frame")
+                    if replaced_frame is not None:
+                        memory_buffer.remove(int(replaced_frame))
+                        evicted_frames.append(int(replaced_frame))
+                        eviction_score_details[int(replaced_frame)] = {
+                            "score": decision.get("minimum_bank_priority"),
+                            "surprise_priority": decision.get(
+                                "minimum_bank_priority"
+                            ),
+                            "surprise_replaced_by": int(frame_idx),
+                        }
+                    if decision["committed"]:
+                        memory_buffer.add(int(frame_idx), evict=False)
+
+                    write_access_trace(
+                        {
+                            "event": "surprise_admission",
+                            "section_idx": int(section_idx),
+                            "candidate_memory_frame": int(frame_idx),
+                            "section_end_frame": int(section_end_frame),
+                            **{
+                                key: value
+                                for key, value in decision.items()
+                                if key not in {"frame_idx", "section_idx"}
+                            },
+                            "bank_size_after": len(surprise_controller.frames()),
+                            "stored_memory_size_after": len(memory_buffer),
+                            "memory_policy": memory_policy,
+                            "memory_budget": memory_budget,
+                            "surprise_alpha": float(surprise_alpha),
+                            "surprise_ema_momentum": float(
+                                surprise_ema_momentum
+                            ),
+                            "surprise_controller_step": float(
+                                surprise_controller_step
+                            ),
+                            "surprise_route_top_k": int(surprise_route_top_k),
+                            "surprise_value_layer": int(surprise_value_layer),
+                        }
+                    )
+
+                surprise_state = surprise_controller.state_snapshot(
+                    current_frame=section_end_frame
+                )
+                memory_buffer.set_scores(
+                    {
+                        frame_idx: row["priority"]
+                        for frame_idx, row in surprise_state.items()
+                    }
+                )
+                write_access_trace(
+                    {
+                        "event": "surprise_bank_update",
+                        "section_idx": int(section_idx),
+                        "section_end_frame": int(section_end_frame),
+                        "bank_frames": [
+                            int(frame_idx) for frame_idx in surprise_controller.frames()
+                        ],
+                        "bank_state": {
+                            str(frame_idx): row
+                            for frame_idx, row in surprise_state.items()
+                        },
+                        "sink_frames": sorted(
+                            int(frame_idx) for frame_idx in pinned_memory_frames
+                        ),
+                        "ema_mean": float(surprise_controller.ema_mean),
+                        "ema_variance": float(
+                            surprise_controller.ema_variance
+                        ),
+                        "threshold": float(surprise_controller.threshold),
+                        "evaluated_count": int(
+                            surprise_controller.evaluated_count
+                        ),
+                        "gate_pass_count": int(
+                            surprise_controller.gate_pass_count
+                        ),
+                        "commit_count": int(surprise_controller.commit_count),
+                        "memory_policy": memory_policy,
+                        "memory_budget": memory_budget,
+                    }
+                )
+
+                keep_surprise_features = (
+                    set(surprise_controller.frames())
+                    | set(pinned_memory_frames)
+                    | {int(surprise_query_frame)}
+                )
+                surprise_value_features = {
+                    frame_idx: descriptor
+                    for frame_idx, descriptor in surprise_value_features.items()
+                    if frame_idx in keep_surprise_features
+                }
             elif memory_policy == "h2o_heavy_hitter":
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
@@ -1212,11 +1505,12 @@ class WanVideoMemCamPipeline(BasePipeline):
                     return_details=True,
                 )
 
-            evicted_frames = memory_buffer.update(
-                new_frame_indices,
-                eviction_scores=eviction_scores,
-                protected_frames=protected_frames,
-            )
+            if memory_policy != "surprise_forcing":
+                evicted_frames = memory_buffer.update(
+                    new_frame_indices,
+                    eviction_scores=eviction_scores,
+                    protected_frames=protected_frames,
+                )
             if memory_policy == "density_balanced_view_coverage":
                 retained_frames_after_update = memory_buffer.candidates()
                 memory_coverage_masses = {
@@ -1348,6 +1642,8 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_h2o_recent_keep": score_detail.get("h2o_recent_keep"),
                         "eviction_h2o_recency_rank": score_detail.get("h2o_recency_rank"),
                         "eviction_h2o_recency_budget": score_detail.get("h2o_recency_budget"),
+                        "eviction_surprise_priority": score_detail.get("surprise_priority"),
+                        "eviction_surprise_replaced_by": score_detail.get("surprise_replaced_by"),
                     }
                 )
                 if memory_policy not in {"facility_coreset", "kcenter_coreset"}:
@@ -1361,6 +1657,10 @@ class WanVideoMemCamPipeline(BasePipeline):
             # an entire decoded section through a tensor view.
             bank_store_phase_start = profiler.start_phase()
             retained_frames = set(memory_buffer.candidates())
+            if memory_policy == "surprise_forcing":
+                # The newest decoded frame is a one-frame rolling anchor, separate
+                # from the fixed-capacity external bank, and is released next section.
+                retained_frames.add(section_end_frame)
             bank_source_frames = (
                 section_frames if memory_bank_device == "cuda" else section_frames_cpu
             )
@@ -1390,6 +1690,7 @@ class WanVideoMemCamPipeline(BasePipeline):
             bank_feature_bytes = (
                 numpy_mapping_nbytes(memory_dino_features)
                 + numpy_mapping_nbytes(memory_rgb_features)
+                + numpy_mapping_nbytes(surprise_value_features)
                 + 8 * len(memory_quality_scores)
                 + 8 * len(memory_coverage_masses)
             )
@@ -1417,6 +1718,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         memory_rgb_features.clear()
         memory_quality_scores.clear()
         memory_coverage_masses.clear()
+        surprise_value_features.clear()
         all_section_latents.clear()
         visual_feature_extractor = None
 

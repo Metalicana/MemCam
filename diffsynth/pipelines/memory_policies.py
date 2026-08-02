@@ -14,6 +14,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "trajectory_coverage",
     "density_balanced_view_coverage",
     "h2o_heavy_hitter",
+    "surprise_forcing",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
@@ -24,6 +25,7 @@ BUDGETED_MEMORY_POLICIES = (
     "trajectory_coverage",
     "density_balanced_view_coverage",
     "h2o_heavy_hitter",
+    "surprise_forcing",
 )
 
 
@@ -76,6 +78,12 @@ class FrameMemoryBuffer:
         for frame_idx, score in scores.items():
             if frame_idx in self._stats:
                 self._stats[frame_idx]["score"] = float(score)
+
+    def remove(self, frame_idx):
+        existed = frame_idx in self._frames
+        self._frames.pop(frame_idx, None)
+        self._stats.pop(frame_idx, None)
+        return existed
 
     def record_selection(self, frame_idx, overlap):
         if frame_idx not in self._stats:
@@ -391,6 +399,328 @@ class VisualMemoryFeatureExtractor:
             image_size=self.rgb_image_size,
         )
         return dino_features, rgb_features
+
+
+def surprise_forcing_score(candidate_descriptor, bank_descriptors, alpha=0.7):
+    """Equation 6 from Surprise Forcing for normalized frame descriptors."""
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("Surprise Forcing alpha must be in [0, 1]")
+
+    candidate = np.asarray(candidate_descriptor, dtype=np.float64).reshape(-1)
+    if candidate.size == 0 or not np.all(np.isfinite(candidate)):
+        raise ValueError("Candidate descriptor must be finite and non-empty")
+    candidate /= max(float(np.linalg.norm(candidate)), 1e-12)
+
+    descriptors = [
+        np.asarray(descriptor, dtype=np.float64).reshape(-1)
+        for descriptor in bank_descriptors
+    ]
+    if not descriptors:
+        return {
+            "surprise": 1.0,
+            "prediction_surprise": 1.0,
+            "novelty_surprise": 1.0,
+            "mean_similarity": -1.0,
+            "max_similarity": -1.0,
+        }
+
+    matrix = np.stack(descriptors)
+    if matrix.shape[1] != candidate.shape[0] or not np.all(np.isfinite(matrix)):
+        raise ValueError("Bank descriptors must be finite and match candidate size")
+    matrix /= np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
+    similarities = np.clip(matrix @ candidate, -1.0, 1.0)
+    mean_similarity = float(np.mean(similarities))
+    max_similarity = float(np.max(similarities))
+    prediction_surprise = 0.5 * (1.0 - mean_similarity)
+    novelty_surprise = 0.5 * (1.0 - max_similarity)
+    surprise = alpha * prediction_surprise + (1.0 - alpha) * novelty_surprise
+    return {
+        "surprise": float(surprise),
+        "prediction_surprise": float(prediction_surprise),
+        "novelty_surprise": float(novelty_surprise),
+        "mean_similarity": mean_similarity,
+        "max_similarity": max_similarity,
+    }
+
+
+class SurpriseForcingMemoryController:
+    """Causal Surprise-Gated Memory Bank adapted to MemCam frame payloads.
+
+    The paper specifies that surprise, usage, and age are normalized to [0, 1]
+    before priority scoring, but not the normalization operator. Surprise is
+    already bounded by Equation 6; usage and age are divided by their current
+    maxima. EMA state starts at mean 0 and variance 1 because its initialization
+    is not disclosed. The paper's unspecified duplicate and neighboring-chunk
+    filters are deliberately omitted.
+    """
+
+    def __init__(
+        self,
+        capacity,
+        alpha=0.7,
+        ema_momentum=0.95,
+        controller_step=0.1,
+        target_admission_ratio=0.3,
+        initial_threshold=0.002,
+        surprise_weight=1.8,
+        usage_weight=1.0,
+        age_weight=0.4,
+        warmup_sections=3,
+        epsilon=1e-6,
+    ):
+        if capacity < 1:
+            raise ValueError("Surprise Forcing capacity must be positive")
+        if not 0.0 <= ema_momentum < 1.0:
+            raise ValueError("EMA momentum must be in [0, 1)")
+        if not 0.0 <= target_admission_ratio <= 1.0:
+            raise ValueError("Target admission ratio must be in [0, 1]")
+        if controller_step < 0 or epsilon <= 0:
+            raise ValueError("Controller step must be non-negative and epsilon positive")
+        if warmup_sections < 0:
+            raise ValueError("Warmup sections must be non-negative")
+
+        self.capacity = int(capacity)
+        self.alpha = float(alpha)
+        self.ema_momentum = float(ema_momentum)
+        self.controller_step = float(controller_step)
+        self.target_admission_ratio = float(target_admission_ratio)
+        self.initial_threshold = float(initial_threshold)
+        self.threshold = float(initial_threshold)
+        self.surprise_weight = float(surprise_weight)
+        self.usage_weight = float(usage_weight)
+        self.age_weight = float(age_weight)
+        self.warmup_sections = int(warmup_sections)
+        self.epsilon = float(epsilon)
+
+        self.ema_mean = 0.0
+        self.ema_variance = 1.0
+        self.evaluated_count = 0
+        self.gate_pass_count = 0
+        self.commit_count = 0
+        self._warmup_priorities_reset = False
+        self._entries = OrderedDict()
+
+    def frames(self):
+        return list(self._entries)
+
+    def descriptor(self, frame_idx):
+        entry = self._entries.get(frame_idx)
+        return None if entry is None else entry["descriptor"]
+
+    def maybe_finish_warmup(self, section_idx):
+        if self._warmup_priorities_reset or section_idx < self.warmup_sections:
+            return False
+        reset_value = float(np.clip(self.ema_mean, 0.0, 1.0))
+        for entry in self._entries.values():
+            entry["write_surprise"] = reset_value
+        self._warmup_priorities_reset = True
+        return True
+
+    @staticmethod
+    def _divide_by_max(values):
+        values = np.asarray(values, dtype=np.float64)
+        maximum = float(np.max(values)) if values.size else 0.0
+        if maximum <= 1e-12:
+            return np.zeros_like(values)
+        return values / maximum
+
+    def _priority_rows(self, current_frame, pending=None):
+        frame_indices = list(self._entries)
+        surprises = [self._entries[idx]["write_surprise"] for idx in frame_indices]
+        usages = [self._entries[idx]["usage"] for idx in frame_indices]
+        ages = [max(int(current_frame) - int(idx), 0) for idx in frame_indices]
+        if pending is not None:
+            frame_indices.append(int(pending["frame_idx"]))
+            surprises.append(float(pending["write_surprise"]))
+            usages.append(0.0)
+            ages.append(0.0)
+
+        surprise_norm = np.clip(np.asarray(surprises, dtype=np.float64), 0.0, 1.0)
+        usage_norm = self._divide_by_max(usages)
+        age_norm = self._divide_by_max(ages)
+        priorities = (
+            self.surprise_weight * surprise_norm
+            + self.usage_weight * usage_norm
+            - self.age_weight * age_norm
+        )
+        return {
+            frame_idx: {
+                "priority": float(priorities[index]),
+                "surprise_normalized": float(surprise_norm[index]),
+                "usage_normalized": float(usage_norm[index]),
+                "age_normalized": float(age_norm[index]),
+                "usage": int(usages[index]),
+                "age": int(ages[index]),
+            }
+            for index, frame_idx in enumerate(frame_indices)
+        }
+
+    def consider(self, frame_idx, descriptor, section_idx, current_frame=None):
+        frame_idx = int(frame_idx)
+        current_frame = frame_idx if current_frame is None else int(current_frame)
+        if frame_idx in self._entries:
+            raise ValueError(f"Frame {frame_idx} is already in the Surprise Forcing bank")
+        self.maybe_finish_warmup(section_idx)
+
+        score = surprise_forcing_score(
+            descriptor,
+            [entry["descriptor"] for entry in self._entries.values()],
+            alpha=self.alpha,
+        )
+        sigma_before = math.sqrt(max(self.ema_variance, self.epsilon))
+        mean_before = float(self.ema_mean)
+        variance_before = float(self.ema_variance)
+        z_score = (score["surprise"] - mean_before) / sigma_before
+        underfilled = len(self._entries) < self.capacity
+        active_threshold = (
+            min(self.threshold, self.initial_threshold)
+            if underfilled
+            else self.threshold
+        )
+        warmup = int(section_idx) < self.warmup_sections
+        gate_pass = bool(warmup or z_score >= active_threshold)
+
+        new_mean = (
+            self.ema_momentum * self.ema_mean
+            + (1.0 - self.ema_momentum) * score["surprise"]
+        )
+        new_variance = (
+            self.ema_momentum * self.ema_variance
+            + (1.0 - self.ema_momentum) * (score["surprise"] - new_mean) ** 2
+        )
+        self.ema_mean = float(new_mean)
+        self.ema_variance = float(max(new_variance, self.epsilon))
+        threshold_before = float(self.threshold)
+        if not warmup:
+            self.threshold = float(
+                np.clip(
+                    self.threshold
+                    + self.controller_step
+                    * (float(gate_pass) - self.target_admission_ratio),
+                    -3.0,
+                    3.0,
+                )
+            )
+        self.evaluated_count += 1
+        self.gate_pass_count += int(gate_pass)
+
+        decision = {
+            "frame_idx": frame_idx,
+            "section_idx": int(section_idx),
+            **score,
+            "z_score": float(z_score),
+            "ema_mean_before": mean_before,
+            "ema_variance_before": variance_before,
+            "ema_mean_after": float(self.ema_mean),
+            "ema_variance_after": float(self.ema_variance),
+            "sigma_before": float(sigma_before),
+            "threshold_before": threshold_before,
+            "active_threshold": float(active_threshold),
+            "threshold_after": float(self.threshold),
+            "target_admission_ratio": self.target_admission_ratio,
+            "warmup": bool(warmup),
+            "gate_pass": gate_pass,
+            "committed": False,
+            "evicted_frame": None,
+            "rejection_reason": None,
+            "candidate_priority": None,
+            "minimum_bank_priority": None,
+        }
+        if not gate_pass:
+            decision["rejection_reason"] = "surprise_gate"
+            return decision
+
+        descriptor = np.asarray(descriptor, dtype=np.float32).reshape(-1)
+        descriptor /= max(float(np.linalg.norm(descriptor)), 1e-12)
+        pending = {
+            "frame_idx": frame_idx,
+            "write_surprise": score["surprise"],
+        }
+        priority_rows = self._priority_rows(current_frame, pending=pending)
+        candidate_priority = priority_rows[frame_idx]["priority"]
+        decision["candidate_priority"] = candidate_priority
+
+        evicted_frame = None
+        if len(self._entries) >= self.capacity:
+            bank_priorities = {
+                idx: priority_rows[idx]["priority"] for idx in self._entries
+            }
+            evicted_frame = min(
+                bank_priorities,
+                key=lambda idx: (bank_priorities[idx], self._entries[idx]["write_order"]),
+            )
+            minimum_priority = bank_priorities[evicted_frame]
+            decision["minimum_bank_priority"] = float(minimum_priority)
+            if candidate_priority <= minimum_priority:
+                decision["rejection_reason"] = "priority"
+                decision["evicted_frame"] = None
+                return decision
+            self._entries.pop(evicted_frame)
+
+        self._entries[frame_idx] = {
+            "descriptor": descriptor,
+            "write_surprise": float(score["surprise"]),
+            "usage": 0,
+            "write_order": self.evaluated_count,
+        }
+        self.commit_count += 1
+        decision["committed"] = True
+        decision["evicted_frame"] = evicted_frame
+        return decision
+
+    def record_usage(self, frame_indices):
+        for frame_idx in set(int(value) for value in frame_indices):
+            if frame_idx in self._entries:
+                self._entries[frame_idx]["usage"] += 1
+
+    def route(
+        self,
+        query_descriptor,
+        candidate_frames=None,
+        top_k=3,
+        record_usage=True,
+    ):
+        if top_k < 1:
+            raise ValueError("Surprise Forcing top_k must be positive")
+        candidates = (
+            self.frames() if candidate_frames is None else list(candidate_frames)
+        )
+        candidates = [frame_idx for frame_idx in candidates if frame_idx in self._entries]
+        if not candidates:
+            return [], {}
+
+        query = np.asarray(query_descriptor, dtype=np.float64).reshape(-1)
+        if query.size == 0 or not np.all(np.isfinite(query)):
+            raise ValueError("Query descriptor must be finite and non-empty")
+        query /= max(float(np.linalg.norm(query)), 1e-12)
+        similarities = {}
+        for frame_idx in candidates:
+            descriptor = self._entries[frame_idx]["descriptor"]
+            if descriptor.shape != query.shape:
+                raise ValueError(
+                    "Query descriptor must match Surprise Forcing bank descriptors"
+                )
+            similarities[frame_idx] = float(
+                np.clip(np.dot(query, descriptor), -1.0, 1.0)
+            )
+        routed = sorted(
+            candidates,
+            key=lambda idx: (-similarities[idx], -idx),
+        )[: min(int(top_k), len(candidates))]
+        if record_usage:
+            self.record_usage(routed)
+        return routed, similarities
+
+    def state_snapshot(self, current_frame):
+        priority_rows = self._priority_rows(current_frame)
+        return {
+            frame_idx: {
+                "write_surprise": float(entry["write_surprise"]),
+                "usage": int(entry["usage"]),
+                **priority_rows[frame_idx],
+            }
+            for frame_idx, entry in self._entries.items()
+        }
 
 
 def compute_rarity_irreplaceability_scores(

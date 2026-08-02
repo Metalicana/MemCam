@@ -34,6 +34,35 @@ AUDIT = (
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class AttentionRecoveryTest(unittest.TestCase):
+    def test_target_value_descriptors_pool_space_per_latent_frame(self):
+        collector = AUDIT.TargetValueDescriptorCollector(
+            context_token_count=2,
+            target_length=2,
+            target_spatial=2,
+        )
+        value_tokens = torch.tensor(
+            [
+                [
+                    [9.0, 9.0],
+                    [9.0, 9.0],
+                    [1.0, 0.0],
+                    [3.0, 0.0],
+                    [0.0, 2.0],
+                    [0.0, 4.0],
+                ]
+            ]
+        )
+
+        collector.capture(value_tokens)
+
+        self.assertEqual(collector.descriptors.shape, (2, 2))
+        self.assertTrue(
+            torch.allclose(
+                torch.from_numpy(collector.descriptors),
+                torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            )
+        )
+
     def test_uniform_attention_has_expected_context_mass(self):
         q = torch.zeros(1, 6, 4)
         k = torch.zeros_like(q)

@@ -3,6 +3,7 @@ import random
 from collections import defaultdict
 
 import torch
+import torch.nn.functional as F
 
 
 def _evenly_spaced_indices(length, count, device):
@@ -264,3 +265,39 @@ def select_intervention_candidates(memory_scores, seed):
     if remaining:
         add(random.Random(int(seed)).choice(remaining), "random_attention")
     return chosen
+
+
+class TargetValueDescriptorCollector:
+    """Mean-pool one DiT value-token descriptor per target latent frame."""
+
+    def __init__(self, context_token_count, target_length, target_spatial):
+        self.context_token_count = int(context_token_count)
+        self.target_length = int(target_length)
+        self.target_spatial = int(target_spatial)
+        self.descriptors = None
+
+    @torch.no_grad()
+    def capture(self, value_tokens):
+        if value_tokens.ndim != 3 or value_tokens.shape[0] != 1:
+            raise ValueError("Value descriptor collection requires [1, sequence, dim]")
+        expected_target_tokens = self.target_length * self.target_spatial
+        target_tokens = value_tokens[
+            :,
+            self.context_token_count : self.context_token_count
+            + expected_target_tokens,
+            :,
+        ]
+        if target_tokens.shape[1] != expected_target_tokens:
+            raise ValueError(
+                "Value-token layout does not match the expected target grid: "
+                f"found={target_tokens.shape[1]}, expected={expected_target_tokens}"
+            )
+        target_tokens = target_tokens.reshape(
+            1,
+            self.target_length,
+            self.target_spatial,
+            value_tokens.shape[-1],
+        )
+        descriptors = target_tokens.float().mean(dim=2).squeeze(0)
+        descriptors = F.normalize(descriptors, dim=-1)
+        self.descriptors = descriptors.cpu().numpy()

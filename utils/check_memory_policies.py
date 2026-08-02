@@ -9,6 +9,9 @@ spec = importlib.util.spec_from_file_location("memory_policies", MEMORY_POLICIES
 memory_policies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
+SurpriseForcingMemoryController = (
+    memory_policies.SurpriseForcingMemoryController
+)
 camera_trajectory_similarity = memory_policies.camera_trajectory_similarity
 compute_density_balanced_view_coverage_scores = (
     memory_policies.compute_density_balanced_view_coverage_scores
@@ -19,6 +22,7 @@ compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
+surprise_forcing_score = memory_policies.surprise_forcing_score
 
 
 def check_unbounded():
@@ -121,6 +125,37 @@ def check_density_balanced_view_coverage_requires_budget():
     raise AssertionError(
         "density_balanced_view_coverage without a budget should fail"
     )
+
+
+def check_surprise_forcing():
+    try:
+        FrameMemoryBuffer(policy="surprise_forcing")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("surprise_forcing without a budget should fail")
+
+    score = surprise_forcing_score(
+        np.array([1.0, 0.0]),
+        [np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        alpha=0.7,
+    )
+    assert np.isclose(score["surprise"], 0.175)
+
+    controller = SurpriseForcingMemoryController(
+        capacity=2,
+        warmup_sections=99,
+    )
+    controller.consider(1, np.array([1.0, 0.0]), section_idx=0)
+    controller.consider(2, np.array([1.0, 0.0]), section_idx=0)
+    decision = controller.consider(
+        3,
+        np.array([0.0, 1.0]),
+        section_idx=0,
+    )
+    assert decision["committed"]
+    assert decision["evicted_frame"] == 2
+    assert controller.frames() == [1, 3]
 
 
 def check_rarity_irreplaceability_scores():
@@ -420,4 +455,5 @@ if __name__ == "__main__":
     check_h2o_heavy_hitter_scores()
     check_density_balanced_view_coverage_requires_budget()
     check_density_balanced_view_coverage_scores()
+    check_surprise_forcing()
     print("memory policy checks passed")

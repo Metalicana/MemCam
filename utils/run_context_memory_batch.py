@@ -158,12 +158,26 @@ def main():
             "trajectory_coverage",
             "density_balanced_view_coverage",
             "h2o_heavy_hitter",
+            "surprise_forcing",
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
+    parser.add_argument("--surprise_alpha", type=float, default=0.7)
+    parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
+    parser.add_argument("--surprise_controller_step", type=float, default=0.1)
+    parser.add_argument(
+        "--surprise_target_admission_ratio", type=float, default=0.3
+    )
+    parser.add_argument("--surprise_initial_threshold", type=float, default=0.002)
+    parser.add_argument("--surprise_surprise_weight", type=float, default=1.8)
+    parser.add_argument("--surprise_usage_weight", type=float, default=1.0)
+    parser.add_argument("--surprise_age_weight", type=float, default=0.4)
+    parser.add_argument("--surprise_route_top_k", type=int, default=3)
+    parser.add_argument("--surprise_value_layer", type=int, default=15)
+    parser.add_argument("--surprise_warmup_sections", type=int, default=3)
     parser.add_argument(
         "--memory_bank_device",
         type=str,
@@ -235,6 +249,25 @@ def main():
     if attention_audit_dir is not None:
         attention_audit_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run_status.jsonl"
+    policy_metadata = {
+        "memory_policy": args.memory_policy,
+        "memory_budget": args.memory_budget,
+        "memory_bank_device": args.memory_bank_device,
+        "density_coverage_alpha": args.density_coverage_alpha,
+        "density_coverage_dino_weight": args.density_coverage_dino_weight,
+        "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+        "surprise_alpha": args.surprise_alpha,
+        "surprise_ema_momentum": args.surprise_ema_momentum,
+        "surprise_controller_step": args.surprise_controller_step,
+        "surprise_target_admission_ratio": args.surprise_target_admission_ratio,
+        "surprise_initial_threshold": args.surprise_initial_threshold,
+        "surprise_surprise_weight": args.surprise_surprise_weight,
+        "surprise_usage_weight": args.surprise_usage_weight,
+        "surprise_age_weight": args.surprise_age_weight,
+        "surprise_route_top_k": args.surprise_route_top_k,
+        "surprise_value_layer": args.surprise_value_layer,
+        "surprise_warmup_sections": args.surprise_warmup_sections,
+    }
 
     attention_probe_sections = parse_int_csv(args.attention_probe_sections)
     attention_probe_steps = parse_int_csv(args.attention_probe_steps)
@@ -275,12 +308,7 @@ def main():
                     "output": str(save_path),
                     "reason": "exists",
                     "time_sec": 0,
-                    "memory_policy": args.memory_policy,
-                    "memory_budget": args.memory_budget,
-                    "memory_bank_device": args.memory_bank_device,
-                    "density_coverage_alpha": args.density_coverage_alpha,
-                    "density_coverage_dino_weight": args.density_coverage_dino_weight,
-                    "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+                    **policy_metadata,
                 },
             )
         else:
@@ -324,6 +352,15 @@ def main():
             f"alpha={args.density_coverage_alpha}, "
             f"DINO weight={args.density_coverage_dino_weight}, "
             f"RGB weight={args.density_coverage_rgb_weight}"
+        )
+    if args.memory_policy == "surprise_forcing":
+        print(
+            "Surprise Forcing: "
+            f"alpha={args.surprise_alpha}, "
+            f"EMA={args.surprise_ema_momentum}, "
+            f"target write ratio={args.surprise_target_admission_ratio}, "
+            f"route top-k={args.surprise_route_top_k}, "
+            f"value layer={args.surprise_value_layer}"
         )
     print(f"Memory bank device: {args.memory_bank_device}")
     print(f"Profile dir: {profile_dir}")
@@ -383,6 +420,19 @@ def main():
                 density_coverage_alpha=args.density_coverage_alpha,
                 density_coverage_dino_weight=args.density_coverage_dino_weight,
                 density_coverage_rgb_weight=args.density_coverage_rgb_weight,
+                surprise_alpha=args.surprise_alpha,
+                surprise_ema_momentum=args.surprise_ema_momentum,
+                surprise_controller_step=args.surprise_controller_step,
+                surprise_target_admission_ratio=(
+                    args.surprise_target_admission_ratio
+                ),
+                surprise_initial_threshold=args.surprise_initial_threshold,
+                surprise_surprise_weight=args.surprise_surprise_weight,
+                surprise_usage_weight=args.surprise_usage_weight,
+                surprise_age_weight=args.surprise_age_weight,
+                surprise_route_top_k=args.surprise_route_top_k,
+                surprise_value_layer=args.surprise_value_layer,
+                surprise_warmup_sections=args.surprise_warmup_sections,
                 access_trace_path=str(access_trace_path),
                 access_trace_metadata={
                     "row": row,
@@ -398,6 +448,19 @@ def main():
                     "density_coverage_alpha": args.density_coverage_alpha,
                     "density_coverage_dino_weight": args.density_coverage_dino_weight,
                     "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+                    "surprise_alpha": args.surprise_alpha,
+                    "surprise_ema_momentum": args.surprise_ema_momentum,
+                    "surprise_controller_step": args.surprise_controller_step,
+                    "surprise_target_admission_ratio": (
+                        args.surprise_target_admission_ratio
+                    ),
+                    "surprise_initial_threshold": args.surprise_initial_threshold,
+                    "surprise_surprise_weight": args.surprise_surprise_weight,
+                    "surprise_usage_weight": args.surprise_usage_weight,
+                    "surprise_age_weight": args.surprise_age_weight,
+                    "surprise_route_top_k": args.surprise_route_top_k,
+                    "surprise_value_layer": args.surprise_value_layer,
+                    "surprise_warmup_sections": args.surprise_warmup_sections,
                 },
                 attention_audit_path=(
                     None
@@ -449,12 +512,7 @@ def main():
                     "output": str(save_path),
                     "error": repr(exc),
                     "time_sec": elapsed,
-                    "memory_policy": args.memory_policy,
-                    "memory_budget": args.memory_budget,
-                    "memory_bank_device": args.memory_bank_device,
-                    "density_coverage_alpha": args.density_coverage_alpha,
-                    "density_coverage_dino_weight": args.density_coverage_dino_weight,
-                    "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+                    **policy_metadata,
                 },
             )
             raise
@@ -470,12 +528,7 @@ def main():
                 "num_frames": item["num_frames"],
                 "duration_sec": item["duration_sec"],
                 "steps": num_inference_steps,
-                "memory_policy": args.memory_policy,
-                "memory_budget": args.memory_budget,
-                "memory_bank_device": args.memory_bank_device,
-                "density_coverage_alpha": args.density_coverage_alpha,
-                "density_coverage_dino_weight": args.density_coverage_dino_weight,
-                "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+                **policy_metadata,
             },
         )
         print(f"[row {row}] completed in {elapsed}s -> {save_path}")
