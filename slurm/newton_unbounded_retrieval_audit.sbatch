@@ -31,6 +31,9 @@ POOL_SIZES="${POOL_SIZES:-32,128,all}"
 REPEATS="${REPEATS:-8}"
 NUM_SAMPLES="${NUM_SAMPLES:-5000}"
 DATASET_ROOT="${DATASET_ROOT:-}"
+RUN_VISUALIZATIONS="${RUN_VISUALIZATIONS:-1}"
+VIS_RUNS="${VIS_RUNS:-baseline,fifo_b32,ri_b32_dino_rgb,slam_b32_covisibility}"
+MAX_EXAMPLES="${MAX_EXAMPLES:-8}"
 
 if [ "$MAX_ROWS" = "15" ] && [ -z "$ROWS" ]; then
   OUT_DIR="${OUT_DIR:-$ROOT/unbounded_retrieval_audit}"
@@ -62,10 +65,13 @@ echo "Target stride: $TARGET_STRIDE"
 echo "Candidate pools: $POOL_SIZES"
 echo "Repeats: $REPEATS"
 echo "Samples per candidate: $NUM_SAMPLES"
+echo "Render visualizations: $RUN_VISUALIZATIONS"
+echo "Visualization runs: $VIS_RUNS"
+echo "Montage examples: $MAX_EXAMPLES"
 echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Started: $(date)"
 
-python -c 'import matplotlib, numpy, torch; print("torch", torch.__version__)'
+python -c 'import imageio, matplotlib, numpy, PIL, torch; print("torch", torch.__version__)'
 
 cmd=(
   python utils/analyze_unbounded_retrieval_instability.py
@@ -95,8 +101,35 @@ printf ' %q' "${cmd[@]}"
 printf '\n'
 "${cmd[@]}"
 
+if [ "$RUN_VISUALIZATIONS" = "1" ]; then
+  visual_cmd=(
+    python utils/visualize_retrieval_failures.py
+    --manifest "$MANIFEST"
+    --root "$ROOT"
+    --audit_csv "$OUT_DIR/tables/query_audit.csv"
+    --runs "$VIS_RUNS"
+    --baseline_run baseline
+    --duration 60
+    --max_rows "$MAX_ROWS"
+    --max_examples "$MAX_EXAMPLES"
+    --output_dir "$OUT_DIR/visualizations"
+  )
+  if [ -n "$ROWS" ]; then
+    visual_cmd+=(--rows "$ROWS")
+  fi
+  if [ -n "$DATASET_ROOT" ]; then
+    visual_cmd+=(--dataset_root "$DATASET_ROOT")
+  fi
+
+  printf 'Visualization command:'
+  printf ' %q' "${visual_cmd[@]}"
+  printf '\n'
+  "${visual_cmd[@]}"
+fi
+
 echo
 echo "Finished: $(date)"
 echo "Report: $OUT_DIR/report.md"
+echo "Failure montage: $OUT_DIR/visualizations/retrieval_failure_montage.png"
 echo
 cat "$OUT_DIR/report.md"
