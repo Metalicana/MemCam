@@ -9,6 +9,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "fifo",
     "rarity_irreplaceability",
     "slam_covisibility",
+    "slam_max_coverage",
     "facility_coreset",
     "kcenter_coreset",
     "trajectory_coverage",
@@ -20,6 +21,7 @@ BUDGETED_MEMORY_POLICIES = (
     "fifo",
     "rarity_irreplaceability",
     "slam_covisibility",
+    "slam_max_coverage",
     "facility_coreset",
     "kcenter_coreset",
     "trajectory_coverage",
@@ -832,6 +834,52 @@ def _feature_cosine_similarity(memory_frame_indices, features):
     return np.clip(similarities, -1.0, 1.0)
 
 
+def _slam_covisibility_affinity(
+    memory_frame_indices,
+    c2ws,
+    dino_features=None,
+    rgb_features=None,
+    visual_weight=0.35,
+    geometry_weight=0.65,
+    self_similarity=0.0,
+):
+    """Build the pose/appearance affinity shared by the SLAM policies."""
+    memory_frame_indices = list(memory_frame_indices)
+    if not memory_frame_indices:
+        return np.zeros((0, 0), dtype=np.float64)
+
+    pose_distance = pose_distances(
+        c2ws,
+        memory_frame_indices,
+        memory_frame_indices,
+    )
+    geom_similarity = np.exp(-pose_distance)
+
+    components = [(geometry_weight, geom_similarity)]
+    if dino_features is not None:
+        visual_similarity = _feature_cosine_similarity(
+            memory_frame_indices,
+            dino_features,
+        )
+        components.append((visual_weight, np.maximum(visual_similarity, 0.0)))
+    elif rgb_features is not None:
+        rgb_distance = pairwise_mean_abs_distances(
+            np.stack(
+                [rgb_features[frame_idx] for frame_idx in memory_frame_indices]
+            )
+        )
+        components.append((visual_weight, np.exp(-4.0 * rgb_distance)))
+
+    total_weight = sum(weight for weight, _ in components)
+    affinity = sum(weight * matrix for weight, matrix in components) / max(
+        total_weight,
+        1e-12,
+    )
+    affinity = np.clip(affinity, 0.0, 1.0)
+    np.fill_diagonal(affinity, float(self_similarity))
+    return affinity
+
+
 def compute_slam_covisibility_scores(
     memory_frame_indices,
     c2ws,
@@ -854,27 +902,15 @@ def compute_slam_covisibility_scores(
     if not memory_frame_indices:
         return ({}, {}) if return_details else {}
 
-    pose_distance = pose_distances(c2ws, memory_frame_indices, memory_frame_indices)
-    geom_similarity = np.exp(-pose_distance)
-    np.fill_diagonal(geom_similarity, 0.0)
-
-    components = [(geometry_weight, geom_similarity)]
-    if dino_features is not None:
-        visual_similarity = _feature_cosine_similarity(memory_frame_indices, dino_features)
-        visual_similarity = np.maximum(visual_similarity, 0.0)
-        np.fill_diagonal(visual_similarity, 0.0)
-        components.append((visual_weight, visual_similarity))
-    elif rgb_features is not None:
-        rgb_distance = pairwise_mean_abs_distances(
-            np.stack([rgb_features[frame_idx] for frame_idx in memory_frame_indices])
-        )
-        rgb_similarity = np.exp(-4.0 * rgb_distance)
-        np.fill_diagonal(rgb_similarity, 0.0)
-        components.append((visual_weight, rgb_similarity))
-
-    total_weight = sum(weight for weight, _ in components)
-    covisibility = sum(weight * matrix for weight, matrix in components) / max(total_weight, 1e-12)
-    np.fill_diagonal(covisibility, 0.0)
+    covisibility = _slam_covisibility_affinity(
+        memory_frame_indices=memory_frame_indices,
+        c2ws=c2ws,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        visual_weight=visual_weight,
+        geometry_weight=geometry_weight,
+        self_similarity=0.0,
+    )
 
     scores = {}
     details = {}
@@ -909,6 +945,245 @@ def compute_slam_covisibility_scores(
             "unique_bonus": float(unique_bonus),
             "covisibility_threshold": float(covisibility_threshold),
             "n_other_observers": int(n_other_observers),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def greedy_max_coverage_selection(
+    affinity,
+    budget,
+    demand_weights=None,
+    forced_candidate_indices=None,
+):
+    """Maximize weighted top-1 coverage for any fixed affinity matrix.
+
+    Rows are causal demand queries and columns are candidate memory items. The
+    optimizer is representation-independent: an adapter only needs to provide
+    affinities in ``[0, 1]`` and optional non-negative query weights.
+    """
+    affinity = np.asarray(affinity, dtype=np.float64)
+    if affinity.ndim != 2:
+        raise ValueError("coverage affinity must be a two-dimensional matrix")
+    if not np.all(np.isfinite(affinity)):
+        raise ValueError("coverage affinity must be finite")
+    if np.any(affinity < 0.0) or np.any(affinity > 1.0):
+        raise ValueError("coverage affinity values must be in [0, 1]")
+
+    num_queries, num_candidates = affinity.shape
+    if num_queries < 1 or num_candidates < 1:
+        raise ValueError("coverage affinity must contain queries and candidates")
+    if budget is None or budget <= 0:
+        raise ValueError("max coverage requires a positive budget")
+
+    if demand_weights is None:
+        weights = np.ones(num_queries, dtype=np.float64)
+    else:
+        weights = np.asarray(demand_weights, dtype=np.float64)
+        if weights.shape != (num_queries,):
+            raise ValueError(
+                "coverage demand weights must match the affinity query count"
+            )
+    if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
+        raise ValueError("coverage demand weights must be finite and non-negative")
+    weight_sum = float(np.sum(weights))
+    if weight_sum <= 0.0:
+        raise ValueError("coverage demand weights must have positive total mass")
+    weights = weights / weight_sum
+
+    forced_cols = list(dict.fromkeys(forced_candidate_indices or []))
+    invalid_forced = [
+        col for col in forced_cols if col < 0 or col >= num_candidates
+    ]
+    if invalid_forced:
+        raise ValueError(
+            f"forced coverage candidate indices are invalid: {invalid_forced[:10]}"
+        )
+    if len(forced_cols) > budget:
+        raise ValueError("max coverage has more forced candidates than its budget")
+
+    selected_cols = list(forced_cols)
+    selected_set = set(forced_cols)
+    marginal_gains = {col: float("inf") for col in forced_cols}
+    covered = (
+        np.max(affinity[:, selected_cols], axis=1)
+        if selected_cols
+        else np.zeros(num_queries, dtype=np.float64)
+    )
+
+    selected_limit = min(int(budget), num_candidates)
+    while len(selected_cols) < selected_limit:
+        gains = np.sum(
+            weights[:, None]
+            * np.maximum(0.0, affinity - covered[:, None]),
+            axis=0,
+        )
+        if selected_set:
+            gains[list(selected_set)] = -np.inf
+        best_col = int(np.argmax(gains))
+        if not np.isfinite(gains[best_col]):
+            break
+
+        selected_cols.append(best_col)
+        selected_set.add(best_col)
+        marginal_gains[best_col] = float(gains[best_col])
+        covered = np.maximum(covered, affinity[:, best_col])
+
+    removal_losses = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        covered_without_col = (
+            np.max(affinity[:, other_cols], axis=1)
+            if other_cols
+            else np.zeros(num_queries, dtype=np.float64)
+        )
+        removal_losses[col] = float(
+            np.sum(weights * (covered - covered_without_col))
+        )
+
+    candidate_gains = np.sum(
+        weights[:, None]
+        * np.maximum(0.0, affinity - covered[:, None]),
+        axis=0,
+    )
+    if selected_set:
+        candidate_gains[list(selected_set)] = 0.0
+
+    return {
+        "selected_cols": selected_cols,
+        "marginal_gains": marginal_gains,
+        "removal_losses": removal_losses,
+        "candidate_gains": candidate_gains,
+        "covered": covered,
+        "coverage_value": float(np.sum(weights * covered)),
+        "demand_weights": weights,
+    }
+
+
+def compute_slam_max_coverage_scores(
+    memory_frame_indices,
+    c2ws,
+    budget,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    visual_weight=0.35,
+    geometry_weight=0.65,
+    return_details=False,
+):
+    """Select the subset with maximum top-1 coverage under SLAM affinity.
+
+    Queries and candidates are the current causal set ``M_(t-1) union N_t``.
+    Every query has uniform demand. Off-diagonal affinities exactly match the
+    SLAM covisibility policy; the diagonal is one because a retained memory
+    fully covers itself. Greedy maximizes the monotone submodular facility
+    objective ``mean_q max_{m in M} K(q, m)``.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    if budget is None:
+        raise ValueError("slam_max_coverage requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("slam_max_coverage budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if len(set(memory_frame_indices)) != len(memory_frame_indices):
+        raise ValueError("slam_max_coverage candidates must be unique")
+
+    candidate_set = set(memory_frame_indices)
+    unknown_forced = forced_keep_frames - candidate_set
+    if unknown_forced:
+        raise ValueError(
+            "slam_max_coverage forced-keep frames are not candidates: "
+            f"{sorted(unknown_forced)[:10]}"
+        )
+    if len(forced_keep_frames) > budget:
+        raise ValueError("slam_max_coverage has more forced frames than its budget")
+
+    affinity = _slam_covisibility_affinity(
+        memory_frame_indices=memory_frame_indices,
+        c2ws=c2ws,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        visual_weight=visual_weight,
+        geometry_weight=geometry_weight,
+        self_similarity=1.0,
+    )
+    num_candidates = len(memory_frame_indices)
+    frame_to_col = {
+        frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)
+    }
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+    selection = greedy_max_coverage_selection(
+        affinity=affinity,
+        budget=budget,
+        forced_candidate_indices=forced_cols,
+    )
+    selected_cols = selection["selected_cols"]
+    marginal_gains = selection["marginal_gains"]
+    covered = selection["covered"]
+
+    selected_frames = [memory_frame_indices[col] for col in selected_cols]
+    selected_frame_set = set(selected_frames)
+    selected_ranks = {col: rank for rank, col in enumerate(selected_cols)}
+    coverage_value = selection["coverage_value"]
+    removal_losses = selection["removal_losses"]
+    candidate_gains = selection["candidate_gains"]
+
+    visual_source = (
+        "dino"
+        if dino_features is not None
+        else "rgb" if rgb_features is not None else "none"
+    )
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + removal_losses.get(col, 0.0)
+        else:
+            score = -1.0
+
+        candidate_gain = (
+            0.0
+            if selected
+            else float(candidate_gains[col])
+        )
+        gain = marginal_gains.get(col)
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "slam_max_coverage_selected": bool(selected),
+            "slam_max_coverage_forced_keep": bool(forced),
+            "slam_max_coverage_rank": selected_ranks.get(col),
+            "slam_max_coverage_marginal_gain": (
+                None if gain is None or np.isinf(gain) else float(gain)
+            ),
+            "slam_max_coverage_candidate_gain": candidate_gain,
+            "slam_max_coverage_removal_loss": (
+                float(removal_losses.get(col, 0.0)) if selected else 0.0
+            ),
+            "slam_max_coverage_value": coverage_value,
+            "slam_max_coverage_mean": coverage_value,
+            "slam_max_coverage_min": float(np.min(covered)),
+            "slam_max_coverage_p10": float(np.quantile(covered, 0.10)),
+            "slam_max_coverage_affinity_mean": float(
+                np.mean(affinity[:, col])
+            ),
+            "slam_max_coverage_affinity_max": float(
+                np.max(affinity[:, col])
+            ),
+            "slam_max_coverage_geometry_weight": float(geometry_weight),
+            "slam_max_coverage_visual_weight": float(visual_weight),
+            "slam_max_coverage_visual_source": visual_source,
+            "slam_max_coverage_query_count": num_candidates,
         }
 
     return (scores, details) if return_details else scores

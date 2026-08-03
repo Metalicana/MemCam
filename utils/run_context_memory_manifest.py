@@ -43,6 +43,7 @@ def main():
             "fifo",
             "rarity_irreplaceability",
             "slam_covisibility",
+            "slam_max_coverage",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",

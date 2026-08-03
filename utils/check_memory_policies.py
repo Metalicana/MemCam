@@ -21,6 +21,7 @@ compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_score
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
+compute_slam_max_coverage_scores = memory_policies.compute_slam_max_coverage_scores
 compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
 surprise_forcing_score = memory_policies.surprise_forcing_score
 
@@ -83,6 +84,14 @@ def check_slam_covisibility_requires_budget():
     except ValueError:
         return
     raise AssertionError("slam_covisibility without a budget should fail")
+
+
+def check_slam_max_coverage_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="slam_max_coverage")
+    except ValueError:
+        return
+    raise AssertionError("slam_max_coverage without a budget should fail")
 
 
 def check_facility_coreset_requires_budget():
@@ -223,6 +232,33 @@ def check_slam_covisibility_scores():
     assert scores[7] > scores[1]
     assert details[1]["covisible_observers"] >= 2
     assert details[7]["covisible_observers"] == 0
+
+
+def check_slam_max_coverage_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.99, 0.01], dtype=np.float32),
+        2: np.array([0.98, 0.02], dtype=np.float32),
+        7: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    scores, details = compute_slam_max_coverage_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        return_details=True,
+    )
+    selected = {
+        frame_idx
+        for frame_idx, row in details.items()
+        if row["slam_max_coverage_selected"]
+    }
+    assert selected == {0, 7}
+    assert scores[0] == float("inf")
+    assert scores[7] > 0.0
+    assert scores[1] < 0.0
 
 
 def check_facility_coreset_scores():
@@ -444,6 +480,8 @@ if __name__ == "__main__":
     check_rarity_irreplaceability_scores()
     check_slam_covisibility_requires_budget()
     check_slam_covisibility_scores()
+    check_slam_max_coverage_requires_budget()
+    check_slam_max_coverage_scores()
     check_facility_coreset_requires_budget()
     check_facility_coreset_scores()
     check_kcenter_coreset_requires_budget()
