@@ -89,3 +89,43 @@ def test_label_fields_measure_winner_agreement():
     assert output["candidate_labeled_overlap_count"] == 1
     assert output["winner_labeled_overlap_rate"] == 0.5
     assert output["reference_winner_labeled_overlap"] == 1
+
+
+def test_query_keys_do_not_depend_on_manifest_row_number():
+    item = {
+        "scene": "ClothingStore_1",
+        "start_frame": 228,
+        "duration_sec": 60,
+        "_row": 18,
+    }
+    trace = {
+        "scene": "ClothingStore_1",
+        "dataset_start_frame": 228,
+        "duration_sec": 60,
+        "row": 999,
+        "section_idx": 23,
+        "target_frame": 1768,
+    }
+
+    assert MODULE.manifest_query_key(item, 23, 1768) == MODULE.trace_query_key(trace)
+
+
+def test_same_numeric_row_cannot_join_different_scenes():
+    item = {
+        "scene": "ClothingStore_1",
+        "start_frame": 228,
+        "duration_sec": 60,
+        "_row": 18,
+    }
+    wrong_trace = {
+        "scene": "AncientTempleEnv_5",
+        "dataset_start_frame": 684,
+        "duration_sec": 60,
+        "row": 18,
+        "section_idx": 23,
+        "target_frame": 1768,
+    }
+
+    assert MODULE.manifest_query_key(item, 23, 1768) != MODULE.trace_query_key(
+        wrong_trace
+    )

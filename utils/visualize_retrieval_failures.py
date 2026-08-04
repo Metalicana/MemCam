@@ -18,7 +18,11 @@ if str(UTILS_DIR) not in sys.path:
 from analyze_unbounded_retrieval_instability import (  # noqa: E402
     load_labeled_overlaps,
     load_manifest,
+    manifest_identity,
+    manifest_query_key,
     resolve_overlap_dir,
+    trace_identity,
+    trace_query_key,
 )
 
 
@@ -76,21 +80,12 @@ def safe_bool(value):
     return None
 
 
-def trace_key(row):
-    row_idx = safe_int(row.get("row"))
-    section_idx = safe_int(row.get("section_idx"))
-    target_frame = safe_int(row.get("target_frame"))
-    if None in (row_idx, section_idx, target_frame):
-        return None
-    return row_idx, section_idx, target_frame
-
-
 def discover_trace_dir(root, run_name):
     path = Path(root) / run_name / "access_traces"
     return path if path.is_dir() else None
 
 
-def load_selected_trace_rows(trace_dir, wanted_keys=None, wanted_row=None):
+def load_selected_trace_rows(trace_dir, wanted_keys=None, wanted_identity=None):
     rows = {}
     if trace_dir is None:
         return rows
@@ -103,12 +98,12 @@ def load_selected_trace_rows(trace_dir, wanted_keys=None, wanted_row=None):
                 row = json.loads(line)
                 if row.get("event") != "context_access" or not row.get("selected"):
                     continue
-                key = trace_key(row)
+                key = trace_query_key(row)
                 if key is None:
                     continue
                 if wanted_keys is not None and key not in wanted_keys:
                     continue
-                if wanted_row is not None and key[0] != int(wanted_row):
+                if wanted_identity is not None and key[:3] != tuple(wanted_identity):
                     continue
                 row["_trace_file"] = str(path)
                 rows[key] = row
@@ -171,11 +166,33 @@ def load_gt_frame(item, local_frame, dataset_root=None):
 
 
 def resolve_video_path(root, run_name, item, trace_row):
+    if trace_row is not None and trace_identity(trace_row) != manifest_identity(item):
+        raise ValueError(
+            "Trace/video identity mismatch: "
+            f"manifest={manifest_identity(item)}, trace={trace_identity(trace_row)}"
+        )
+    expected_name = f"{item['output_prefix']}custom.mp4"
+    traced_prefix = trace_row.get("output_prefix") if trace_row else None
+    if traced_prefix and str(traced_prefix) != str(item["output_prefix"]):
+        raise ValueError(
+            "Trace output-prefix mismatch: "
+            f"manifest={item['output_prefix']}, trace={traced_prefix}"
+        )
+
+    candidate = Path(root) / run_name / expected_name
+    if candidate.is_file():
+        return candidate
+
     traced = trace_row.get("output") if trace_row else None
     if traced and Path(traced).is_file():
-        return Path(traced)
-    candidate = Path(root) / run_name / f"{item['output_prefix']}custom.mp4"
-    return candidate if candidate.is_file() else None
+        traced_path = Path(traced)
+        if traced_path.name != expected_name:
+            raise ValueError(
+                "Trace output filename mismatch: "
+                f"expected={expected_name}, trace={traced_path.name}"
+            )
+        return traced_path
+    return None
 
 
 def load_video_frame(video_path, frame_idx, cache):
@@ -210,20 +227,27 @@ def build_failure_cases(
 ):
     cases = []
     for audit_row in audit_rows:
-        key = trace_key(audit_row)
-        if key is None or key[0] not in manifest_by_row:
+        row_idx = safe_int(audit_row.get("row"))
+        section_idx = safe_int(audit_row.get("section_idx"))
+        target_frame = safe_int(audit_row.get("target_frame"))
+        if None in (row_idx, section_idx, target_frame):
             continue
-        item = manifest_by_row[key[0]]
+        if row_idx not in manifest_by_row:
+            continue
+        item = manifest_by_row[row_idx]
+        query_key = manifest_query_key(item, section_idx, target_frame)
+        if query_key is None:
+            continue
         labeled = load_labeled_overlaps(
             overlap_dir=resolve_overlap_dir(item, dataset_root=dataset_root),
-            target_frame=key[2],
+            target_frame=target_frame,
             start_frame=int(item["start_frame"]),
             num_frames=int(item["num_frames"]),
         )
 
         selections = {}
         for run_name in runs:
-            trace_row = trace_rows_by_run.get(run_name, {}).get(key)
+            trace_row = trace_rows_by_run.get(run_name, {}).get(query_key)
             if trace_row is None:
                 continue
             memory_frame = safe_int(trace_row.get("selected_memory_frame"))
@@ -271,20 +295,18 @@ def build_failure_cases(
             [abs(frame - baseline["memory_frame"]) for frame in policy_frames]
             or [0]
         )
-        robust_regret = safe_float(audit_row.get("actual_reference_regret")) or 0.0
         age_span = safe_float(audit_row.get("winner_age_span")) or 0.0
         score = (
             category_score
-            + 100.0 * robust_regret
             + min(age_span, 1000.0) / 10.0
             + min(disagreement, 1000) / 20.0
         )
         cases.append(
             {
-                "key": key,
-                "row": key[0],
-                "section_idx": key[1],
-                "target_frame": key[2],
+                "key": (row_idx, section_idx, target_frame),
+                "row": row_idx,
+                "section_idx": section_idx,
+                "target_frame": target_frame,
                 "scene": item["scene"],
                 "category": category,
                 "score": score,
@@ -571,12 +593,16 @@ def render_montage(cases, runs, root, dataset_root, output_dir):
     return png
 
 
-def load_timeline_rows(root, runs, row_idx):
+def load_timeline_rows(root, runs, item):
     output = {}
+    identity = manifest_identity(item)
     for run_name in runs:
         trace_dir = discover_trace_dir(root, run_name)
         output[run_name] = list(
-            load_selected_trace_rows(trace_dir, wanted_row=row_idx).values()
+            load_selected_trace_rows(
+                trace_dir,
+                wanted_identity=identity,
+            ).values()
         )
     return output
 
@@ -716,7 +742,16 @@ def main():
     ]
     if not audit_rows:
         raise RuntimeError("No full-pool traced queries were found in the audit CSV")
-    wanted_keys = {trace_key(row) for row in audit_rows}
+    wanted_keys = set()
+    for row in audit_rows:
+        row_idx = safe_int(row.get("row"))
+        section_idx = safe_int(row.get("section_idx"))
+        target_frame = safe_int(row.get("target_frame"))
+        item = manifest_by_row.get(row_idx)
+        if item is None or None in (section_idx, target_frame):
+            continue
+        wanted_keys.add(manifest_query_key(item, section_idx, target_frame))
+    wanted_keys.discard(None)
 
     trace_rows_by_run = {}
     available_runs = []
@@ -773,7 +808,7 @@ def main():
             row_scores[case["row"]] += case["score"]
         timeline_row = max(row_scores, key=row_scores.get)
     timeline_item = manifest_by_row[timeline_row]
-    timeline_rows = load_timeline_rows(args.root, runs, timeline_row)
+    timeline_rows = load_timeline_rows(args.root, runs, timeline_item)
     retrieval_map = save_retrieval_map(
         row_idx=timeline_row,
         item=timeline_item,

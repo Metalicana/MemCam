@@ -48,6 +48,52 @@ def parse_pool_sizes(value):
     return pools
 
 
+def run_identity(scene, start_frame, duration_sec):
+    if scene in (None, "") or start_frame in (None, "") or duration_sec in (None, ""):
+        return None
+    try:
+        return str(scene), int(start_frame), int(float(duration_sec))
+    except (TypeError, ValueError):
+        return None
+
+
+def manifest_identity(item):
+    return run_identity(
+        item.get("scene"),
+        item.get("start_frame"),
+        item.get("duration_sec"),
+    )
+
+
+def trace_identity(row):
+    return run_identity(
+        row.get("scene"),
+        row.get("dataset_start_frame"),
+        row.get("duration_sec"),
+    )
+
+
+def manifest_query_key(item, section_idx, target_frame):
+    identity = manifest_identity(item)
+    if identity is None:
+        return None
+    return (*identity, int(section_idx), int(target_frame))
+
+
+def trace_query_key(row):
+    identity = trace_identity(row)
+    if identity is None:
+        return None
+    try:
+        return (
+            *identity,
+            int(row["section_idx"]),
+            int(row["target_frame"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def auto_sections(total_sections, count=5):
     valid = list(range(1, int(total_sections)))
     if not valid:
@@ -391,13 +437,9 @@ def load_actual_trace_rows(trace_dir):
                 row = json.loads(line)
                 if row.get("event") != "context_access" or not row.get("selected"):
                     continue
-                if row.get("row") is None:
+                key = trace_query_key(row)
+                if key is None:
                     continue
-                key = (
-                    int(row["row"]),
-                    int(row["section_idx"]),
-                    int(row["target_frame"]),
-                )
                 rows[key] = row
     return rows
 
@@ -614,7 +656,8 @@ def write_report(path, query_rows, overall_summary, args):
         "",
         "## Pilot Readout",
         "",
-        f"- Audited queries: {len(query_rows)} across {len(set(row['row'] for row in query_rows))} manifest rows.",
+        f"- Audited target queries: {len(all_rows)} across {len(set(row['row'] for row in query_rows))} manifest rows.",
+        f"- Candidate-pool evaluations: {len(query_rows)}.",
         f"- Mean modal-winner share for the full unbounded pool: {fmt(modal_share)}. One means perfectly stable.",
         f"- Full-pool queries whose repeated winners differ by at least one 76-frame section: {fmt(cross_switch)}.",
         f"- Mean noisy-maximum optimism for the full pool: {fmt(optimism, 6)} IoU.",
@@ -643,7 +686,7 @@ def write_report(path, query_rows, overall_summary, args):
         "## Interpretation",
         "",
         "- Falling top-1 stability as the pool grows supports retrieval ambiguity or estimator noise.",
-        "- Increasing noisy-maximum optimism supports a multiple-comparisons effect: more candidates provide more chances for an overestimated score to win.",
+        "- Compare noisy-maximum optimism across pools before claiming a multiple-comparisons effect; an increase is required for that interpretation.",
         "- A large winner-age span means the noise changes which temporal episode is retrieved, rather than merely swapping adjacent frames.",
         "- Dataset-label agreement tests whether the stochastic retriever selects a frame that training itself regarded as valid context. The labels are a reference criterion, not a guarantee of visual quality.",
         "- None of these alone proves quality causality. The causal follow-up is a matched rollout using deterministic common overlap samples while leaving the unbounded bank unchanged.",
@@ -790,7 +833,7 @@ def main():
                     actual_row = None
                     if pool_label == "all":
                         actual_row = actual_traces.get(
-                            (row_idx, section_idx, target_frame)
+                            manifest_query_key(item, section_idx, target_frame)
                         )
                     summary = add_actual_trace_fields(
                         summary,
@@ -801,6 +844,9 @@ def main():
                     summary = {
                         "row": row_idx,
                         "scene": item["scene"],
+                        "dataset_start_frame": start_frame,
+                        "duration_sec": int(item["duration_sec"]),
+                        "output_prefix": item.get("output_prefix"),
                         "section_idx": section_idx,
                         "target_frame": target_frame,
                         "target_dataset_frame": start_frame + target_frame,
