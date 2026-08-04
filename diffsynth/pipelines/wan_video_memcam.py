@@ -77,6 +77,28 @@ CORESET_ARCHIVE_STRIDE = 4
 CORESET_MAX_ARCHIVE_SIZE = 5000
 
 
+def normalize_context_selection_overrides(overrides):
+    """Normalize replay overrides to ``(section, target) -> metadata``."""
+    normalized = {}
+    for raw_section, target_rows in (overrides or {}).items():
+        section_idx = int(raw_section)
+        if section_idx <= 0:
+            raise ValueError("Context overrides are only valid after section 0")
+        if not isinstance(target_rows, dict):
+            raise ValueError("Each context-override section must map targets to frames")
+        for raw_target, raw_value in target_rows.items():
+            target_frame = int(raw_target)
+            if isinstance(raw_value, dict):
+                if "memory_frame" not in raw_value:
+                    raise ValueError("Context-override metadata requires memory_frame")
+                value = dict(raw_value)
+                value["memory_frame"] = int(value["memory_frame"])
+            else:
+                value = {"memory_frame": int(raw_value)}
+            normalized[(section_idx, target_frame)] = value
+    return normalized
+
+
 class WanVideoMemCamPipeline(BasePipeline):
 
     def __init__(self, device="cuda", torch_dtype=torch.float16, tokenizer_path=None):
@@ -342,6 +364,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         surprise_route_top_k=3,
         surprise_value_layer=15,
         surprise_warmup_sections=3,
+        context_selection_overrides=None,
+        stop_after_section=None,
         access_trace_path=None,
         access_trace_metadata=None,
         attention_audit_path=None,
@@ -373,6 +397,36 @@ class WanVideoMemCamPipeline(BasePipeline):
         assert total_frames % 76 == 1
         total_sections = (total_frames - 1) // 76
         print(f"Total sections: {total_sections}")
+        context_selection_overrides = normalize_context_selection_overrides(
+            context_selection_overrides
+        )
+        if stop_after_section is None:
+            generated_section_count = total_sections
+        else:
+            stop_after_section = int(stop_after_section)
+            if stop_after_section < 0 or stop_after_section >= total_sections:
+                raise ValueError(
+                    f"stop_after_section must be in [0, {total_sections - 1}]"
+                )
+            generated_section_count = stop_after_section + 1
+        invalid_override_sections = sorted(
+            {
+                section_idx
+                for section_idx, _target_frame in context_selection_overrides
+                if section_idx >= generated_section_count
+            }
+        )
+        if invalid_override_sections:
+            raise ValueError(
+                "Context overrides refer to sections after the requested stop: "
+                f"{invalid_override_sections}"
+            )
+        print(f"Sections to generate: {generated_section_count}")
+        if context_selection_overrides:
+            print(
+                "Context replay overrides: "
+                f"{len(context_selection_overrides)} target selections"
+            )
 
         attention_audit_enabled = attention_audit_path is not None
         probe_sections = {
@@ -620,9 +674,9 @@ class WanVideoMemCamPipeline(BasePipeline):
         clear_surprise_value_collector()
         
         # Vanilla Sampling
-        for section_idx in range(total_sections):
+        for section_idx in range(generated_section_count):
             profiler.begin_section(section_idx)
-            print(f"Generating section {section_idx + 1}/{total_sections}")
+            print(f"Generating section {section_idx + 1}/{generated_section_count}")
             section_start_frame = section_start_frames[section_idx]
             section_candidate_count = 0
             section_host_to_device_bytes = 0
@@ -668,6 +722,7 @@ class WanVideoMemCamPipeline(BasePipeline):
             exclude_frames = set(anchor_frame_range) | set(predict_frame_range)
             context_target_frames = [section_start_frame + 1 + i for i in range(PREDICT_FRAMES)]
             selected_contexts = []
+            selection_sources = {}
 
             if section_idx == 0:
                 with profiler.phase("context_encode"):
@@ -765,22 +820,51 @@ class WanVideoMemCamPipeline(BasePipeline):
                 with profiler.phase("context_selection"):
                     for slot_idx, frame_idx in enumerate(context_target_frames):
                         target_c2w = c2ws[frame_idx]
-                        best_idx = None
-                        best_iou = -1
-                        for candidate_idx in candidate_frame_indices:
-                            candidate_c2w = c2ws[candidate_idx]
-                            iou = calculate_overlap_from_c2w(
+                        override = context_selection_overrides.get(
+                            (int(section_idx), int(frame_idx))
+                        )
+                        if override is not None:
+                            best_idx = int(override["memory_frame"])
+                            if best_idx not in candidate_frame_indices:
+                                raise ValueError(
+                                    "Replay override selected a frame outside the "
+                                    f"current bank: section={section_idx}, "
+                                    f"target={frame_idx}, memory={best_idx}"
+                                )
+                            best_iou = calculate_overlap_from_c2w(
                                 target_c2w,
-                                candidate_c2w,
+                                c2ws[best_idx],
                                 fov_half_h=FOV_HALF_H,
                                 fov_half_v=FOV_HALF_V,
                                 num_samples=FOV_SAMPLES,
                                 radius=FOV_RADIUS,
                                 return_details=False,
                             )
-                            if iou > best_iou:
-                                best_iou = iou
-                                best_idx = candidate_idx
+                            selection_sources[(slot_idx, frame_idx)] = {
+                                "selection_source": "override",
+                                "override_source_run": override.get("source_run"),
+                            }
+                        else:
+                            best_idx = None
+                            best_iou = -1
+                            for candidate_idx in candidate_frame_indices:
+                                candidate_c2w = c2ws[candidate_idx]
+                                iou = calculate_overlap_from_c2w(
+                                    target_c2w,
+                                    candidate_c2w,
+                                    fov_half_h=FOV_HALF_H,
+                                    fov_half_v=FOV_HALF_V,
+                                    num_samples=FOV_SAMPLES,
+                                    radius=FOV_RADIUS,
+                                    return_details=False,
+                                )
+                                if iou > best_iou:
+                                    best_iou = iou
+                                    best_idx = candidate_idx
+                            selection_sources[(slot_idx, frame_idx)] = {
+                                "selection_source": "retriever",
+                                "override_source_run": None,
+                            }
                         selected_contexts.append((slot_idx, frame_idx, best_idx, best_iou))
 
                 if memory_policy == "surprise_forcing":
@@ -852,6 +936,13 @@ class WanVideoMemCamPipeline(BasePipeline):
                                     "memory_policy": memory_policy,
                                     "memory_budget": memory_budget,
                                     "memory_bank_device": memory_bank_device,
+                                    **selection_sources.get(
+                                        (slot_idx, frame_idx),
+                                        {
+                                            "selection_source": "retriever",
+                                            "override_source_run": None,
+                                        },
+                                    ),
                                 }
                             )
                         else:
@@ -1790,6 +1881,18 @@ class WanVideoMemCamPipeline(BasePipeline):
                 bank_feature_bytes=bank_feature_bytes,
                 host_to_device_bytes=section_host_to_device_bytes,
             )
+
+        write_access_trace(
+            {
+                "event": "rollout_complete",
+                "generated_sections": int(generated_section_count),
+                "last_generated_section": int(generated_section_count - 1),
+                "context_override_count": len(context_selection_overrides),
+                "memory_policy": memory_policy,
+                "memory_budget": memory_budget,
+                "memory_bank_device": memory_bank_device,
+            }
+        )
 
         # The memory bank is no longer needed once the rollout is complete. Output
         # sections were already decoded and moved to CPU during generation.
