@@ -36,6 +36,10 @@ DEFAULT_LABELS = {
     "slam_b64_covisibility": "SLAM",
     "slam_b96_covisibility": "SLAM",
     "slam_b128_covisibility": "SLAM",
+    "slammax_b32_coverage": "SLAM-Max",
+    "trajectory_b32_coverage": "Trajectory Coverage",
+    "density_b32_view_coverage": "Density-Balanced View Coverage",
+    "future_view_coverage_b32_pilot": "Future View Coverage (pilot)",
 }
 
 METRIC_LABELS = {

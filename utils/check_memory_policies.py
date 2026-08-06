@@ -17,6 +17,7 @@ compute_density_balanced_view_coverage_scores = (
     memory_policies.compute_density_balanced_view_coverage_scores
 )
 compute_facility_coreset_scores = memory_policies.compute_facility_coreset_scores
+compute_future_view_coverage_scores = memory_policies.compute_future_view_coverage_scores
 compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
@@ -133,6 +134,85 @@ def check_density_balanced_view_coverage_requires_budget():
         return
     raise AssertionError(
         "density_balanced_view_coverage without a budget should fail"
+    )
+
+
+def check_future_view_coverage_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="future_view_coverage")
+    except ValueError:
+        return
+    raise AssertionError("future_view_coverage without a budget should fail")
+
+
+def check_future_view_coverage_matches_density_balanced_without_future_queries():
+    c2ws = make_line_c2ws(7)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([1.0, 0.0], dtype=np.float32),
+        6: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.zeros(12, dtype=np.float32),
+        6: np.ones(12, dtype=np.float32),
+    }
+    masses = {0: 10.0, 1: 2.0, 6: 3.0}
+    kwargs = dict(
+        memory_frame_indices=[0, 1, 6],
+        c2ws=c2ws,
+        budget=2,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        coverage_masses=masses,
+        radius=2.0,
+        return_details=True,
+    )
+    density_scores, density_details = compute_density_balanced_view_coverage_scores(
+        **kwargs
+    )
+    future_scores, future_details = compute_future_view_coverage_scores(
+        future_query_frame_indices=None, **kwargs
+    )
+    assert set(density_scores) == set(future_scores)
+    for frame_idx in density_scores:
+        assert np.isclose(density_scores[frame_idx], future_scores[frame_idx])
+        assert np.isclose(
+            density_details[frame_idx]["density_coverage_assigned_mass"],
+            future_details[frame_idx]["future_view_coverage_assigned_mass"],
+        )
+
+
+def check_future_view_coverage_rewards_reachable_future_view():
+    # Two candidates far apart on a line; only one of them is geometrically
+    # close to a known future viewpoint. A self-covering-only objective can't
+    # tell them apart from the future path at all, so this isolates the fix.
+    c2ws = make_line_c2ws(10)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        5: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        0: np.zeros(12, dtype=np.float32),
+        5: np.ones(12, dtype=np.float32),
+    }
+    _, details = compute_future_view_coverage_scores(
+        memory_frame_indices=[0, 5],
+        c2ws=c2ws,
+        budget=2,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        future_query_frame_indices=[6],
+        future_query_weight=5.0,
+        radius=2.0,
+        return_details=True,
+    )
+    assert details[5]["future_view_coverage_future_kernel_mean"] > 0.0
+    assert details[0]["future_view_coverage_future_kernel_mean"] == 0.0
+    assert (
+        details[5]["future_view_coverage_removal_loss"]
+        > details[0]["future_view_coverage_removal_loss"]
     )
 
 
@@ -493,5 +573,8 @@ if __name__ == "__main__":
     check_h2o_heavy_hitter_scores()
     check_density_balanced_view_coverage_requires_budget()
     check_density_balanced_view_coverage_scores()
+    check_future_view_coverage_requires_budget()
+    check_future_view_coverage_matches_density_balanced_without_future_queries()
+    check_future_view_coverage_rewards_reachable_future_view()
     check_surprise_forcing()
     print("memory policy checks passed")

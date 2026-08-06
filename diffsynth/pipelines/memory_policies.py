@@ -14,6 +14,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "kcenter_coreset",
     "trajectory_coverage",
     "density_balanced_view_coverage",
+    "future_view_coverage",
     "h2o_heavy_hitter",
     "surprise_forcing",
 )
@@ -26,6 +27,7 @@ BUDGETED_MEMORY_POLICIES = (
     "kcenter_coreset",
     "trajectory_coverage",
     "density_balanced_view_coverage",
+    "future_view_coverage",
     "h2o_heavy_hitter",
     "surprise_forcing",
 )
@@ -1665,6 +1667,277 @@ def compute_density_balanced_view_coverage_scores(
             "density_coverage_dino_weight": float(dino_weight),
             "density_coverage_rgb_weight": float(rgb_weight),
             "density_coverage_epsilon": float(density_epsilon),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_future_view_coverage_scores(
+    memory_frame_indices,
+    c2ws,
+    budget,
+    future_query_frame_indices=None,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    coverage_masses=None,
+    density_alpha=0.5,
+    dino_weight=0.5,
+    rgb_weight=0.25,
+    future_query_weight=1.0,
+    density_epsilon=1e-3,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Density-balanced view coverage with an explicit prospective-demand term.
+
+    ``compute_density_balanced_view_coverage_scores`` treats the retained bank
+    plus new frames as *both* the candidate pool and the query/demand pool: a
+    frame is worth keeping only if it is not yet well-covered by other
+    retained frames. That makes retention self-referential -- nothing pulls a
+    frame forward in time to serve a viewpoint the trajectory has not reached
+    yet, so retained mass drifts toward whatever already looks locally
+    redundant "now" rather than toward frames a long-gap revisit will need
+    later.
+
+    This variant adds a second, decoupled demand pool built from the known
+    future camera path (``future_query_frame_indices``, e.g. the manifest's
+    remaining ``c2ws`` positions ahead of the current generation point).
+    Because a future query's visual content has not been generated yet, only
+    the geometric FOV-overlap kernel is defined for it -- there is no
+    DINO/RGB signal to discount it with. Both demand pools are combined into
+    one noisy-OR coverage objective
+
+        U(M) = sum_q w_q * (1 - prod_{x in M} (1 - K(q, x)))
+
+    and the bank is built by forward greedy maximization of U, same as the
+    self-covering policy (monotone submodular set coverage; greedy attains
+    the Nemhauser et al. 1978 (1 - 1/e) guarantee). Passing no future queries
+    reduces this exactly to ``compute_density_balanced_view_coverage_scores``.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    future_query_frame_indices = [
+        int(frame_idx)
+        for frame_idx in dict.fromkeys(future_query_frame_indices or [])
+    ]
+    if budget is None:
+        raise ValueError("future_view_coverage requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("future_view_coverage budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if len(set(memory_frame_indices)) != len(memory_frame_indices):
+        raise ValueError("future_view_coverage candidates must be unique")
+    if dino_features is None or rgb_features is None:
+        raise ValueError("future_view_coverage requires DINO and RGB features")
+    if not 0.0 <= density_alpha <= 1.0:
+        raise ValueError("density_alpha must be in [0, 1]")
+    if dino_weight < 0 or rgb_weight < 0:
+        raise ValueError("density kernel weights must be non-negative")
+    if future_query_weight < 0:
+        raise ValueError("future_query_weight must be non-negative")
+    if density_epsilon <= 0:
+        raise ValueError("density_epsilon must be positive")
+
+    candidate_set = set(memory_frame_indices)
+    unknown_forced = forced_keep_frames - candidate_set
+    if unknown_forced:
+        raise ValueError(
+            "future_view_coverage forced-keep frames are not candidates: "
+            f"{sorted(unknown_forced)[:10]}"
+        )
+    if len(forced_keep_frames) > budget:
+        raise ValueError("future_view_coverage has more forced frames than its budget")
+
+    missing_dino = [
+        frame_idx for frame_idx in memory_frame_indices if frame_idx not in dino_features
+    ]
+    missing_rgb = [
+        frame_idx for frame_idx in memory_frame_indices if frame_idx not in rgb_features
+    ]
+    if missing_dino or missing_rgb:
+        raise ValueError(
+            "Missing future view coverage features for frames: "
+            f"DINO={missing_dino[:10]}, RGB={missing_rgb[:10]}"
+        )
+
+    coverage_masses = coverage_masses or {}
+    base_masses = np.asarray(
+        [coverage_masses.get(frame_idx, 1.0) for frame_idx in memory_frame_indices],
+        dtype=np.float64,
+    )
+    if np.any(~np.isfinite(base_masses)) or np.any(base_masses < 0):
+        raise ValueError("coverage masses must be finite and non-negative")
+    total_mass = float(np.sum(base_masses))
+    if total_mass <= 0:
+        raise ValueError("coverage masses must have positive total mass")
+
+    geometry_similarity = camera_trajectory_similarity(
+        c2ws=c2ws,
+        query_frame_indices=memory_frame_indices,
+        memory_frame_indices=memory_frame_indices,
+        fov_half_h=fov_half_h,
+        fov_half_v=fov_half_v,
+        radius=radius,
+    )
+    dino_similarity = _feature_cosine_similarity(memory_frame_indices, dino_features)
+    dino_distance = np.clip(1.0 - dino_similarity, 0.0, 2.0)
+    rgb_matrix = np.stack([rgb_features[frame_idx] for frame_idx in memory_frame_indices])
+    rgb_distance = pairwise_mean_abs_distances(rgb_matrix)
+    if not np.all(np.isfinite(rgb_distance)):
+        raise ValueError("RGB memory features must be finite")
+    appearance_similarity = np.exp(
+        -float(dino_weight) * dino_distance - float(rgb_weight) * rgb_distance
+    )
+
+    self_kernel = np.clip(geometry_similarity * appearance_similarity, 0.0, 1.0 - 1e-6)
+    np.fill_diagonal(self_kernel, 1.0 - 1e-6)
+
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        density = self_kernel @ base_masses
+    if not np.all(np.isfinite(density)):
+        raise ValueError("density estimates must be finite")
+    self_demand_raw = base_masses * np.power(density + float(density_epsilon), -float(density_alpha))
+
+    future_query_frame_indices = [
+        frame_idx for frame_idx in future_query_frame_indices if frame_idx not in candidate_set
+    ]
+    if future_query_frame_indices:
+        future_geometry = camera_trajectory_similarity(
+            c2ws=c2ws,
+            query_frame_indices=future_query_frame_indices,
+            memory_frame_indices=memory_frame_indices,
+            fov_half_h=fov_half_h,
+            fov_half_v=fov_half_v,
+            radius=radius,
+        )
+        future_kernel = np.clip(future_geometry, 0.0, 1.0 - 1e-6)
+        future_demand_raw = np.full(
+            len(future_query_frame_indices), float(future_query_weight), dtype=np.float64
+        )
+    else:
+        future_kernel = np.zeros((0, len(memory_frame_indices)), dtype=np.float64)
+        future_demand_raw = np.zeros(0, dtype=np.float64)
+
+    kernel = np.vstack([self_kernel, future_kernel])
+    raw_demand_weights = np.concatenate([self_demand_raw, future_demand_raw])
+    demand_weight_sum = float(np.sum(raw_demand_weights))
+    if not np.isfinite(demand_weight_sum) or demand_weight_sum <= 0:
+        raise ValueError("future view coverage demand weights must have positive mass")
+    demand_weights = raw_demand_weights / demand_weight_sum
+    num_self_rows = len(memory_frame_indices)
+
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = [
+        frame_to_col[frame_idx]
+        for frame_idx in memory_frame_indices
+        if frame_idx in forced_keep_frames
+    ]
+    selected_cols = list(forced_cols)
+    selected_set = set(forced_cols)
+    marginal_gains = {col: float("inf") for col in forced_cols}
+
+    def uncovered_probability(columns):
+        if not columns:
+            return np.ones(kernel.shape[0], dtype=np.float64)
+        return np.exp(np.sum(np.log1p(-kernel[:, columns]), axis=1))
+
+    uncovered = uncovered_probability(selected_cols)
+
+    selected_limit = min(int(budget), len(memory_frame_indices))
+    while len(selected_cols) < selected_limit:
+        gains = np.sum(demand_weights[:, None] * uncovered[:, None] * kernel, axis=0)
+        if selected_set:
+            gains[list(selected_set)] = -np.inf
+        best_col = int(np.argmax(gains))
+        if not np.isfinite(gains[best_col]):
+            break
+
+        selected_cols.append(best_col)
+        selected_set.add(best_col)
+        marginal_gains[best_col] = float(gains[best_col])
+        uncovered *= 1.0 - kernel[:, best_col]
+
+    selected_frame_set = {memory_frame_indices[col] for col in selected_cols}
+    selected_ranks = {col: rank for rank, col in enumerate(selected_cols)}
+    coverage_probability = 1.0 - uncovered
+    coverage_value = float(np.sum(demand_weights * coverage_probability))
+    future_coverage_value = (
+        float(np.sum(demand_weights[num_self_rows:] * coverage_probability[num_self_rows:]))
+        if future_query_frame_indices
+        else 0.0
+    )
+
+    removal_losses = {}
+    for col in selected_cols:
+        other_cols = [other for other in selected_cols if other != col]
+        uncovered_without_col = uncovered_probability(other_cols)
+        removal_losses[col] = float(
+            np.sum(demand_weights * kernel[:, col] * uncovered_without_col)
+        )
+
+    # Mass conservation mirrors compute_density_balanced_view_coverage_scores:
+    # only the self-covering rows carry a retained "number of past observations"
+    # mass to redistribute across sections. Future query rows are synthetic
+    # viewpoints, not observations, so they never contribute or receive mass.
+    representative_masses = {col: 0.0 for col in selected_cols}
+    if len(selected_cols) == num_self_rows:
+        representative_masses = {col: float(base_masses[col]) for col in selected_cols}
+    elif selected_cols:
+        self_assignments = np.argmax(self_kernel[:, selected_cols], axis=1)
+        for row, selected_position in enumerate(self_assignments):
+            selected_col = selected_cols[int(selected_position)]
+            representative_masses[selected_col] += float(base_masses[row])
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + removal_losses.get(col, 0.0)
+        else:
+            score = -1.0
+
+        candidate_gain = (
+            0.0
+            if selected
+            else float(np.sum(demand_weights * uncovered * kernel[:, col]))
+        )
+        gain = marginal_gains.get(col)
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "future_view_coverage_selected": bool(selected),
+            "future_view_coverage_forced_keep": bool(forced),
+            "future_view_coverage_rank": selected_ranks.get(col),
+            "future_view_coverage_marginal_gain": (
+                None if gain is None or np.isinf(gain) else float(gain)
+            ),
+            "future_view_coverage_candidate_gain": candidate_gain,
+            "future_view_coverage_removal_loss": (
+                float(removal_losses.get(col, 0.0)) if selected else 0.0
+            ),
+            "future_view_coverage_assigned_mass": float(
+                representative_masses.get(col, 0.0)
+            ),
+            "future_view_coverage_base_mass": float(base_masses[col]),
+            "future_view_coverage_total_mass": total_mass,
+            "future_view_coverage_value": coverage_value,
+            "future_view_coverage_future_value": future_coverage_value,
+            "future_view_coverage_future_query_count": len(future_query_frame_indices),
+            "future_view_coverage_future_kernel_mean": (
+                float(np.mean(future_kernel[:, col])) if future_query_frame_indices else 0.0
+            ),
+            "future_view_coverage_alpha": float(density_alpha),
+            "future_view_coverage_dino_weight": float(dino_weight),
+            "future_view_coverage_rgb_weight": float(rgb_weight),
+            "future_view_coverage_future_query_weight": float(future_query_weight),
         }
 
     return (scores, details) if return_details else scores

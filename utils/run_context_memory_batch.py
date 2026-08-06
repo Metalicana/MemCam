@@ -158,6 +158,7 @@ def main():
             "kcenter_coreset",
             "trajectory_coverage",
             "density_balanced_view_coverage",
+            "future_view_coverage",
             "h2o_heavy_hitter",
             "surprise_forcing",
         ],
@@ -166,6 +167,21 @@ def main():
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
+    parser.add_argument("--future_coverage_alpha", type=float, default=0.5)
+    parser.add_argument("--future_coverage_dino_weight", type=float, default=0.5)
+    parser.add_argument("--future_coverage_rgb_weight", type=float, default=0.25)
+    parser.add_argument(
+        "--future_coverage_query_stride",
+        type=int,
+        default=19,
+        help="Frame stride used to sample the known future camera path as coverage demand.",
+    )
+    parser.add_argument(
+        "--future_coverage_query_weight",
+        type=float,
+        default=1.0,
+        help="Per-query demand mass given to each sampled future viewpoint.",
+    )
     parser.add_argument("--surprise_alpha", type=float, default=0.7)
     parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
     parser.add_argument("--surprise_controller_step", type=float, default=0.1)
@@ -257,6 +273,11 @@ def main():
         "density_coverage_alpha": args.density_coverage_alpha,
         "density_coverage_dino_weight": args.density_coverage_dino_weight,
         "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+        "future_coverage_alpha": args.future_coverage_alpha,
+        "future_coverage_dino_weight": args.future_coverage_dino_weight,
+        "future_coverage_rgb_weight": args.future_coverage_rgb_weight,
+        "future_coverage_query_stride": args.future_coverage_query_stride,
+        "future_coverage_query_weight": args.future_coverage_query_weight,
         "surprise_alpha": args.surprise_alpha,
         "surprise_ema_momentum": args.surprise_ema_momentum,
         "surprise_controller_step": args.surprise_controller_step,
@@ -354,6 +375,15 @@ def main():
             f"DINO weight={args.density_coverage_dino_weight}, "
             f"RGB weight={args.density_coverage_rgb_weight}"
         )
+    if args.memory_policy == "future_view_coverage":
+        print(
+            "Future view coverage: "
+            f"alpha={args.future_coverage_alpha}, "
+            f"DINO weight={args.future_coverage_dino_weight}, "
+            f"RGB weight={args.future_coverage_rgb_weight}, "
+            f"query stride={args.future_coverage_query_stride}, "
+            f"query weight={args.future_coverage_query_weight}"
+        )
     if args.memory_policy == "surprise_forcing":
         print(
             "Surprise Forcing: "
@@ -421,6 +451,11 @@ def main():
                 density_coverage_alpha=args.density_coverage_alpha,
                 density_coverage_dino_weight=args.density_coverage_dino_weight,
                 density_coverage_rgb_weight=args.density_coverage_rgb_weight,
+                future_coverage_alpha=args.future_coverage_alpha,
+                future_coverage_dino_weight=args.future_coverage_dino_weight,
+                future_coverage_rgb_weight=args.future_coverage_rgb_weight,
+                future_coverage_query_stride=args.future_coverage_query_stride,
+                future_coverage_query_weight=args.future_coverage_query_weight,
                 surprise_alpha=args.surprise_alpha,
                 surprise_ema_momentum=args.surprise_ema_momentum,
                 surprise_controller_step=args.surprise_controller_step,
@@ -449,6 +484,11 @@ def main():
                     "density_coverage_alpha": args.density_coverage_alpha,
                     "density_coverage_dino_weight": args.density_coverage_dino_weight,
                     "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
+                    "future_coverage_alpha": args.future_coverage_alpha,
+                    "future_coverage_dino_weight": args.future_coverage_dino_weight,
+                    "future_coverage_rgb_weight": args.future_coverage_rgb_weight,
+                    "future_coverage_query_stride": args.future_coverage_query_stride,
+                    "future_coverage_query_weight": args.future_coverage_query_weight,
                     "surprise_alpha": args.surprise_alpha,
                     "surprise_ema_momentum": args.surprise_ema_momentum,
                     "surprise_controller_step": args.surprise_controller_step,
