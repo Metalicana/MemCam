@@ -40,6 +40,7 @@ DEFAULT_LABELS = {
     "trajectory_b32_coverage": "Trajectory Coverage",
     "density_b32_view_coverage": "Density-Balanced View Coverage",
     "future_view_coverage_b32_pilot": "Future View Coverage (pilot)",
+    "mce_b32_pilot": "MCE (pilot)",
 }
 
 METRIC_LABELS = {

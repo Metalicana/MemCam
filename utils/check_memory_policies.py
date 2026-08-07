@@ -20,6 +20,7 @@ compute_facility_coreset_scores = memory_policies.compute_facility_coreset_score
 compute_future_view_coverage_scores = memory_policies.compute_future_view_coverage_scores
 compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
+compute_marginal_coverage_eviction_scores = memory_policies.compute_marginal_coverage_eviction_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 compute_slam_max_coverage_scores = memory_policies.compute_slam_max_coverage_scores
@@ -214,6 +215,78 @@ def check_future_view_coverage_rewards_reachable_future_view():
         details[5]["future_view_coverage_removal_loss"]
         > details[0]["future_view_coverage_removal_loss"]
     )
+
+
+def check_mce_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="mce")
+    except ValueError:
+        return
+    raise AssertionError("mce without a budget should fail")
+
+
+def check_mce_duplicate_view_counterexample():
+    # The paper's own Table 1 motivating example: two near-identical room-A
+    # views should not both survive a budget of 2 when a distinct room-B view
+    # is available.
+    c2ws = np.repeat(np.eye(4, dtype=np.float64)[None], 3, axis=0)
+    c2ws[1, 0, 3] = 0.1
+    c2ws[2, 0, 3] = 20.0
+    dino = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.98, 0.02], dtype=np.float32),
+        2: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.full(12, 0.02, dtype=np.float32),
+        2: np.ones(12, dtype=np.float32),
+    }
+    scores, details = compute_marginal_coverage_eviction_scores(
+        memory_frame_indices=[0, 1, 2],
+        c2ws=c2ws,
+        budget=2,
+        dino_features=dino,
+        rgb_features=rgb,
+        radius=5.0,
+        return_details=True,
+    )
+    selected = {f for f, d in details.items() if d["mce_selected"]}
+    assert selected == {0, 2}, selected
+    assert scores[1] < scores[0]
+    assert scores[1] < scores[2]
+
+    memory = FrameMemoryBuffer(policy="mce", budget=2)
+    evicted = memory.update([0, 1, 2], eviction_scores=scores)
+    assert memory.candidates() == [0, 2]
+    assert evicted == [1]
+
+
+def check_mce_forced_frames_never_evicted():
+    c2ws = np.repeat(np.eye(4, dtype=np.float64)[None], 3, axis=0)
+    c2ws[:, 0, 3] = np.array([0.0, 0.05, 20.0])
+    dino = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([1.0, 0.0], dtype=np.float32),
+        2: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.zeros(12, dtype=np.float32),
+        2: np.ones(12, dtype=np.float32),
+    }
+    _, details = compute_marginal_coverage_eviction_scores(
+        memory_frame_indices=[0, 1, 2],
+        c2ws=c2ws,
+        budget=1,
+        forced_keep_frames={1},
+        dino_features=dino,
+        rgb_features=rgb,
+        radius=5.0,
+        return_details=True,
+    )
+    assert details[1]["mce_selected"]
+    assert details[1]["mce_forced_keep"]
 
 
 def check_surprise_forcing():
@@ -576,5 +649,8 @@ if __name__ == "__main__":
     check_future_view_coverage_requires_budget()
     check_future_view_coverage_matches_density_balanced_without_future_queries()
     check_future_view_coverage_rewards_reachable_future_view()
+    check_mce_requires_budget()
+    check_mce_duplicate_view_counterexample()
+    check_mce_forced_frames_never_evicted()
     check_surprise_forcing()
     print("memory policy checks passed")

@@ -159,6 +159,7 @@ def main():
             "trajectory_coverage",
             "density_balanced_view_coverage",
             "future_view_coverage",
+            "mce",
             "h2o_heavy_hitter",
             "surprise_forcing",
         ],
@@ -181,6 +182,31 @@ def main():
         type=float,
         default=1.0,
         help="Per-query demand mass given to each sampled future viewpoint.",
+    )
+    parser.add_argument(
+        "--mce_alpha",
+        type=float,
+        default=0.65,
+        help="MCE kernel blend: alpha * K_geo + (1 - alpha) * K_vis.",
+    )
+    parser.add_argument(
+        "--mce_lambda",
+        type=float,
+        default=None,
+        help="MCE historical-vs-control query weight split. Defaults to 1.0 with no "
+        "future queries, else 0.5.",
+    )
+    parser.add_argument(
+        "--mce_gamma",
+        type=float,
+        default=0.25,
+        help="MCE exponential horizon-decay rate for future control queries.",
+    )
+    parser.add_argument(
+        "--mce_query_stride",
+        type=int,
+        default=19,
+        help="Frame stride used to sample the known future camera path for MCE's Q_ctrl.",
     )
     parser.add_argument("--surprise_alpha", type=float, default=0.7)
     parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
@@ -278,6 +304,10 @@ def main():
         "future_coverage_rgb_weight": args.future_coverage_rgb_weight,
         "future_coverage_query_stride": args.future_coverage_query_stride,
         "future_coverage_query_weight": args.future_coverage_query_weight,
+        "mce_alpha": args.mce_alpha,
+        "mce_lambda": args.mce_lambda,
+        "mce_gamma": args.mce_gamma,
+        "mce_query_stride": args.mce_query_stride,
         "surprise_alpha": args.surprise_alpha,
         "surprise_ema_momentum": args.surprise_ema_momentum,
         "surprise_controller_step": args.surprise_controller_step,
@@ -384,6 +414,14 @@ def main():
             f"query stride={args.future_coverage_query_stride}, "
             f"query weight={args.future_coverage_query_weight}"
         )
+    if args.memory_policy == "mce":
+        print(
+            "MCE: "
+            f"alpha={args.mce_alpha}, "
+            f"lambda={args.mce_lambda}, "
+            f"gamma={args.mce_gamma}, "
+            f"query stride={args.mce_query_stride}"
+        )
     if args.memory_policy == "surprise_forcing":
         print(
             "Surprise Forcing: "
@@ -456,6 +494,10 @@ def main():
                 future_coverage_rgb_weight=args.future_coverage_rgb_weight,
                 future_coverage_query_stride=args.future_coverage_query_stride,
                 future_coverage_query_weight=args.future_coverage_query_weight,
+                mce_alpha=args.mce_alpha,
+                mce_lambda=args.mce_lambda,
+                mce_gamma=args.mce_gamma,
+                mce_query_stride=args.mce_query_stride,
                 surprise_alpha=args.surprise_alpha,
                 surprise_ema_momentum=args.surprise_ema_momentum,
                 surprise_controller_step=args.surprise_controller_step,
@@ -489,6 +531,10 @@ def main():
                     "future_coverage_rgb_weight": args.future_coverage_rgb_weight,
                     "future_coverage_query_stride": args.future_coverage_query_stride,
                     "future_coverage_query_weight": args.future_coverage_query_weight,
+                    "mce_alpha": args.mce_alpha,
+                    "mce_lambda": args.mce_lambda,
+                    "mce_gamma": args.mce_gamma,
+                    "mce_query_stride": args.mce_query_stride,
                     "surprise_alpha": args.surprise_alpha,
                     "surprise_ema_momentum": args.surprise_ema_momentum,
                     "surprise_controller_step": args.surprise_controller_step,

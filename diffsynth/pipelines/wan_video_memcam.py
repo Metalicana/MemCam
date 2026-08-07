@@ -21,6 +21,7 @@ from .memory_policies import (
     compute_future_view_coverage_scores,
     compute_h2o_heavy_hitter_scores,
     compute_kcenter_coreset_scores,
+    compute_marginal_coverage_eviction_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
     compute_slam_max_coverage_scores,
@@ -69,6 +70,7 @@ VISUAL_MEMORY_POLICIES = {
     "kcenter_coreset",
     "density_balanced_view_coverage",
     "future_view_coverage",
+    "mce",
 }
 ARCHIVE_MEMORY_POLICIES = {
     "facility_coreset",
@@ -360,6 +362,10 @@ class WanVideoMemCamPipeline(BasePipeline):
         future_coverage_rgb_weight=0.25,
         future_coverage_query_stride=19,
         future_coverage_query_weight=1.0,
+        mce_alpha=0.65,
+        mce_lambda=None,
+        mce_gamma=0.25,
+        mce_query_stride=19,
         surprise_alpha=0.7,
         surprise_ema_momentum=0.95,
         surprise_controller_step=0.1,
@@ -487,6 +493,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "future_view_coverage",
+                "mce",
                 "h2o_heavy_hitter",
                 "surprise_forcing",
             }
@@ -514,6 +521,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "future_view_coverage",
+                "mce",
                 "surprise_forcing",
             }
             else set()
@@ -1358,6 +1366,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                     if memory_policy not in {
                         "density_balanced_view_coverage",
                         "future_view_coverage",
+                        "mce",
                         "slam_max_coverage",
                     }:
                         memory_quality_scores[frame_idx] = float(quality_batch[feature_idx])
@@ -1541,6 +1550,36 @@ class WanVideoMemCamPipeline(BasePipeline):
                         dino_weight=future_coverage_dino_weight,
                         rgb_weight=future_coverage_rgb_weight,
                         future_query_weight=future_coverage_query_weight,
+                        fov_half_h=FOV_HALF_H,
+                        fov_half_v=FOV_HALF_V,
+                        radius=FOV_RADIUS,
+                        return_details=True,
+                    )
+                )
+            elif memory_policy == "mce":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                future_query_frame_indices = range(
+                    section_end_frame + 1,
+                    total_frames,
+                    max(1, int(mce_query_stride)),
+                )
+                eviction_scores, eviction_score_details = (
+                    compute_marginal_coverage_eviction_scores(
+                        memory_frame_indices=prospective_memory,
+                        c2ws=c2ws,
+                        budget=memory_budget,
+                        future_query_frame_indices=future_query_frame_indices,
+                        forced_keep_frames=protected_frames | pinned_memory_frames,
+                        dino_features=memory_dino_features,
+                        rgb_features=memory_rgb_features,
+                        alpha=mce_alpha,
+                        lambda_hist=mce_lambda,
+                        gamma=mce_gamma,
                         fov_half_h=FOV_HALF_H,
                         fov_half_v=FOV_HALF_V,
                         radius=FOV_RADIUS,
@@ -1758,6 +1797,31 @@ class WanVideoMemCamPipeline(BasePipeline):
                         ],
                     }
                 )
+            elif memory_policy == "mce":
+                retained_frames_after_update = memory_buffer.candidates()
+                representative = eviction_score_details[retained_frames_after_update[0]]
+                write_access_trace(
+                    {
+                        "event": "mce_update",
+                        "section_idx": section_idx,
+                        "section_end_frame": int(section_end_frame),
+                        "stored_memory_size": len(memory_buffer),
+                        "memory_policy": memory_policy,
+                        "memory_budget": memory_budget,
+                        "memory_bank_device": memory_bank_device,
+                        "coverage_value": representative["mce_coverage_value"],
+                        "mce_alpha": float(mce_alpha),
+                        "mce_lambda": representative["mce_lambda"],
+                        "mce_gamma": float(mce_gamma),
+                        "mce_query_stride": int(mce_query_stride),
+                        "mce_num_hist_queries": representative["mce_num_hist_queries"],
+                        "mce_num_ctrl_queries": representative["mce_num_ctrl_queries"],
+                        "mce_hist_query_frames": representative["mce_hist_query_frames"],
+                        "retained_memory_frames": [
+                            int(frame_idx) for frame_idx in retained_frames_after_update
+                        ],
+                    }
+                )
             elif memory_policy == "slam_max_coverage":
                 retained_frames_after_update = memory_buffer.candidates()
                 representative = eviction_score_details[
@@ -1912,6 +1976,17 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_future_view_coverage_dino_weight": score_detail.get("future_view_coverage_dino_weight"),
                         "eviction_future_view_coverage_rgb_weight": score_detail.get("future_view_coverage_rgb_weight"),
                         "eviction_future_view_coverage_future_query_weight": score_detail.get("future_view_coverage_future_query_weight"),
+                        "eviction_mce_selected": score_detail.get("mce_selected"),
+                        "eviction_mce_forced_keep": score_detail.get("mce_forced_keep"),
+                        "eviction_mce_removal_rank": score_detail.get("mce_removal_rank"),
+                        "eviction_mce_removal_marginal": score_detail.get("mce_removal_marginal"),
+                        "eviction_mce_survivor_marginal": score_detail.get("mce_survivor_marginal"),
+                        "eviction_mce_coverage_value": score_detail.get("mce_coverage_value"),
+                        "eviction_mce_alpha": score_detail.get("mce_alpha"),
+                        "eviction_mce_lambda": score_detail.get("mce_lambda"),
+                        "eviction_mce_gamma": score_detail.get("mce_gamma"),
+                        "eviction_mce_num_hist_queries": score_detail.get("mce_num_hist_queries"),
+                        "eviction_mce_num_ctrl_queries": score_detail.get("mce_num_ctrl_queries"),
                         "eviction_h2o_read_weight": score_detail.get("h2o_read_weight"),
                         "eviction_h2o_selected_count": score_detail.get("h2o_selected_count"),
                         "eviction_h2o_best_overlap": score_detail.get("h2o_best_overlap"),

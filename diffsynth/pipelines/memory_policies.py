@@ -15,6 +15,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "trajectory_coverage",
     "density_balanced_view_coverage",
     "future_view_coverage",
+    "mce",
     "h2o_heavy_hitter",
     "surprise_forcing",
 )
@@ -28,6 +29,7 @@ BUDGETED_MEMORY_POLICIES = (
     "trajectory_coverage",
     "density_balanced_view_coverage",
     "future_view_coverage",
+    "mce",
     "h2o_heavy_hitter",
     "surprise_forcing",
 )
@@ -1938,6 +1940,247 @@ def compute_future_view_coverage_scores(
             "future_view_coverage_dino_weight": float(dino_weight),
             "future_view_coverage_rgb_weight": float(rgb_weight),
             "future_view_coverage_future_query_weight": float(future_query_weight),
+        }
+
+    return (scores, details) if return_details else scores
+
+
+def _historical_query_medoids(memory_frame_indices, dino_features, rarity_neighbors=3):
+    """Cluster candidates by DINO similarity and return one medoid per cluster.
+
+    Mirrors the clustering already used by ``compute_rarity_irreplaceability_scores``
+    so historical demand is grounded in the same notion of "distinct scene mode".
+    Each cluster gets one query point, regardless of cluster size -- this is the
+    "controlled rather than frequency-proportional" weighting: a corridor visited
+    100 times is one query, same as a room visited once.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    if len(memory_frame_indices) == 1:
+        return [memory_frame_indices[0]], [[0]]
+
+    dino_matrix = np.stack([dino_features[frame_idx] for frame_idx in memory_frame_indices])
+    dino_pairwise = cosine_distances(dino_matrix)
+    np.fill_diagonal(dino_pairwise, np.inf)
+    threshold = estimate_cluster_threshold(dino_pairwise, rarity_neighbors)
+
+    cluster_pairwise = dino_pairwise.copy()
+    np.fill_diagonal(cluster_pairwise, 0.0)
+    _, clusters = connected_components_from_threshold(cluster_pairwise, threshold=threshold)
+
+    medoid_positions = []
+    for members in clusters:
+        if len(members) == 1:
+            medoid_positions.append(members[0])
+            continue
+        sub_distances = cluster_pairwise[np.ix_(members, members)]
+        total_distance = sub_distances.sum(axis=1)
+        medoid_positions.append(members[int(np.argmin(total_distance))])
+
+    medoid_frame_indices = [memory_frame_indices[position] for position in medoid_positions]
+    return medoid_frame_indices, clusters
+
+
+def compute_marginal_coverage_eviction_scores(
+    memory_frame_indices,
+    c2ws,
+    budget,
+    future_query_frame_indices=None,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    alpha=0.65,
+    lambda_hist=None,
+    gamma=0.25,
+    rarity_neighbors=3,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Marginal Coverage Eviction (MCE): the paper-faithful set-coverage policy.
+
+    Implements the method as specified, not an approximation of it:
+
+    - Query set Q = Q_hist ∪ Q_ctrl (Sec. 3.1). Q_hist is one DINO-cluster
+      medoid per distinct scene mode among the candidates, weighted uniformly
+      (``lambda_hist / J``) rather than by cluster frequency, so a repeatedly
+      revisited region cannot outweigh a rare one. Q_ctrl is the known future
+      camera path, sampled and weighted with exponential horizon decay
+      ``w_h ∝ exp(-gamma * h)``; omitted when no future controls are known
+      (``lambda_hist`` then defaults to 1).
+    - Kernel K(q, m) = alpha * K_geo(q, m) + (1 - alpha) * K_vis(q, m), an
+      explicit convex combination (Eq. 6), not a product. Future queries have
+      no realized appearance yet, so they use K_geo alone -- "the available
+      cue is used alone".
+    - Eviction is reverse deletion (Algorithm 1): repeatedly remove
+      argmin_i Delta_i(P) from the full candidate pool P, recomputing exact
+      deletion marginals after each removal, until |P| <= B. This is
+      deliberately not forward-greedy addition -- the paper does not claim
+      the offline forward-greedy (1 - 1/e) guarantee transfers to this rule.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or [])
+    future_query_frame_indices = [
+        int(frame_idx)
+        for frame_idx in dict.fromkeys(future_query_frame_indices or [])
+        if frame_idx not in set(memory_frame_indices)
+    ]
+    if budget is None:
+        raise ValueError("mce requires an explicit memory budget")
+    if budget <= 0:
+        raise ValueError("mce budget must be positive")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if len(set(memory_frame_indices)) != len(memory_frame_indices):
+        raise ValueError("mce candidates must be unique")
+    if dino_features is None or rgb_features is None:
+        raise ValueError("mce requires DINO and RGB features")
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("mce alpha must be in [0, 1]")
+    if lambda_hist is not None and not 0.0 <= lambda_hist <= 1.0:
+        raise ValueError("mce lambda_hist must be in [0, 1]")
+    if gamma < 0:
+        raise ValueError("mce gamma must be non-negative")
+
+    candidate_set = set(memory_frame_indices)
+    unknown_forced = forced_keep_frames - candidate_set
+    if unknown_forced:
+        raise ValueError(f"mce forced-keep frames are not candidates: {sorted(unknown_forced)[:10]}")
+    if len(forced_keep_frames) > budget:
+        raise ValueError("mce has more forced frames than its budget")
+
+    missing_dino = [f for f in memory_frame_indices if f not in dino_features]
+    missing_rgb = [f for f in memory_frame_indices if f not in rgb_features]
+    if missing_dino or missing_rgb:
+        raise ValueError(f"Missing mce features for frames: DINO={missing_dino[:10]}, RGB={missing_rgb[:10]}")
+
+    num_candidates = len(memory_frame_indices)
+    selected_limit = min(int(budget), num_candidates)
+
+    # --- Query set construction (Sec. 3.1) ---------------------------------
+    hist_query_frame_indices, _ = _historical_query_medoids(
+        memory_frame_indices, dino_features, rarity_neighbors
+    )
+    num_hist = len(hist_query_frame_indices)
+    lambda_eff = (
+        1.0
+        if not future_query_frame_indices
+        else (0.5 if lambda_hist is None else float(lambda_hist))
+    )
+
+    # --- Kernel (Eq. 6): explicit convex combination, not a product --------
+    hist_geo = camera_trajectory_similarity(
+        c2ws=c2ws,
+        query_frame_indices=hist_query_frame_indices,
+        memory_frame_indices=memory_frame_indices,
+        fov_half_h=fov_half_h,
+        fov_half_v=fov_half_v,
+        radius=radius,
+    )
+    hist_vis_cosine = _feature_cosine_similarity_cross(
+        hist_query_frame_indices, memory_frame_indices, dino_features
+    )
+    hist_vis = np.clip((hist_vis_cosine + 1.0) / 2.0, 0.0, 1.0)  # calibrate [-1,1] -> [0,1]
+    hist_kernel = np.clip(alpha * hist_geo + (1.0 - alpha) * hist_vis, 0.0, 1.0 - 1e-6)
+    hist_weights = np.full(num_hist, lambda_eff / max(num_hist, 1), dtype=np.float64)
+
+    if future_query_frame_indices:
+        num_ctrl = len(future_query_frame_indices)
+        ctrl_geo = camera_trajectory_similarity(
+            c2ws=c2ws,
+            query_frame_indices=future_query_frame_indices,
+            memory_frame_indices=memory_frame_indices,
+            fov_half_h=fov_half_h,
+            fov_half_v=fov_half_v,
+            radius=radius,
+        )
+        ctrl_kernel = np.clip(ctrl_geo, 0.0, 1.0 - 1e-6)
+        horizons = np.arange(1, num_ctrl + 1, dtype=np.float64)
+        raw_ctrl_weights = np.exp(-float(gamma) * horizons)
+        ctrl_weights = (1.0 - lambda_eff) * raw_ctrl_weights / np.sum(raw_ctrl_weights)
+    else:
+        ctrl_kernel = np.zeros((0, num_candidates), dtype=np.float64)
+        ctrl_weights = np.zeros(0, dtype=np.float64)
+
+    kernel = np.vstack([hist_kernel, ctrl_kernel])
+    weights = np.concatenate([hist_weights, ctrl_weights])
+    weight_sum = float(np.sum(weights))
+    if not np.isfinite(weight_sum) or weight_sum <= 0:
+        raise ValueError("mce query weights must have positive total mass")
+    weights = weights / weight_sum
+
+    # --- Algorithm 1: reverse deletion with exact recomputed marginals -----
+    frame_to_col = {frame_idx: col for col, frame_idx in enumerate(memory_frame_indices)}
+    forced_cols = {frame_to_col[frame_idx] for frame_idx in forced_keep_frames}
+    remaining_cols = list(range(num_candidates))
+    one_minus_kernel = 1.0 - kernel
+    pool_product = np.prod(one_minus_kernel, axis=1)  # P_q over the full initial pool
+
+    removal_order = []
+    removal_marginals = {}
+    while len(remaining_cols) > selected_limit:
+        remaining = np.array(remaining_cols)
+        denom = np.maximum(one_minus_kernel[:, remaining], 1e-12)
+        marginals = np.sum(
+            (weights[:, None] * kernel[:, remaining] * pool_product[:, None]) / denom,
+            axis=0,
+        )
+        eviction_candidates = [
+            (float(marginals[position]), col)
+            for position, col in enumerate(remaining_cols)
+            if col not in forced_cols
+        ]
+        if not eviction_candidates:
+            break
+        loss, evict_col = min(eviction_candidates, key=lambda item: item[0])
+        removal_order.append(evict_col)
+        removal_marginals[evict_col] = loss
+        pool_product = pool_product / np.maximum(one_minus_kernel[:, evict_col], 1e-12)
+        remaining_cols.remove(evict_col)
+
+    selected_cols = remaining_cols
+    selected_frame_set = {memory_frame_indices[col] for col in selected_cols}
+
+    # Final leave-one-out marginal for each survivor, w.r.t. the final set --
+    # this is the reported "value", not what drove the eviction decisions.
+    final_uncovered = np.prod(one_minus_kernel[:, selected_cols], axis=1) if selected_cols else np.ones(kernel.shape[0])
+    survivor_marginals = {}
+    for col in selected_cols:
+        denom = np.maximum(one_minus_kernel[:, col], 1e-12)
+        survivor_marginals[col] = float(
+            np.sum(weights * kernel[:, col] * final_uncovered / denom)
+        )
+    coverage_value = float(np.sum(weights * (1.0 - final_uncovered)))
+
+    scores = {}
+    details = {}
+    for col, frame_idx in enumerate(memory_frame_indices):
+        selected = frame_idx in selected_frame_set
+        forced = frame_idx in forced_keep_frames
+        if forced:
+            score = float("inf")
+        elif selected:
+            score = 1.0 + survivor_marginals.get(col, 0.0)
+        else:
+            score = -1.0 - removal_marginals.get(col, 0.0)
+
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "mce_selected": bool(selected),
+            "mce_forced_keep": bool(forced),
+            "mce_removal_rank": (
+                removal_order.index(col) if col in removal_order else None
+            ),
+            "mce_removal_marginal": removal_marginals.get(col),
+            "mce_survivor_marginal": survivor_marginals.get(col),
+            "mce_coverage_value": coverage_value,
+            "mce_alpha": float(alpha),
+            "mce_lambda": float(lambda_eff),
+            "mce_gamma": float(gamma),
+            "mce_num_hist_queries": num_hist,
+            "mce_num_ctrl_queries": len(future_query_frame_indices),
+            "mce_hist_query_frames": [int(f) for f in hist_query_frame_indices],
         }
 
     return (scores, details) if return_details else scores
