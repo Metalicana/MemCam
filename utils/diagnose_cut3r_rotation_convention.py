@@ -75,6 +75,7 @@ def pool_relative_rotations(cut3r_dir, runs, rows, durations, dataset_root):
     pred_rots = []
     gt_rots = []
     per_reconstruction_counts = []
+    per_reconstruction_labels = []
     run_filter = runs.split(",") if runs else None
     row_filter = {int(r) for r in rows.split(",")} if rows else None
     duration_filter = {int(d) for d in durations.split(",")} if durations else None
@@ -101,11 +102,32 @@ def pool_relative_rotations(cut3r_dir, runs, rows, durations, dataset_root):
         pred_rots.append(pred_rel[:, :3, :3])
         gt_rots.append(gt_rel[:, :3, :3])
         per_reconstruction_counts.append(count)
+        per_reconstruction_labels.append(f"{metadata.get('run_name')}/row{metadata.get('manifest_row')}")
 
     if not pred_rots:
         raise RuntimeError(f"No scoreable CUT3R reconstructions found under {cut3r_dir}")
 
-    return np.concatenate(pred_rots, axis=0), np.concatenate(gt_rots, axis=0), per_reconstruction_counts
+    return (
+        np.concatenate(pred_rots, axis=0),
+        np.concatenate(gt_rots, axis=0),
+        per_reconstruction_counts,
+        per_reconstruction_labels,
+    )
+
+
+def per_reconstruction_breakdown(errors, counts, labels):
+    """Split a pooled per-frame-pair error array back out by reconstruction
+    and report each one's mean/p90, sorted worst-first -- distinguishes "a
+    few bad videos are dragging up the mean" from "every video has a
+    consistent modest residual"."""
+    rows = []
+    start = 0
+    for count, label in zip(counts, labels):
+        chunk = errors[start:start + count]
+        start += count
+        rows.append((label, float(chunk.mean()), float(np.percentile(chunk, 90)), count))
+    rows.sort(key=lambda item: item[1], reverse=True)
+    return rows
 
 
 def axis_angle_vector(rot):
@@ -174,7 +196,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Pooling relative rotations from {args.cut3r_dir} ...")
-    pred_rot, gt_rot, counts = pool_relative_rotations(
+    pred_rot, gt_rot, counts, labels = pool_relative_rotations(
         args.cut3r_dir, args.runs, args.rows, args.durations, args.dataset_root
     )
     print(f"Pooled {pred_rot.shape[0]} frame-pairs from {len(counts)} reconstructions "
@@ -208,6 +230,26 @@ def main():
     print(f"Continuous conjugation: mean error {baseline_errors.mean():.2f} -> {continuous_err:.2f} deg "
           f"(median={np.median(continuous_errors):.2f}, p90={np.percentile(continuous_errors, 90):.2f})")
     print(f"Fitted C:\n{c_matrix}")
+
+    print("\nPer-reconstruction breakdown after the continuous correction (worst first):")
+    breakdown = per_reconstruction_breakdown(continuous_errors, counts, labels)
+    for label, rec_mean, rec_p90, count in breakdown:
+        print(f"  {label:45s} mean={rec_mean:6.2f}  p90={rec_p90:6.2f}  frames={count}")
+    worst_mean = breakdown[0][1]
+    best_rec_mean = breakdown[-1][1]
+    if worst_mean > 3.0 * max(best_rec_mean, 1.0):
+        print(
+            f"\nThe corrected error is concentrated in specific reconstructions ({breakdown[0][0]} "
+            f"and similar, mean={worst_mean:.1f}) rather than spread evenly (best reconstruction "
+            f"mean={best_rec_mean:.1f}). That points to per-video tracking drift/failure in those "
+            "specific CUT3R reconstructions, not a residual convention problem -- worth inspecting "
+            "those videos/reconstructions directly rather than refining the correction further."
+        )
+    else:
+        print(
+            "\nCorrected error is roughly even across reconstructions -- consistent with a real, "
+            "if imperfect, residual (e.g. per-frame estimation noise) rather than a few broken videos."
+        )
 
     final_err = min(best_err, continuous_err)
     final_label = "discrete axis-relabeling" if best_err <= continuous_err else "continuous conjugation"
