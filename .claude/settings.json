@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git add *)",
       "Bash(git commit -m 'add cheap pose-only revisit-structure diagnostic *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

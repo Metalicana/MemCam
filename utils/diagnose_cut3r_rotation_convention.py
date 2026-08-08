@@ -108,6 +108,49 @@ def pool_relative_rotations(cut3r_dir, runs, rows, durations, dataset_root):
     return np.concatenate(pred_rots, axis=0), np.concatenate(gt_rots, axis=0), per_reconstruction_counts
 
 
+def axis_angle_vector(rot):
+    """v = [R32-R23, R13-R31, R21-R12] = 2*sin(theta)*axis for each rotation
+    in a stack. This is linear in the conjugation model: if pred = C.T @ gt @
+    C for a fixed C, then axis_angle_vector(pred) = C.T @ axis_angle_vector(gt)
+    exactly (conjugation preserves rotation angle and rotates the axis by
+    C.T), which turns "fit a fixed conjugating rotation" into a standard
+    Wahba/orthogonal-Procrustes problem solvable in closed form via SVD --
+    the same rotation-fitting math as fit_umeyama() in
+    evaluate_cut3r_camera_metrics.py, just applied to axis vectors instead of
+    3D points, and with no translation/scale term since these are directions.
+    """
+    return np.stack(
+        [
+            rot[:, 2, 1] - rot[:, 1, 2],
+            rot[:, 0, 2] - rot[:, 2, 0],
+            rot[:, 1, 0] - rot[:, 0, 1],
+        ],
+        axis=1,
+    )
+
+
+def fit_continuous_conjugation(pred_rot, gt_rot):
+    """Closed-form fit for the conjugation model pred ~= C.T @ gt @ C, via
+    Wahba's problem on axis-angle vectors (v_pred ~= C.T @ v_gt exactly under
+    that model). Returns M = C.T -- feed this directly as `matrix` to
+    evaluate_candidate(..., mode="conjugate"), which computes M.T @ pred @ M
+    = C @ pred @ C.T = gt when the fit is exact. (Returning C itself here and
+    conjugating by C, instead of C.T, silently undoes nothing -- verified by
+    round-tripping a synthetic injected rotation before trusting this.)"""
+    v_pred = axis_angle_vector(pred_rot)
+    v_gt = axis_angle_vector(gt_rot)
+
+    # Solve for M=C.T minimizing sum ||v_pred - M @ v_gt||^2 (standard Wahba/
+    # orthogonal Procrustes, no centering -- these are directions, not points).
+    h_mat = v_pred.T @ v_gt
+    u_mat, _, vt_mat = np.linalg.svd(h_mat)
+    sign = np.sign(np.linalg.det(u_mat) * np.linalg.det(vt_mat))
+    correction = np.eye(3)
+    correction[-1, -1] = sign if sign != 0 else 1.0
+    m_matrix = u_mat @ correction @ vt_mat
+    return m_matrix, v_pred, v_gt
+
+
 def evaluate_candidate(pred_rot, gt_rot, mode, matrix):
     if mode == "right":  # local-camera-axis relabeling: R_pred @ M
         corrected = pred_rot @ matrix[None, :, :]
@@ -156,27 +199,44 @@ def main():
         print(f"  mode={mode:9s} mean_rotation_error_deg={mean_err:6.2f}  matrix=\n{matrix}")
 
     best_err, best_mode, best_matrix = results[0]
-    print(f"\nBest candidate: mode={best_mode}, mean error {baseline_errors.mean():.2f} -> {best_err:.2f} deg")
-    if best_err < 15.0:
+    print(f"\nBest discrete candidate: mode={best_mode}, mean error {baseline_errors.mean():.2f} -> {best_err:.2f} deg")
+
+    print("\nFitting a continuous conjugating rotation C (pred ~= C.T @ gt @ C) via "
+          "closed-form Wahba/Procrustes on axis-angle vectors ...")
+    c_matrix, v_pred, v_gt = fit_continuous_conjugation(pred_rot, gt_rot)
+    continuous_err, continuous_errors = evaluate_candidate(pred_rot, gt_rot, "conjugate", c_matrix)
+    print(f"Continuous conjugation: mean error {baseline_errors.mean():.2f} -> {continuous_err:.2f} deg "
+          f"(median={np.median(continuous_errors):.2f}, p90={np.percentile(continuous_errors, 90):.2f})")
+    print(f"Fitted C:\n{c_matrix}")
+
+    final_err = min(best_err, continuous_err)
+    final_label = "discrete axis-relabeling" if best_err <= continuous_err else "continuous conjugation"
+    final_matrix = best_matrix if best_err <= continuous_err else c_matrix
+    final_mode = best_mode if best_err <= continuous_err else "conjugate"
+
+    if final_err < 15.0:
         print(
-            "This looks like a real convention fix (error collapses to a small, sane value). "
-            "Recommend baking this correction into evaluate_cut3r_camera_metrics.py's "
-            "rotation_error_deg() call as a fixed one-time calibration, then re-scoring."
+            f"\nThis looks like a real convention fix ({final_label}, error collapses to a "
+            "small, sane value). Recommend baking this correction into "
+            "evaluate_cut3r_camera_metrics.py's rotation_error_deg() call as a fixed one-time "
+            "calibration, then re-scoring. Winning matrix printed above under that label."
         )
-    elif best_err < baseline_errors.mean() - 20.0:
+    elif final_err < baseline_errors.mean() - 20.0:
         print(
-            "Partial improvement, but still large -- consistent with the convention offset "
-            "being real but not a *pure* signed-axis-permutation (e.g. a continuous rotation "
-            "offset, not just axis relabeling). Worth a general Procrustes/Kabsch fit over "
-            "SO(3) instead of this discrete search before trusting rotation_error_deg."
+            f"\nPartial improvement only (best: {final_label}, {baseline_errors.mean():.2f} -> "
+            f"{final_err:.2f} deg). A single fixed rotation doesn't fully explain the mismatch -- "
+            "this could mean the offset varies across runs/rows (not truly fixed), or there is a "
+            "second-order effect (e.g. frame-index drift) on top of the convention bug. Worth "
+            "checking whether per-run (rather than pooled) continuous fits are consistent with "
+            "each other before trusting a single global correction."
         )
     else:
         print(
-            "No signed-axis-permutation meaningfully helps. This is NOT a simple convention-"
-            "relabeling bug -- treat the large rotation error as a genuine reconstruction/"
-            "alignment issue (or a bug elsewhere, e.g. frame-index misalignment between "
-            "predicted and GT poses) and keep rotation_error_deg/worldscore flagged unreliable "
-            "until that's found."
+            "\nNeither the discrete search nor the continuous conjugation fit meaningfully helps. "
+            "This is NOT a simple convention-relabeling bug -- treat the large rotation error as a "
+            "genuine reconstruction/alignment issue (or a bug elsewhere, e.g. frame-index "
+            "misalignment between predicted and GT poses) and keep rotation_error_deg/worldscore "
+            "flagged unreliable until that's found."
         )
 
 
