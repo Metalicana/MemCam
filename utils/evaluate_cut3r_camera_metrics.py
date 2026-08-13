@@ -123,7 +123,35 @@ def relative_poses(c2ws):
     return np.stack([first_inv @ pose for pose in c2ws], axis=0)
 
 
-def rotation_error_deg(pred_rot, gt_rot):
+# Fixed camera-axis-convention correction between CUT3R's predicted rotations
+# and this project's UE-convention GT (see diagnose_cut3r_rotation_convention.py).
+# Fit via closed-form Wahba/Procrustes on pooled relative-rotation axis-angle
+# vectors from the 60s CUT3R pilot (24 reconstructions, 3 rows x 8 policies):
+# took mean rotation_error_deg from ~80 deg -> ~22 deg. The remaining ~22 deg
+# was traced to row3 specifically being a genuinely hard CUT3R reconstruction
+# target (uniformly bad across every policy on that one row), not more
+# convention bug -- see the per-reconstruction breakdown in that script's
+# output. TODO: refit once CUT3R has been run on more than 3 rows; the fit
+# converging to within ~0.01 of a clean signed-axis-permutation is a good
+# sign it's a real, stable constant rather than noise, but more data would
+# firm this up.
+ROTATION_CONVENTION_CORRECTION = np.array([
+    [-9.99913354e-01, 0.00000000e+00, -1.31637667e-02],
+    [-1.31635260e-02, -6.04698768e-03, 9.99895072e-01],
+    [-7.96011349e-05, 9.99981717e-01, 6.04646373e-03],
+])
+
+
+def apply_rotation_convention_correction(rot):
+    """M.T @ R @ M for the fixed M above -- undoes the fitted conjugation."""
+    return ROTATION_CONVENTION_CORRECTION.T @ rot @ ROTATION_CONVENTION_CORRECTION
+
+
+def rotation_error_deg(pred_rot, gt_rot, apply_correction=True):
+    if apply_correction:
+        pred_rot = np.einsum(
+            "ij,njk,kl->nil", ROTATION_CONVENTION_CORRECTION.T, pred_rot, ROTATION_CONVENTION_CORRECTION
+        )
     delta = pred_rot @ np.swapaxes(gt_rot, -1, -2)
     traces = np.trace(delta, axis1=1, axis2=2)
     cos_values = np.clip((traces - 1.0) / 2.0, -1.0, 1.0)

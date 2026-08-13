@@ -182,7 +182,7 @@ def evaluate_candidate(pred_rot, gt_rot, mode, matrix):
         corrected = matrix.T[None, :, :] @ pred_rot @ matrix[None, :, :]
     else:
         raise ValueError(mode)
-    errors = rotation_error_deg(corrected, gt_rot)
+    errors = rotation_error_deg(corrected, gt_rot, apply_correction=False)
     return float(errors.mean()), errors
 
 
@@ -202,7 +202,7 @@ def main():
     print(f"Pooled {pred_rot.shape[0]} frame-pairs from {len(counts)} reconstructions "
           f"(per-reconstruction counts: {counts})")
 
-    baseline_errors = rotation_error_deg(pred_rot, gt_rot)
+    baseline_errors = rotation_error_deg(pred_rot, gt_rot, apply_correction=False)
     print(f"\nUncorrected rotation_error_deg: mean={baseline_errors.mean():.2f}  "
           f"median={np.median(baseline_errors):.2f}  p90={np.percentile(baseline_errors, 90):.2f}")
     print("(For reference: two *uncorrelated* random 3D rotations average ~90 deg apart, "
