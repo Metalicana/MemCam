@@ -306,13 +306,40 @@ def connected_components_from_threshold(pairwise_distances, threshold):
 
 
 def estimate_cluster_threshold(pairwise_distances, rarity_neighbors):
+    """Median distance to each point's rarity_neighbors-th nearest neighbor.
+
+    BUG HISTORY: this previously always used the 1st-nearest-neighbor
+    distance (np.partition(..., 0)[:, 0]) regardless of rarity_neighbors,
+    making the parameter dead code for every caller -- including
+    compute_rarity_irreplaceability_scores (RI) and _historical_query_medoids
+    (MCE's Q_hist), neither of which override cluster_distance_threshold at
+    their real call sites in wan_video_memcam.py. Found via an MCE offline
+    sweep showing zero variation in clustering across rarity_neighbors in
+    {1,3,8,15}, confirmed with a controlled synthetic test (6 well-separated
+    10-item clusters still split into 37 near-singleton clusters regardless
+    of rarity_neighbors). Fixed to actually use the k-th nearest neighbor;
+    rarity_neighbors=1 reproduces the old (buggy-but-now-intentional)
+    behavior exactly, so this is a strict generalization, not a behavior
+    change at the historical default call sites that never passed a
+    non-default value anyway.
+    """
     finite = pairwise_distances[np.isfinite(pairwise_distances)]
     if finite.size == 0:
         return 0.0
 
-    # Use the median nearest-neighbor distance as the mode scale. Larger k-neighbor
+    # Use the median k-th-nearest-neighbor distance as the mode scale. Larger
+    # k coarsens the threshold (merges more into one cluster); k=1 (default)
+    # matches the original single-nearest-neighbor behavior. Larger k-neighbor
     # thresholds can merge a whole camera path into one chain-shaped component.
-    nearest = np.partition(pairwise_distances, 0, axis=1)[:, 0]
+    # Each row has exactly one guaranteed-inf self-distance entry (diagonal),
+    # which sorts to the last position after partitioning -- so the valid
+    # non-self neighbor range is num_points - 2, not num_points - 1. Getting
+    # this off-by-one wrong lets the index land on the self-inf entry for
+    # small candidate pools, which is exactly what broke the paper's own
+    # duplicate-view counterexample test at 3 candidates until this was caught.
+    num_points = pairwise_distances.shape[0]
+    neighbor_index = max(0, min(int(rarity_neighbors) - 1, num_points - 2))
+    nearest = np.partition(pairwise_distances, neighbor_index, axis=1)[:, neighbor_index]
     nearest = nearest[np.isfinite(nearest)]
     if nearest.size:
         return float(np.median(nearest))

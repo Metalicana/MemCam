@@ -48,6 +48,13 @@ class MarginalCoverageEvictionTest(unittest.TestCase):
             dino_features=dino,
             rgb_features=rgb,
             radius=5.0,
+            # 3 candidates total -- rarity_neighbors=1 is the only value where
+            # "nearest neighbor" is meaningful at this scale (rarity_neighbors
+            # >= 2 forces looking at the *farther* of only 2 other points,
+            # merging everything into one cluster; that degeneracy is a
+            # property of tiny pools, not something this test is about --
+            # see test_estimate_cluster_threshold.py for that behavior).
+            rarity_neighbors=1,
             return_details=True,
         )
 
@@ -183,6 +190,7 @@ class MarginalCoverageEvictionTest(unittest.TestCase):
                 rgb_features=rgb,
                 radius=5.0,
                 hist_freq_bias=hist_freq_bias,
+                rarity_neighbors=1,  # 3 candidates -- see counterexample test's comment
                 return_details=True,
             )
             return details[frame_idx]["mce_survivor_marginal"]

@@ -51,6 +51,7 @@ VisualMemoryFeatureExtractor = memory_policies.VisualMemoryFeatureExtractor
 compute_marginal_coverage_eviction_scores = (
     memory_policies.compute_marginal_coverage_eviction_scores
 )
+_historical_query_medoids = memory_policies._historical_query_medoids
 
 FRAMES_PER_SECTION = 77
 PREDICT_FRAMES = 76
@@ -86,7 +87,30 @@ def section_boundaries(total_frames):
     return sections
 
 
-def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha, gamma, lambda_hist, query_stride, hist_freq_bias=0.0):
+def cluster_diagnostic(dino_features, candidate_frame_indices, rarity_neighbors_values):
+    """Directly measure clustering granularity at a realistic candidate-pool
+    size, before running any write-path simulation. Answers "is the
+    clustering over-segmenting (near-1 candidate per cluster, so MCE's
+    redundancy discount barely engages) independent of alpha/hist_freq_bias,
+    which only matter once real cluster-size variance exists."""
+    print(
+        f"\nCluster diagnostic on a {len(candidate_frame_indices)}-candidate pool "
+        f"(realistic eviction-time size):"
+    )
+    print(f"{'rarity_neighbors':>16} {'num_clusters':>13} {'mean_size':>10} {'size=1_frac':>12} {'max_size':>9}")
+    for rarity_neighbors in rarity_neighbors_values:
+        _, clusters = _historical_query_medoids(
+            candidate_frame_indices, dino_features, int(rarity_neighbors)
+        )
+        sizes = np.array([len(members) for members in clusters], dtype=np.float64)
+        singleton_frac = float(np.mean(sizes == 1))
+        print(
+            f"{int(rarity_neighbors):16d} {len(sizes):13d} {sizes.mean():10.2f} "
+            f"{singleton_frac:12.3f} {int(sizes.max()):9d}"
+        )
+
+
+def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha, gamma, lambda_hist, query_stride, hist_freq_bias=0.0, rarity_neighbors=3):
     memory_buffer = FrameMemoryBuffer(policy="mce", budget=budget, pinned_frames={0})
     sections = section_boundaries(total_frames)
 
@@ -121,6 +145,7 @@ def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha,
             lambda_hist=lambda_hist,
             gamma=gamma,
             hist_freq_bias=hist_freq_bias,
+            rarity_neighbors=rarity_neighbors,
             return_details=True,
         )
         before = set(prospective_memory)
@@ -176,6 +201,12 @@ def main():
              "(equal weight per scene mode), 1=linear frequency-proportional "
              "(closer to what anchor-persistence heuristics like SLAM reward).",
     )
+    parser.add_argument(
+        "--rarity_neighbors", type=str, default="3",
+        help="k for the clustering threshold estimate: higher values should "
+             "coarsen clusters (fewer, bigger) if the default is over-"
+             "segmenting near-duplicate candidates into singleton clusters.",
+    )
     parser.add_argument("--query_stride", type=int, default=19)
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
@@ -200,34 +231,45 @@ def main():
     gammas = parse_float_list(args.gamma)
     lambdas = parse_float_list(args.lambda_hist) if args.lambda_hist else [None]
     freq_biases = parse_float_list(args.hist_freq_bias)
+    rarity_neighbors_values = [int(v) for v in parse_float_list(args.rarity_neighbors)]
+
+    # Diagnostic first, cheap and direct: a realistic eviction-time candidate
+    # pool (budget existing items + one section's worth of new frames), taken
+    # from the middle of the video to avoid start-of-clip edge effects.
+    pool_start = max(0, len(frames) // 2 - (args.budget + FRAMES_PER_SECTION) // 2)
+    pool_end = min(len(frames), pool_start + args.budget + FRAMES_PER_SECTION)
+    diagnostic_pool = list(range(pool_start, pool_end))
+    cluster_diagnostic(dino_features, diagnostic_pool, rarity_neighbors_values)
 
     print(
-        f"\n{'alpha':>6} {'gamma':>6} {'lambda':>7} {'freq_b':>7} "
+        f"\n{'alpha':>6} {'gamma':>6} {'lambda':>7} {'freq_b':>7} {'rarity_k':>8} "
         f"{'age_med':>8} {'age_p90':>8} {'surv_mean':>10} {'surv_p90':>9} {'surv_gini':>10} {'unique':>7}"
     )
     for alpha in alphas:
         for gamma in gammas:
             for lambda_hist in lambdas:
                 for hist_freq_bias in freq_biases:
-                    result = simulate_mce(
-                        dino_features,
-                        rgb_features,
-                        c2ws,
-                        total_frames=len(frames),
-                        budget=args.budget,
-                        alpha=alpha,
-                        gamma=gamma,
-                        lambda_hist=lambda_hist,
-                        query_stride=args.query_stride,
-                        hist_freq_bias=hist_freq_bias,
-                    )
-                    lambda_display = "auto" if lambda_hist is None else f"{lambda_hist:.2f}"
-                    print(
-                        f"{alpha:6.2f} {gamma:6.2f} {lambda_display:>7} {hist_freq_bias:7.2f} "
-                        f"{result['final_age_median']:8.1f} {result['final_age_p90']:8.1f} "
-                        f"{result['survival_sections_mean']:10.2f} {result['survival_sections_p90']:9.1f} "
-                        f"{result['survival_gini']:10.3f} {result['unique_frames_ever_admitted']:7d}"
-                    )
+                    for rarity_neighbors in rarity_neighbors_values:
+                        result = simulate_mce(
+                            dino_features,
+                            rgb_features,
+                            c2ws,
+                            total_frames=len(frames),
+                            budget=args.budget,
+                            alpha=alpha,
+                            gamma=gamma,
+                            lambda_hist=lambda_hist,
+                            query_stride=args.query_stride,
+                            hist_freq_bias=hist_freq_bias,
+                            rarity_neighbors=rarity_neighbors,
+                        )
+                        lambda_display = "auto" if lambda_hist is None else f"{lambda_hist:.2f}"
+                        print(
+                            f"{alpha:6.2f} {gamma:6.2f} {lambda_display:>7} {hist_freq_bias:7.2f} {rarity_neighbors:8d} "
+                            f"{result['final_age_median']:8.1f} {result['final_age_p90']:8.1f} "
+                            f"{result['survival_sections_mean']:10.2f} {result['survival_sections_p90']:9.1f} "
+                            f"{result['survival_gini']:10.3f} {result['unique_frames_ever_admitted']:7d}"
+                        )
 
     print(
         "\nTarget shape from real SLAM/RI b32 runs (read-path reuse stats, not "

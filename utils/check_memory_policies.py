@@ -242,6 +242,8 @@ def check_mce_duplicate_view_counterexample():
         1: np.full(12, 0.02, dtype=np.float32),
         2: np.ones(12, dtype=np.float32),
     }
+    # 3 candidates -- rarity_neighbors=1 is the only meaningful value at this
+    # scale (see test_estimate_cluster_threshold.py for the real-scale check).
     scores, details = compute_marginal_coverage_eviction_scores(
         memory_frame_indices=[0, 1, 2],
         c2ws=c2ws,
@@ -249,6 +251,7 @@ def check_mce_duplicate_view_counterexample():
         dino_features=dino,
         rgb_features=rgb,
         radius=5.0,
+        rarity_neighbors=1,
         return_details=True,
     )
     selected = {f for f, d in details.items() if d["mce_selected"]}
@@ -340,9 +343,16 @@ def check_rarity_irreplaceability_scores():
         5: np.ones(12, dtype=np.float32),
     }
 
+    # Only 4 candidates here -- rarity_neighbors=1 is the only value where
+    # "nearest neighbor" is meaningful at this scale (rarity_neighbors=3, the
+    # real production default, forces looking at the *farthest* of only 3
+    # other points here, which is a small-pool degeneracy, not something
+    # this check is about; see test_estimate_cluster_threshold.py for that
+    # behavior at a realistic candidate-pool size).
     scores, details = compute_rarity_irreplaceability_scores(
         memory_frame_indices=memory.candidates(),
         pinned_frames={0},
+        rarity_neighbors=1,
         dino_features=dino_features,
         rgb_features=rgb_features,
         return_details=True,
@@ -358,6 +368,7 @@ def check_rarity_irreplaceability_scores():
     after_scores = compute_rarity_irreplaceability_scores(
         memory_frame_indices=memory.candidates(),
         pinned_frames={0},
+        rarity_neighbors=1,
         dino_features=dino_features,
         rgb_features=rgb_features,
     )
