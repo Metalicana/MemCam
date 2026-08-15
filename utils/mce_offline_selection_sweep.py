@@ -86,7 +86,7 @@ def section_boundaries(total_frames):
     return sections
 
 
-def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha, gamma, lambda_hist, query_stride):
+def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha, gamma, lambda_hist, query_stride, hist_freq_bias=0.0):
     memory_buffer = FrameMemoryBuffer(policy="mce", budget=budget, pinned_frames={0})
     sections = section_boundaries(total_frames)
 
@@ -120,6 +120,7 @@ def simulate_mce(dino_features, rgb_features, c2ws, total_frames, budget, alpha,
             alpha=alpha,
             lambda_hist=lambda_hist,
             gamma=gamma,
+            hist_freq_bias=hist_freq_bias,
             return_details=True,
         )
         before = set(prospective_memory)
@@ -169,6 +170,12 @@ def main():
     parser.add_argument("--alpha", type=str, default="0.65")
     parser.add_argument("--gamma", type=str, default="0.25")
     parser.add_argument("--lambda_hist", type=str, default="")
+    parser.add_argument(
+        "--hist_freq_bias", type=str, default="0.0",
+        help="Q_hist medoid weight exponent on cluster size: 0=paper default "
+             "(equal weight per scene mode), 1=linear frequency-proportional "
+             "(closer to what anchor-persistence heuristics like SLAM reward).",
+    )
     parser.add_argument("--query_stride", type=int, default=19)
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
@@ -192,32 +199,35 @@ def main():
     alphas = parse_float_list(args.alpha)
     gammas = parse_float_list(args.gamma)
     lambdas = parse_float_list(args.lambda_hist) if args.lambda_hist else [None]
+    freq_biases = parse_float_list(args.hist_freq_bias)
 
     print(
-        f"\n{'alpha':>6} {'gamma':>6} {'lambda':>7} "
+        f"\n{'alpha':>6} {'gamma':>6} {'lambda':>7} {'freq_b':>7} "
         f"{'age_med':>8} {'age_p90':>8} {'surv_mean':>10} {'surv_p90':>9} {'surv_gini':>10} {'unique':>7}"
     )
     for alpha in alphas:
         for gamma in gammas:
             for lambda_hist in lambdas:
-                result = simulate_mce(
-                    dino_features,
-                    rgb_features,
-                    c2ws,
-                    total_frames=len(frames),
-                    budget=args.budget,
-                    alpha=alpha,
-                    gamma=gamma,
-                    lambda_hist=lambda_hist,
-                    query_stride=args.query_stride,
-                )
-                lambda_display = "auto" if lambda_hist is None else f"{lambda_hist:.2f}"
-                print(
-                    f"{alpha:6.2f} {gamma:6.2f} {lambda_display:>7} "
-                    f"{result['final_age_median']:8.1f} {result['final_age_p90']:8.1f} "
-                    f"{result['survival_sections_mean']:10.2f} {result['survival_sections_p90']:9.1f} "
-                    f"{result['survival_gini']:10.3f} {result['unique_frames_ever_admitted']:7d}"
-                )
+                for hist_freq_bias in freq_biases:
+                    result = simulate_mce(
+                        dino_features,
+                        rgb_features,
+                        c2ws,
+                        total_frames=len(frames),
+                        budget=args.budget,
+                        alpha=alpha,
+                        gamma=gamma,
+                        lambda_hist=lambda_hist,
+                        query_stride=args.query_stride,
+                        hist_freq_bias=hist_freq_bias,
+                    )
+                    lambda_display = "auto" if lambda_hist is None else f"{lambda_hist:.2f}"
+                    print(
+                        f"{alpha:6.2f} {gamma:6.2f} {lambda_display:>7} {hist_freq_bias:7.2f} "
+                        f"{result['final_age_median']:8.1f} {result['final_age_p90']:8.1f} "
+                        f"{result['survival_sections_mean']:10.2f} {result['survival_sections_p90']:9.1f} "
+                        f"{result['survival_gini']:10.3f} {result['unique_frames_ever_admitted']:7d}"
+                    )
 
     print(
         "\nTarget shape from real SLAM/RI b32 runs (read-path reuse stats, not "

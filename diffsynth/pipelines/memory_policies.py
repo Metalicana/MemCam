@@ -1991,6 +1991,7 @@ def compute_marginal_coverage_eviction_scores(
     alpha=0.65,
     lambda_hist=None,
     gamma=0.25,
+    hist_freq_bias=0.0,
     rarity_neighbors=3,
     fov_half_h=45.0,
     fov_half_v=30.0,
@@ -2002,12 +2003,20 @@ def compute_marginal_coverage_eviction_scores(
     Implements the method as specified, not an approximation of it:
 
     - Query set Q = Q_hist ∪ Q_ctrl (Sec. 3.1). Q_hist is one DINO-cluster
-      medoid per distinct scene mode among the candidates, weighted uniformly
-      (``lambda_hist / J``) rather than by cluster frequency, so a repeatedly
-      revisited region cannot outweigh a rare one. Q_ctrl is the known future
-      camera path, sampled and weighted with exponential horizon decay
-      ``w_h ∝ exp(-gamma * h)``; omitted when no future controls are known
-      (``lambda_hist`` then defaults to 1).
+      medoid per distinct scene mode among the candidates. Each medoid's
+      weight is proportional to (cluster_size ** hist_freq_bias):
+      hist_freq_bias=0 (default, paper's stated rule) weights every medoid
+      equally regardless of cluster size, so a repeatedly revisited region
+      cannot outweigh a rare one; hist_freq_bias=1 weights medoids linearly
+      by how often their scene mode recurs, closer to what an
+      anchor-persistence heuristic like SLAM implicitly rewards. This is an
+      explicit generalization knob, not a paper claim -- exposed to test
+      whether MCE can reach/exceed SLAM's regime by relaxing the
+      diversity-favoring default toward frequency-favoring, rather than
+      assuming the two are unrelated methods.
+      Q_ctrl is the known future camera path, sampled and weighted with
+      exponential horizon decay ``w_h ∝ exp(-gamma * h)``; omitted when no
+      future controls are known (``lambda_hist`` then defaults to 1).
     - Kernel K(q, m) = alpha * K_geo(q, m) + (1 - alpha) * K_vis(q, m), an
       explicit convex combination (Eq. 6), not a product. Future queries have
       no realized appearance yet, so they use K_geo alone -- "the available
@@ -2058,7 +2067,7 @@ def compute_marginal_coverage_eviction_scores(
     selected_limit = min(int(budget), num_candidates)
 
     # --- Query set construction (Sec. 3.1) ---------------------------------
-    hist_query_frame_indices, _ = _historical_query_medoids(
+    hist_query_frame_indices, hist_clusters = _historical_query_medoids(
         memory_frame_indices, dino_features, rarity_neighbors
     )
     num_hist = len(hist_query_frame_indices)
@@ -2082,7 +2091,9 @@ def compute_marginal_coverage_eviction_scores(
     )
     hist_vis = np.clip((hist_vis_cosine + 1.0) / 2.0, 0.0, 1.0)  # calibrate [-1,1] -> [0,1]
     hist_kernel = np.clip(alpha * hist_geo + (1.0 - alpha) * hist_vis, 0.0, 1.0 - 1e-6)
-    hist_weights = np.full(num_hist, lambda_eff / max(num_hist, 1), dtype=np.float64)
+    cluster_sizes = np.array([len(members) for members in hist_clusters], dtype=np.float64)
+    raw_hist_weights = np.power(np.maximum(cluster_sizes, 1.0), float(hist_freq_bias))
+    hist_weights = lambda_eff * raw_hist_weights / max(np.sum(raw_hist_weights), 1e-12)
 
     if future_query_frame_indices:
         num_ctrl = len(future_query_frame_indices)
@@ -2178,6 +2189,7 @@ def compute_marginal_coverage_eviction_scores(
             "mce_alpha": float(alpha),
             "mce_lambda": float(lambda_eff),
             "mce_gamma": float(gamma),
+            "mce_hist_freq_bias": float(hist_freq_bias),
             "mce_num_hist_queries": num_hist,
             "mce_num_ctrl_queries": len(future_query_frame_indices),
             "mce_hist_query_frames": [int(f) for f in hist_query_frame_indices],

@@ -159,6 +159,42 @@ class MarginalCoverageEvictionTest(unittest.TestCase):
         self.assertEqual(details[0]["mce_lambda"], 1.0)
         self.assertEqual(details[0]["mce_num_ctrl_queries"], 0)
 
+    def test_hist_freq_bias_shifts_weight_toward_larger_clusters(self):
+        # Cluster A = {0, 1} (size 2, near-identical appearance); cluster B =
+        # {2} (size 1, distinct). hist_freq_bias=0 (default) weights both
+        # medoids equally regardless of size; raising it should shift query
+        # weight -- and therefore each survivor's marginal value -- toward
+        # cluster A's medoid and away from cluster B's, since the two
+        # medoids' weights must still sum to the same lambda budget.
+        c2ws = make_line_c2ws([0.0, 0.05, 20.0])
+        dino = {
+            0: np.array([1.0, 0.0], dtype=np.float32),
+            1: np.array([0.98, 0.02], dtype=np.float32),
+            2: np.array([0.0, 1.0], dtype=np.float32),
+        }
+        rgb = rgb_features({0: 0.0, 1: 0.02, 2: 1.0})
+
+        def survivor_marginal(hist_freq_bias, frame_idx):
+            _, details = MEMORY_POLICIES.compute_marginal_coverage_eviction_scores(
+                memory_frame_indices=[0, 1, 2],
+                c2ws=c2ws,
+                budget=3,  # no eviction -- isolates the weighting effect
+                dino_features=dino,
+                rgb_features=rgb,
+                radius=5.0,
+                hist_freq_bias=hist_freq_bias,
+                return_details=True,
+            )
+            return details[frame_idx]["mce_survivor_marginal"]
+
+        marginal_a_unbiased = survivor_marginal(0.0, 0)
+        marginal_a_biased = survivor_marginal(2.0, 0)
+        marginal_b_unbiased = survivor_marginal(0.0, 2)
+        marginal_b_biased = survivor_marginal(2.0, 2)
+
+        self.assertGreater(marginal_a_biased, marginal_a_unbiased)
+        self.assertLess(marginal_b_biased, marginal_b_unbiased)
+
 
 if __name__ == "__main__":
     unittest.main()
