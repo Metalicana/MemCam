@@ -2217,6 +2217,7 @@ def compute_marginal_coverage_eviction_scores(
             "mce_lambda": float(lambda_eff),
             "mce_gamma": float(gamma),
             "mce_hist_freq_bias": float(hist_freq_bias),
+            "mce_rarity_neighbors": int(rarity_neighbors),
             "mce_num_hist_queries": num_hist,
             "mce_num_ctrl_queries": len(future_query_frame_indices),
             "mce_hist_query_frames": [int(f) for f in hist_query_frame_indices],

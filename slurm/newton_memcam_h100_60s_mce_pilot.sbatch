@@ -42,6 +42,13 @@ MCE_GAMMA="${MCE_GAMMA:-0.25}"
 # Frame stride for sampling the known future camera path into Q_ctrl. 19
 # matches one predict-latent-frame's worth of pose samples per section.
 MCE_QUERY_STRIDE="${MCE_QUERY_STRIDE:-19}"
+# k for Q_hist's clustering threshold (estimate_cluster_threshold's k-th
+# nearest-neighbor distance). Was a dead parameter before the
+# estimate_cluster_threshold fix (rarity_neighbors was accepted but never
+# used); higher values coarsen clusters. 3 is the historical default, which
+# is what every run before the fix effectively behaved as regardless of this
+# value.
+MCE_RARITY_NEIGHBORS="${MCE_RARITY_NEIGHBORS:-3}"
 
 # Pilot default: a small, scene-spread subset of the 15 60s rows
 # (3,8,13,18,23,28,33,38,43,48,53,58,63,68,73 per docs/cluster_runbook.md),
@@ -61,6 +68,7 @@ echo "Alpha: $MCE_ALPHA"
 echo "Lambda: ${MCE_LAMBDA:-auto (1.0 / 0.5)}"
 echo "Gamma: $MCE_GAMMA"
 echo "Query stride: $MCE_QUERY_STRIDE"
+echo "Rarity neighbors: $MCE_RARITY_NEIGHBORS"
 echo "Manifest: $MANIFEST"
 echo "Rows: ${ROWS:-all}"
 echo "Output: $OUTPUT_DIR"
@@ -86,6 +94,7 @@ cmd=(
   --mce_alpha "$MCE_ALPHA"
   --mce_gamma "$MCE_GAMMA"
   --mce_query_stride "$MCE_QUERY_STRIDE"
+  --mce_rarity_neighbors "$MCE_RARITY_NEIGHBORS"
   --profile_dir "$OUTPUT_DIR/profiles"
 )
 if [ -n "$MCE_LAMBDA" ]; then

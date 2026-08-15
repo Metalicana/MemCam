@@ -208,6 +208,14 @@ def main():
         default=19,
         help="Frame stride used to sample the known future camera path for MCE's Q_ctrl.",
     )
+    parser.add_argument(
+        "--mce_rarity_neighbors",
+        type=int,
+        default=3,
+        help="k for MCE's Q_hist clustering threshold (estimate_cluster_threshold's "
+        "k-th nearest-neighbor distance). Higher values coarsen clusters (fewer, "
+        "bigger); was a dead parameter before the estimate_cluster_threshold fix.",
+    )
     parser.add_argument("--surprise_alpha", type=float, default=0.7)
     parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
     parser.add_argument("--surprise_controller_step", type=float, default=0.1)
@@ -308,6 +316,7 @@ def main():
         "mce_lambda": args.mce_lambda,
         "mce_gamma": args.mce_gamma,
         "mce_query_stride": args.mce_query_stride,
+        "mce_rarity_neighbors": args.mce_rarity_neighbors,
         "surprise_alpha": args.surprise_alpha,
         "surprise_ema_momentum": args.surprise_ema_momentum,
         "surprise_controller_step": args.surprise_controller_step,
@@ -420,7 +429,8 @@ def main():
             f"alpha={args.mce_alpha}, "
             f"lambda={args.mce_lambda}, "
             f"gamma={args.mce_gamma}, "
-            f"query stride={args.mce_query_stride}"
+            f"query stride={args.mce_query_stride}, "
+            f"rarity_neighbors={args.mce_rarity_neighbors}"
         )
     if args.memory_policy == "surprise_forcing":
         print(
@@ -498,6 +508,7 @@ def main():
                 mce_lambda=args.mce_lambda,
                 mce_gamma=args.mce_gamma,
                 mce_query_stride=args.mce_query_stride,
+                mce_rarity_neighbors=args.mce_rarity_neighbors,
                 surprise_alpha=args.surprise_alpha,
                 surprise_ema_momentum=args.surprise_ema_momentum,
                 surprise_controller_step=args.surprise_controller_step,
@@ -535,6 +546,7 @@ def main():
                     "mce_lambda": args.mce_lambda,
                     "mce_gamma": args.mce_gamma,
                     "mce_query_stride": args.mce_query_stride,
+                    "mce_rarity_neighbors": args.mce_rarity_neighbors,
                     "surprise_alpha": args.surprise_alpha,
                     "surprise_ema_momentum": args.surprise_ema_momentum,
                     "surprise_controller_step": args.surprise_controller_step,
