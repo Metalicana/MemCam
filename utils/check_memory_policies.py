@@ -24,6 +24,7 @@ compute_marginal_coverage_eviction_scores = memory_policies.compute_marginal_cov
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 compute_slam_max_coverage_scores = memory_policies.compute_slam_max_coverage_scores
+compute_slam_ri_blend_scores = memory_policies.compute_slam_ri_blend_scores
 compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
 surprise_forcing_score = memory_policies.surprise_forcing_score
 
@@ -94,6 +95,14 @@ def check_slam_max_coverage_requires_budget():
     except ValueError:
         return
     raise AssertionError("slam_max_coverage without a budget should fail")
+
+
+def check_slam_ri_blend_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="slam_ri_blend")
+    except ValueError:
+        return
+    raise AssertionError("slam_ri_blend without a budget should fail")
 
 
 def check_facility_coreset_requires_budget():
@@ -425,6 +434,73 @@ def check_slam_max_coverage_scores():
     assert scores[1] < 0.0
 
 
+def check_slam_ri_blend_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.99, 0.01], dtype=np.float32),
+        2: np.array([0.98, 0.02], dtype=np.float32),
+        7: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        0: np.zeros(12, dtype=np.float32),
+        1: np.full(12, 0.01, dtype=np.float32),
+        2: np.full(12, 0.02, dtype=np.float32),
+        7: np.ones(12, dtype=np.float32),
+    }
+
+    # beta=1.0 must exactly reproduce slam_covisibility's own ranking.
+    slam_scores = compute_slam_covisibility_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+    )
+    blend_at_beta_one = compute_slam_ri_blend_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        beta=1.0,
+    )
+    ranked_slam = sorted([0, 1, 2, 7], key=lambda idx: slam_scores[idx])
+    ranked_blend_one = sorted([0, 1, 2, 7], key=lambda idx: blend_at_beta_one[idx])
+    assert ranked_slam == ranked_blend_one
+
+    # beta=0.0 must exactly reproduce rarity_irreplaceability's own ranking.
+    ri_scores = compute_rarity_irreplaceability_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        rarity_neighbors=1,
+    )
+    blend_at_beta_zero = compute_slam_ri_blend_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        beta=0.0,
+        ri_kwargs={"rarity_neighbors": 1},
+    )
+    ranked_ri = sorted([0, 1, 2, 7], key=lambda idx: ri_scores[idx])
+    ranked_blend_zero = sorted([0, 1, 2, 7], key=lambda idx: blend_at_beta_zero[idx])
+    assert ranked_ri == ranked_blend_zero
+
+    scores, details = compute_slam_ri_blend_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        beta=0.5,
+        ri_kwargs={"rarity_neighbors": 1},
+        return_details=True,
+    )
+    assert scores[0] == float("inf")
+    assert details[0]["slamri_forced_keep"] is True
+    assert scores[7] > scores[1]
+
+
 def check_facility_coreset_scores():
     c2ws = make_line_c2ws(8)
     dino_features = {
@@ -646,6 +722,8 @@ if __name__ == "__main__":
     check_slam_covisibility_scores()
     check_slam_max_coverage_requires_budget()
     check_slam_max_coverage_scores()
+    check_slam_ri_blend_requires_budget()
+    check_slam_ri_blend_scores()
     check_facility_coreset_requires_budget()
     check_facility_coreset_scores()
     check_kcenter_coreset_requires_budget()

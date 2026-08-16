@@ -25,6 +25,7 @@ from .memory_policies import (
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
     compute_slam_max_coverage_scores,
+    compute_slam_ri_blend_scores,
     compute_trajectory_coverage_scores,
     image_quality_scores_from_pil_images,
 )
@@ -66,6 +67,7 @@ VISUAL_MEMORY_POLICIES = {
     "rarity_irreplaceability",
     "slam_covisibility",
     "slam_max_coverage",
+    "slam_ri_blend",
     "facility_coreset",
     "kcenter_coreset",
     "density_balanced_view_coverage",
@@ -367,6 +369,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         mce_gamma=0.25,
         mce_query_stride=19,
         mce_rarity_neighbors=3,
+        slamri_beta=0.5,
+        slamri_rarity_neighbors=3,
         surprise_alpha=0.7,
         surprise_ema_momentum=0.95,
         surprise_controller_step=0.1,
@@ -489,6 +493,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "rarity_irreplaceability",
                 "slam_covisibility",
                 "slam_max_coverage",
+                "slam_ri_blend",
                 "facility_coreset",
                 "kcenter_coreset",
                 "trajectory_coverage",
@@ -519,6 +524,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "rarity_irreplaceability",
                 "slam_covisibility",
                 "slam_max_coverage",
+                "slam_ri_blend",
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "future_view_coverage",
@@ -1421,6 +1427,23 @@ class WanVideoMemCamPipeline(BasePipeline):
                     rgb_features=memory_rgb_features,
                     return_details=True,
                 )
+            elif memory_policy == "slam_ri_blend":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_slam_ri_blend_scores(
+                    memory_frame_indices=prospective_memory,
+                    c2ws=c2ws,
+                    forced_keep_frames=pinned_memory_frames,
+                    dino_features=memory_dino_features,
+                    rgb_features=memory_rgb_features,
+                    beta=slamri_beta,
+                    ri_kwargs={"rarity_neighbors": slamri_rarity_neighbors},
+                    return_details=True,
+                )
             elif memory_policy == "slam_max_coverage":
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
@@ -1897,6 +1920,16 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_nearest_covisible_frame": score_detail.get("nearest_covisible_frame"),
                         "eviction_marginal_contribution": score_detail.get("marginal_contribution"),
                         "eviction_unique_bonus": score_detail.get("unique_bonus"),
+                        "eviction_slamri_beta": score_detail.get("slamri_beta"),
+                        "eviction_slamri_forced_keep": score_detail.get("slamri_forced_keep"),
+                        "eviction_slamri_slam_raw": score_detail.get("slamri_slam_raw"),
+                        "eviction_slamri_slam_norm": score_detail.get("slamri_slam_norm"),
+                        "eviction_slamri_ri_raw": score_detail.get("slamri_ri_raw"),
+                        "eviction_slamri_ri_norm": score_detail.get("slamri_ri_norm"),
+                        "eviction_slamri_ri_rarity": score_detail.get("slamri_ri_rarity"),
+                        "eviction_slamri_ri_irreplaceability": score_detail.get("slamri_ri_irreplaceability"),
+                        "eviction_slamri_slam_redundancy_ratio": score_detail.get("slamri_slam_redundancy_ratio"),
+                        "eviction_slamri_slam_unique_bonus": score_detail.get("slamri_slam_unique_bonus"),
                         "eviction_slam_max_coverage_selected": score_detail.get("slam_max_coverage_selected"),
                         "eviction_slam_max_coverage_forced_keep": score_detail.get("slam_max_coverage_forced_keep"),
                         "eviction_slam_max_coverage_rank": score_detail.get("slam_max_coverage_rank"),

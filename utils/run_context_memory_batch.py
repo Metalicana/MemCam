@@ -154,6 +154,7 @@ def main():
             "rarity_irreplaceability",
             "slam_covisibility",
             "slam_max_coverage",
+            "slam_ri_blend",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -215,6 +216,22 @@ def main():
         help="k for MCE's Q_hist clustering threshold (estimate_cluster_threshold's "
         "k-th nearest-neighbor distance). Higher values coarsen clusters (fewer, "
         "bigger); was a dead parameter before the estimate_cluster_threshold fix.",
+    )
+    parser.add_argument(
+        "--slamri_beta",
+        type=float,
+        default=0.5,
+        help="slam_ri_blend mix weight: beta * norm(SLAM score) + (1 - beta) * "
+        "norm(RI score). beta=1.0 reproduces slam_covisibility's own ranking; "
+        "beta=0.0 reproduces rarity_irreplaceability's own ranking.",
+    )
+    parser.add_argument(
+        "--slamri_rarity_neighbors",
+        type=int,
+        default=3,
+        help="k passed through to the RI half of slam_ri_blend's rarity clustering "
+        "threshold (same estimate_cluster_threshold k-th nearest-neighbor knob as "
+        "--mce_rarity_neighbors).",
     )
     parser.add_argument("--surprise_alpha", type=float, default=0.7)
     parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
@@ -317,6 +334,8 @@ def main():
         "mce_gamma": args.mce_gamma,
         "mce_query_stride": args.mce_query_stride,
         "mce_rarity_neighbors": args.mce_rarity_neighbors,
+        "slamri_beta": args.slamri_beta,
+        "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
         "surprise_alpha": args.surprise_alpha,
         "surprise_ema_momentum": args.surprise_ema_momentum,
         "surprise_controller_step": args.surprise_controller_step,
@@ -432,6 +451,12 @@ def main():
             f"query stride={args.mce_query_stride}, "
             f"rarity_neighbors={args.mce_rarity_neighbors}"
         )
+    if args.memory_policy == "slam_ri_blend":
+        print(
+            "SLAM+RI blend: "
+            f"beta={args.slamri_beta}, "
+            f"rarity_neighbors={args.slamri_rarity_neighbors}"
+        )
     if args.memory_policy == "surprise_forcing":
         print(
             "Surprise Forcing: "
@@ -509,6 +534,8 @@ def main():
                 mce_gamma=args.mce_gamma,
                 mce_query_stride=args.mce_query_stride,
                 mce_rarity_neighbors=args.mce_rarity_neighbors,
+                slamri_beta=args.slamri_beta,
+                slamri_rarity_neighbors=args.slamri_rarity_neighbors,
                 surprise_alpha=args.surprise_alpha,
                 surprise_ema_momentum=args.surprise_ema_momentum,
                 surprise_controller_step=args.surprise_controller_step,
@@ -547,6 +574,8 @@ def main():
                     "mce_gamma": args.mce_gamma,
                     "mce_query_stride": args.mce_query_stride,
                     "mce_rarity_neighbors": args.mce_rarity_neighbors,
+                    "slamri_beta": args.slamri_beta,
+                    "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
                     "surprise_alpha": args.surprise_alpha,
                     "surprise_ema_momentum": args.surprise_ema_momentum,
                     "surprise_controller_step": args.surprise_controller_step,

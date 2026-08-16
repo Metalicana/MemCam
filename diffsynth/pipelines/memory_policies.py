@@ -1,5 +1,5 @@
 import math
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import numpy as np
 
@@ -18,6 +18,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "mce",
     "h2o_heavy_hitter",
     "surprise_forcing",
+    "slam_ri_blend",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
@@ -32,6 +33,7 @@ BUDGETED_MEMORY_POLICIES = (
     "mce",
     "h2o_heavy_hitter",
     "surprise_forcing",
+    "slam_ri_blend",
 )
 
 
@@ -2222,6 +2224,110 @@ def compute_marginal_coverage_eviction_scores(
             "mce_num_ctrl_queries": len(future_query_frame_indices),
             "mce_hist_query_frames": [int(f) for f in hist_query_frame_indices],
         }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_slam_ri_blend_scores(
+    memory_frame_indices,
+    c2ws,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    beta=0.5,
+    slam_kwargs=None,
+    ri_kwargs=None,
+    return_details=False,
+):
+    """Linear blend of SLAM's and RI's own scores: V_i = beta*S~_i + (1-beta)*RI~_i.
+
+    S_i is the unmodified output of compute_slam_covisibility_scores and RI_i
+    is the unmodified output of compute_rarity_irreplaceability_scores -- this
+    function calls both directly rather than reimplementing either, so
+    beta=1.0 exactly reproduces slam_covisibility's own ranking and beta=0.0
+    exactly reproduces rarity_irreplaceability's own ranking. Both functions
+    are called with pinned_frames=None so forced-keep handling happens once,
+    here, after blending (avoids each sub-score independently producing inf
+    and washing out the min-max normalization below).
+
+    The two raw scores live on unrelated scales -- SLAM's is a bounded sum of
+    three roughly-[0,1] terms; RI's is log-rarity times an RGB L1 distance,
+    unbounded above -- so each is min-max normalized to [0, 1] over the
+    current candidate pool before blending.
+
+    Neither constituent score is budget-aware or iterative (no reverse-
+    deletion/marginal-gain loop, unlike MCE), so this is a flat scorer like
+    its two parents: FrameMemoryBuffer.evict_to_budget() performs the actual
+    min-score-first eviction externally.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or ())
+    slam_kwargs = dict(slam_kwargs or {})
+    ri_kwargs = dict(ri_kwargs or {})
+    beta = float(beta)
+    if not 0.0 <= beta <= 1.0:
+        raise ValueError(f"beta must be in [0, 1], got {beta}")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+
+    slam_scores, slam_details = compute_slam_covisibility_scores(
+        memory_frame_indices=memory_frame_indices,
+        c2ws=c2ws,
+        pinned_frames=None,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        return_details=True,
+        **slam_kwargs,
+    )
+    ri_scores, ri_details = compute_rarity_irreplaceability_scores(
+        memory_frame_indices=memory_frame_indices,
+        pinned_frames=None,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        return_details=True,
+        **ri_kwargs,
+    )
+
+    def _min_max_normalize(raw):
+        values = np.array([raw[idx] for idx in memory_frame_indices], dtype=np.float64)
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return {idx: 0.0 for idx in memory_frame_indices}
+        lo, hi = float(finite.min()), float(finite.max())
+        span = hi - lo
+        normalized = {}
+        for idx, value in zip(memory_frame_indices, values):
+            if not np.isfinite(value):
+                normalized[idx] = 1.0
+            elif span <= 1e-12:
+                normalized[idx] = 1.0
+            else:
+                normalized[idx] = (float(value) - lo) / span
+        return normalized
+
+    slam_norm = _min_max_normalize(slam_scores)
+    ri_norm = _min_max_normalize(ri_scores)
+
+    scores = {}
+    details = {}
+    for idx in memory_frame_indices:
+        is_forced = idx in forced_keep_frames
+        score = float("inf") if is_forced else beta * slam_norm[idx] + (1.0 - beta) * ri_norm[idx]
+        scores[idx] = score
+        if return_details:
+            details[idx] = {
+                "score": score,
+                "slamri_beta": beta,
+                "slamri_forced_keep": is_forced,
+                "slamri_slam_raw": float(slam_scores[idx]),
+                "slamri_slam_norm": float(slam_norm[idx]),
+                "slamri_ri_raw": float(ri_scores[idx]),
+                "slamri_ri_norm": float(ri_norm[idx]),
+                "slamri_ri_rarity": ri_details[idx]["rarity"],
+                "slamri_ri_irreplaceability": ri_details[idx]["irreplaceability"],
+                "slamri_slam_redundancy_ratio": slam_details[idx]["redundancy_ratio"],
+                "slamri_slam_unique_bonus": slam_details[idx]["unique_bonus"],
+            }
 
     return (scores, details) if return_details else scores
 
