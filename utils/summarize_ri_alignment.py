@@ -88,9 +88,14 @@ def group_rows(rows):
     return groups
 
 
-def summarize_decision(key, rows, topk):
+def summarize_decision(key, rows, topk, score_key="ri_score"):
+    # Metric names keep their exact original "..._ri_..." spelling when
+    # score_key is the default (ri_score), so summarize_ri_alignment.py's
+    # existing 180s/60s reports are unaffected; other score keys (slam_score,
+    # blend_score, ...) get their own prefix derived the same way.
+    prefix = score_key[: -len("_score")] if score_key.endswith("_score") else score_key
     run_row, scene, section_idx, budget = key
-    ri_scores = [float(row["ri_score"]) for row in rows]
+    scores = [float(row[score_key]) for row in rows]
     gt_future = [float(row["gt_future_use_count"] or 0) for row in rows]
     gt_horizon = [float(row["gt_horizon_use_count"] or 0) for row in rows]
 
@@ -102,10 +107,10 @@ def summarize_decision(key, rows, topk):
         "candidates": len(rows),
         "kept": sum(bool(row["kept_after"]) for row in rows),
         "evicted": sum(bool(row["evicted"]) for row in rows),
-        "spearman_ri_vs_gt_future": spearman(ri_scores, gt_future),
-        "spearman_ri_vs_gt_horizon": spearman(ri_scores, gt_horizon),
-        "topk_overlap_future": topk_overlap(rows, "ri_score", "gt_future_use_count", topk),
-        "topk_overlap_horizon": topk_overlap(rows, "ri_score", "gt_horizon_use_count", topk),
+        f"spearman_{prefix}_vs_gt_future": spearman(scores, gt_future),
+        f"spearman_{prefix}_vs_gt_horizon": spearman(scores, gt_horizon),
+        "topk_overlap_future": topk_overlap(rows, score_key, "gt_future_use_count", topk),
+        "topk_overlap_horizon": topk_overlap(rows, score_key, "gt_horizon_use_count", topk),
         "gt_future_topk_kept": gt_topk_kept(rows, "gt_future_use_count", topk),
         "gt_horizon_topk_kept": gt_topk_kept(rows, "gt_horizon_use_count", topk),
         "gt_future_mass_kept": gt_mass_kept(rows, "gt_future_use_count"),
@@ -122,10 +127,11 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def aggregate(rows):
+def aggregate(rows, score_key="ri_score"):
+    prefix = score_key[: -len("_score")] if score_key.endswith("_score") else score_key
     metric_keys = [
-        "spearman_ri_vs_gt_future",
-        "spearman_ri_vs_gt_horizon",
+        f"spearman_{prefix}_vs_gt_future",
+        f"spearman_{prefix}_vs_gt_horizon",
         "topk_overlap_future",
         "topk_overlap_horizon",
         "gt_future_topk_kept",
@@ -154,27 +160,49 @@ def main():
         default=Path("/data/ab575577/MemCam/analysis/context_memory"),
     )
     parser.add_argument("--topk", type=int, default=32)
+    parser.add_argument(
+        "--score_key",
+        type=str,
+        default="ri_score",
+        help="Score column to correlate against ground truth: ri_score (default, "
+        "reads ri_frame_scores.jsonl), slam_score (slam_frame_scores.jsonl), or "
+        "blend_score (slam_ri_blend_frame_scores.jsonl).",
+    )
+    parser.add_argument(
+        "--output_prefix",
+        type=str,
+        default=None,
+        help="Output filename stem, e.g. <prefix>_by_decision.csv and "
+        "<prefix>_summary.json. Defaults to '<score_key prefix>_alignment' "
+        "(ri_alignment for the default ri_score, matching the original names).",
+    )
     args = parser.parse_args()
 
     rows = load_jsonl(args.scores)
     if not rows:
         raise RuntimeError(f"No rows found in {args.scores}")
 
+    score_key = args.score_key
+    prefix = score_key[: -len("_score")] if score_key.endswith("_score") else score_key
+    output_prefix = args.output_prefix or f"{prefix}_alignment"
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     decision_rows = [
-        summarize_decision(key, group, topk=args.topk)
+        summarize_decision(key, group, topk=args.topk, score_key=score_key)
         for key, group in sorted(group_rows(rows).items())
     ]
-    summary = aggregate(decision_rows)
+    summary = aggregate(decision_rows, score_key=score_key)
 
-    write_csv(args.output_dir / "ri_alignment_by_decision.csv", decision_rows)
-    with (args.output_dir / "ri_alignment_summary.json").open("w", encoding="utf-8") as handle:
+    by_decision_path = args.output_dir / f"{output_prefix}_by_decision.csv"
+    summary_path = args.output_dir / f"{output_prefix}_summary.json"
+    write_csv(by_decision_path, decision_rows)
+    with summary_path.open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2)
         handle.write("\n")
 
     print(json.dumps(summary, indent=2))
-    print(f"Wrote: {args.output_dir / 'ri_alignment_by_decision.csv'}")
-    print(f"Wrote: {args.output_dir / 'ri_alignment_summary.json'}")
+    print(f"Wrote: {by_decision_path}")
+    print(f"Wrote: {summary_path}")
 
 
 if __name__ == "__main__":

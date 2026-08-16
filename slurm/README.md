@@ -182,6 +182,45 @@ Main outputs:
 /data/ab575577/MemCam/analysis/context_memory/ri_alignment_by_decision.csv
 ```
 
+The same H2 question ("is RI's/SLAM's score predictive of true GT future
+need, not just correlated with itself") extends to `slam` and
+`slam_ri_blend` -- both reuse their real, unmodified scoring functions
+(`compute_slam_covisibility_scores` / `compute_slam_ri_blend_scores`), and
+this whole tool is CPU-only except for DINO/RGB feature extraction on GT
+frames (pass `--ri_feature_device cpu` to avoid a GPU allocation entirely;
+tractable at analysis scale):
+
+```bash
+python utils/analyze_memory_policies.py \
+  --manifest testbeds/context_memory/manifest.jsonl \
+  --dataset_root /data/ab575577/Context-as-Memory-Dataset/Context-as-Memory-Dataset \
+  --durations 10 \
+  --budgets 32 \
+  --policies unbounded,fifo,ri,slam,slam_ri_blend,belady,coverage_oracle \
+  --ri_feature_device cpu
+
+python utils/summarize_ri_alignment.py \
+  --scores /data/ab575577/MemCam/analysis/context_memory/slam_frame_scores.jsonl \
+  --output_dir /data/ab575577/MemCam/analysis/context_memory \
+  --score_key slam_score \
+  --topk 32
+
+python utils/summarize_ri_alignment.py \
+  --scores /data/ab575577/MemCam/analysis/context_memory/slam_ri_blend_frame_scores.jsonl \
+  --output_dir /data/ab575577/MemCam/analysis/context_memory \
+  --score_key blend_score \
+  --topk 32
+```
+
+`slam`/`slam_ri_blend` write their own `slam_frame_scores.jsonl` /
+`slam_ri_blend_frame_scores.jsonl` (not merged into `ri_frame_scores.jsonl`,
+which keeps its original schema so the RI-only command above is unaffected).
+`policy_aggregate.csv` also gains a `coverage_efficiency` column
+(`covered_targets / retained_memory_size`, averaged over decision points) --
+the direct "is budget wasted on redundant anchors" number SLAM's design
+targets, distinct from `oracle_recall` (which normalizes by available-useful
+frames, not by memory spent).
+
 Use separate output folders per memory policy:
 
 ```bash

@@ -6,6 +6,7 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,14 @@ spec.loader.exec_module(memory_policies)
 FrameMemoryBuffer = memory_policies.FrameMemoryBuffer
 VisualMemoryFeatureExtractor = memory_policies.VisualMemoryFeatureExtractor
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
+compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
+compute_slam_ri_blend_scores = memory_policies.compute_slam_ri_blend_scores
+
+
+# Policies whose per-frame eviction score is a real, reusable function (not a
+# GT-overlap oracle like belady/coverage_oracle) -- these are the ones this
+# script's "is the score ad hoc" correlation check applies to.
+SCORED_POLICIES = ("ri", "slam", "slam_ri_blend")
 
 
 FRAMES_PER_SECTION = 77
@@ -88,6 +97,12 @@ def resolve_gt_frames_dir(item, dataset_root):
     if dataset_root is not None:
         return dataset_root / "frames" / item["scene"]
     return Path(item["gt_frames_dir"])
+
+
+def resolve_pose_path(item, dataset_root):
+    if dataset_root is not None:
+        return dataset_root / "jsons" / f"{item['scene']}.json"
+    return Path(item["pose_path"])
 
 
 def extract_overlap_indices(data):
@@ -352,6 +367,11 @@ def evaluate_memory_for_section(memory, predict_range, overlap_map, generated_un
         "best_possible_coverage": (
             best_possible / len(predict_range) if predict_range else 0.0
         ),
+        # How many future targets get served per occupied memory slot -- the
+        # direct "is budget wasted on redundant anchors" measure SLAM's
+        # non-redundancy design targets, distinct from oracle_recall (which
+        # normalizes by available_useful, not by memory spent).
+        "retained_memory_size": len(memory),
     }
 
 
@@ -365,6 +385,86 @@ def rank_desc(values_by_key):
         reverse=True,
     )
     return {key: rank + 1 for rank, key in enumerate(sorted_keys)}
+
+
+def make_score_rows(
+    item,
+    policy,
+    section_idx,
+    decision_frame,
+    budget,
+    memory_before,
+    new_frames,
+    evicted_frames,
+    memory_after,
+    protected_frames,
+    pinned_frames,
+    scores,
+    score_details,
+    overlap_map,
+    score_field,
+    rank_field,
+    detail_fields,
+):
+    """Per-frame rows pairing a policy's real eviction score against ground-truth
+    future reuse -- the strongest available oracle for "was keeping this frame
+    worth it": actual dataset view-overlap, not a learned embedding proxy.
+
+    detail_fields maps output column name -> key into score_details[frame_idx],
+    so each policy exposes its own native score components without three
+    near-duplicate row builders. score_field/rank_field name the score and its
+    rank column (kept distinct per policy, e.g. "ri_score" vs "slam_score", so
+    existing consumers of one policy's schema -- summarize_ri_alignment.py in
+    particular -- keep working unchanged).
+    """
+    num_frames = int(item["num_frames"])
+    future_targets = list(range(decision_frame + 1, num_frames))
+    horizon_targets = list(range(decision_frame + 1, min(num_frames, decision_frame + 1 + 2 * PREDICT_FRAMES)))
+    gt_scores = {
+        frame_idx: frame_future_use(frame_idx, future_targets, overlap_map)["future_use_count"]
+        for frame_idx in memory_before
+    }
+    score_ranks = rank_desc(scores)
+    gt_ranks = rank_desc(gt_scores)
+
+    rows = []
+    for frame_idx in sorted(memory_before):
+        future_use = frame_future_use(frame_idx, future_targets, overlap_map)
+        horizon_use = frame_future_use(frame_idx, horizon_targets, overlap_map)
+        detail = score_details.get(frame_idx) or {}
+        row = {
+            "row": item["_row"],
+            "scene": item["scene"],
+            "start_frame": item["start_frame"],
+            "duration_sec": item["duration_sec"],
+            "policy": policy,
+            "budget": budget,
+            "section_idx": section_idx,
+            "decision_frame": decision_frame,
+            "decision_global_frame": int(item["start_frame"]) + decision_frame,
+            "frame_idx": frame_idx,
+            "global_frame_idx": int(item["start_frame"]) + frame_idx,
+            "age": decision_frame - frame_idx,
+            "is_new": frame_idx in new_frames,
+            "is_protected": frame_idx in protected_frames,
+            "is_pinned": frame_idx in pinned_frames,
+            "kept_after": frame_idx in memory_after,
+            "evicted": frame_idx in evicted_frames,
+            score_field: scores.get(frame_idx),
+            rank_field: score_ranks.get(frame_idx),
+            "gt_future_rank": gt_ranks.get(frame_idx),
+            "gt_future_use_count": future_use["future_use_count"],
+            "gt_future_use_fraction": future_use["future_use_fraction"],
+            "gt_next_use_frame": future_use["next_use_frame"],
+            "gt_next_use_distance": future_use["next_use_distance"],
+            "gt_last_use_frame": future_use["last_use_frame"],
+            "gt_horizon_use_count": horizon_use["future_use_count"],
+            "gt_horizon_use_fraction": horizon_use["future_use_fraction"],
+        }
+        for column, detail_key in detail_fields.items():
+            row[column] = detail.get(detail_key)
+        rows.append(row)
+    return rows
 
 
 def make_ri_score_rows(
@@ -382,68 +482,121 @@ def make_ri_score_rows(
     ri_score_details,
     overlap_map,
 ):
-    num_frames = int(item["num_frames"])
-    future_targets = list(range(decision_frame + 1, num_frames))
-    horizon_targets = list(range(decision_frame + 1, min(num_frames, decision_frame + 1 + 2 * PREDICT_FRAMES)))
-    gt_scores = {
-        frame_idx: frame_future_use(frame_idx, future_targets, overlap_map)["future_use_count"]
-        for frame_idx in memory_before
-    }
-    ri_ranks = rank_desc(ri_scores)
-    gt_ranks = rank_desc(gt_scores)
+    return make_score_rows(
+        item=item,
+        policy="ri",
+        section_idx=section_idx,
+        decision_frame=decision_frame,
+        budget=budget,
+        memory_before=memory_before,
+        new_frames=new_frames,
+        evicted_frames=evicted_frames,
+        memory_after=memory_after,
+        protected_frames=protected_frames,
+        pinned_frames=pinned_frames,
+        scores=ri_scores,
+        score_details=ri_score_details,
+        overlap_map=overlap_map,
+        score_field="ri_score",
+        rank_field="ri_rank",
+        detail_fields={
+            "ri_rarity": "rarity",
+            "ri_irreplaceability": "irreplaceability",
+            "ri_cluster_id": "cluster_id",
+            "ri_cluster_size": "cluster_size",
+            "ri_dino_cluster_threshold": "cluster_threshold",
+            "ri_rgb_nearest_frame": "rgb_nearest_frame",
+            "ri_rgb_nearest_distance": "rgb_nearest_distance",
+        },
+    )
 
-    rows = []
-    for frame_idx in sorted(memory_before):
-        future_use = frame_future_use(frame_idx, future_targets, overlap_map)
-        horizon_use = frame_future_use(frame_idx, horizon_targets, overlap_map)
-        ri_score = ri_scores.get(frame_idx)
-        rows.append(
-            {
-                "row": item["_row"],
-                "scene": item["scene"],
-                "start_frame": item["start_frame"],
-                "duration_sec": item["duration_sec"],
-                "policy": "ri",
-                "budget": budget,
-                "section_idx": section_idx,
-                "decision_frame": decision_frame,
-                "decision_global_frame": int(item["start_frame"]) + decision_frame,
-                "frame_idx": frame_idx,
-                "global_frame_idx": int(item["start_frame"]) + frame_idx,
-                "age": decision_frame - frame_idx,
-                "is_new": frame_idx in new_frames,
-                "is_protected": frame_idx in protected_frames,
-                "is_pinned": frame_idx in pinned_frames,
-                "kept_after": frame_idx in memory_after,
-                "evicted": frame_idx in evicted_frames,
-                "ri_score": ri_score,
-                "ri_rarity": (ri_score_details.get(frame_idx) or {}).get("rarity"),
-                "ri_irreplaceability": (
-                    ri_score_details.get(frame_idx) or {}
-                ).get("irreplaceability"),
-                "ri_cluster_id": (ri_score_details.get(frame_idx) or {}).get("cluster_id"),
-                "ri_cluster_size": (ri_score_details.get(frame_idx) or {}).get("cluster_size"),
-                "ri_dino_cluster_threshold": (
-                    ri_score_details.get(frame_idx) or {}
-                ).get("cluster_threshold"),
-                "ri_rgb_nearest_frame": (
-                    ri_score_details.get(frame_idx) or {}
-                ).get("rgb_nearest_frame"),
-                "ri_rgb_nearest_distance": (
-                    ri_score_details.get(frame_idx) or {}
-                ).get("rgb_nearest_distance"),
-                "ri_rank": ri_ranks.get(frame_idx),
-                "gt_future_rank": gt_ranks.get(frame_idx),
-                "gt_future_use_count": future_use["future_use_count"],
-                "gt_future_use_fraction": future_use["future_use_fraction"],
-                "gt_next_use_frame": future_use["next_use_frame"],
-                "gt_next_use_distance": future_use["next_use_distance"],
-                "gt_last_use_frame": future_use["last_use_frame"],
-                "gt_horizon_use_count": horizon_use["future_use_count"],
-                "gt_horizon_use_fraction": horizon_use["future_use_fraction"],
-            }
-        )
-    return rows
+
+def make_slam_score_rows(
+    item,
+    section_idx,
+    decision_frame,
+    budget,
+    memory_before,
+    new_frames,
+    evicted_frames,
+    memory_after,
+    protected_frames,
+    pinned_frames,
+    slam_scores,
+    slam_score_details,
+    overlap_map,
+):
+    return make_score_rows(
+        item=item,
+        policy="slam",
+        section_idx=section_idx,
+        decision_frame=decision_frame,
+        budget=budget,
+        memory_before=memory_before,
+        new_frames=new_frames,
+        evicted_frames=evicted_frames,
+        memory_after=memory_after,
+        protected_frames=protected_frames,
+        pinned_frames=pinned_frames,
+        scores=slam_scores,
+        score_details=slam_score_details,
+        overlap_map=overlap_map,
+        score_field="slam_score",
+        rank_field="slam_rank",
+        detail_fields={
+            "slam_redundancy_ratio": "redundancy_ratio",
+            "slam_covisible_observers": "covisible_observers",
+            "slam_max_covisibility": "max_covisibility",
+            "slam_marginal_contribution": "marginal_contribution",
+            "slam_unique_bonus": "unique_bonus",
+        },
+    )
+
+
+def make_slam_ri_blend_score_rows(
+    item,
+    section_idx,
+    decision_frame,
+    budget,
+    memory_before,
+    new_frames,
+    evicted_frames,
+    memory_after,
+    protected_frames,
+    pinned_frames,
+    blend_scores,
+    blend_score_details,
+    overlap_map,
+):
+    return make_score_rows(
+        item=item,
+        policy="slam_ri_blend",
+        section_idx=section_idx,
+        decision_frame=decision_frame,
+        budget=budget,
+        memory_before=memory_before,
+        new_frames=new_frames,
+        evicted_frames=evicted_frames,
+        memory_after=memory_after,
+        protected_frames=protected_frames,
+        pinned_frames=pinned_frames,
+        scores=blend_scores,
+        score_details=blend_score_details,
+        overlap_map=overlap_map,
+        score_field="blend_score",
+        rank_field="blend_rank",
+        detail_fields={
+            "blend_beta": "slamri_beta",
+            "blend_slam_raw": "slamri_slam_raw",
+            "blend_slam_norm": "slamri_slam_norm",
+            "blend_ri_raw": "slamri_ri_raw",
+            "blend_ri_norm": "slamri_ri_norm",
+            "blend_ri_rarity": "slamri_ri_rarity",
+            "blend_ri_irreplaceability": "slamri_ri_irreplaceability",
+            "blend_slam_redundancy_ratio": "slamri_slam_redundancy_ratio",
+            "blend_slam_unique_bonus": "slamri_slam_unique_bonus",
+        },
+    )
 
 
 def sum_metrics(metric_rows):
@@ -453,11 +606,15 @@ def sum_metrics(metric_rows):
         "covered_targets",
         "retained_useful",
         "available_useful",
+        "retained_memory_size",
     ]
-    summary = {key: sum(row[key] for row in metric_rows) for key in keys}
+    summary = {
+        key: sum(row.get(key, 0) for row in metric_rows) for key in keys
+    }
     targets = summary["targets"]
     possible_targets = summary["possible_targets"]
     available_useful = summary["available_useful"]
+    retained_memory_size = summary["retained_memory_size"]
     summary["coverage"] = summary["covered_targets"] / targets if targets else 0.0
     summary["possible_coverage"] = (
         summary["covered_targets"] / possible_targets if possible_targets else 0.0
@@ -468,26 +625,45 @@ def sum_metrics(metric_rows):
     summary["best_possible_coverage"] = (
         possible_targets / targets if targets else 0.0
     )
+    summary["coverage_efficiency"] = (
+        summary["covered_targets"] / retained_memory_size if retained_memory_size else 0.0
+    )
     return summary
 
 
-def simulate_row(item, policy, budget, overlap_map, dino_features=None, rgb_features=None):
+def simulate_row(
+    item,
+    policy,
+    budget,
+    overlap_map,
+    dino_features=None,
+    rgb_features=None,
+    c2ws=None,
+    slamri_beta=0.5,
+):
     total_frames = int(item["num_frames"])
     total_sections = (total_frames - 1) // PREDICT_FRAMES
     if policy != "unbounded" and budget is None:
         raise ValueError(f"{policy} requires budget")
 
     memory = set()
-    pinned_frames = {0} if policy == "ri" else set()
+    pinned_frames = {0} if policy in SCORED_POLICIES else set()
     memory_buffer = None
-    if policy == "ri":
+    if policy in SCORED_POLICIES:
         if budget < 2:
-            raise ValueError("ri requires budget >= 2")
+            raise ValueError(f"{policy} requires budget >= 2")
+        internal_policy = {
+            "ri": "rarity_irreplaceability",
+            "slam": "slam_covisibility",
+            "slam_ri_blend": "slam_ri_blend",
+        }[policy]
         memory_buffer = FrameMemoryBuffer(
-            policy="rarity_irreplaceability",
+            policy=internal_policy,
             budget=budget,
             pinned_frames=pinned_frames,
         )
+        if policy in {"slam", "slam_ri_blend"} and c2ws is None:
+            raise ValueError(f"{policy} requires c2ws poses")
 
     section_metrics = []
     trace_rows = []
@@ -600,10 +776,75 @@ def simulate_row(item, policy, budget, overlap_map, dino_features=None, rgb_feat
                     overlap_map=overlap_map,
                 )
             )
+        elif policy == "slam":
+            for frame_idx in new_frames:
+                memory_buffer.add(frame_idx, evict=False)
+            scores, score_details = compute_slam_covisibility_scores(
+                memory_frame_indices=memory_buffer.candidates(),
+                c2ws=c2ws,
+                pinned_frames=pinned_frames,
+                dino_features=dino_features,
+                rgb_features=rgb_features,
+                return_details=True,
+            )
+            memory_buffer.set_scores(scores)
+            memory_before_eviction = set(memory_buffer.candidates())
+            evicted = memory_buffer.evict_to_budget(protected_frames=protected_frames)
+            memory = set(memory_buffer.candidates())
+            score_rows.extend(
+                make_slam_score_rows(
+                    item=item,
+                    section_idx=section_idx,
+                    decision_frame=section_end,
+                    budget=budget,
+                    memory_before=memory_before_eviction,
+                    new_frames=new_frames,
+                    evicted_frames=set(evicted),
+                    memory_after=memory,
+                    protected_frames=protected_frames,
+                    pinned_frames=pinned_frames,
+                    slam_scores=scores,
+                    slam_score_details=score_details,
+                    overlap_map=overlap_map,
+                )
+            )
+        elif policy == "slam_ri_blend":
+            for frame_idx in new_frames:
+                memory_buffer.add(frame_idx, evict=False)
+            scores, score_details = compute_slam_ri_blend_scores(
+                memory_frame_indices=memory_buffer.candidates(),
+                c2ws=c2ws,
+                forced_keep_frames=pinned_frames,
+                dino_features=dino_features,
+                rgb_features=rgb_features,
+                beta=slamri_beta,
+                return_details=True,
+            )
+            memory_buffer.set_scores(scores)
+            memory_before_eviction = set(memory_buffer.candidates())
+            evicted = memory_buffer.evict_to_budget(protected_frames=protected_frames)
+            memory = set(memory_buffer.candidates())
+            score_rows.extend(
+                make_slam_ri_blend_score_rows(
+                    item=item,
+                    section_idx=section_idx,
+                    decision_frame=section_end,
+                    budget=budget,
+                    memory_before=memory_before_eviction,
+                    new_frames=new_frames,
+                    evicted_frames=set(evicted),
+                    memory_after=memory,
+                    protected_frames=protected_frames,
+                    pinned_frames=pinned_frames,
+                    blend_scores=scores,
+                    blend_score_details=score_details,
+                    overlap_map=overlap_map,
+                )
+            )
         else:
             raise ValueError(f"Unsupported policy: {policy}")
 
-        if policy != "ri":
+        if policy not in SCORED_POLICIES:
             memory.difference_update(evicted)
 
     summary = sum_metrics(section_metrics)
@@ -696,11 +937,36 @@ def main():
     parser.add_argument("--rows", type=str, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--budgets", type=str, default="32")
-    parser.add_argument("--policies", type=str, default="unbounded,fifo,ri,belady,coverage_oracle")
+    parser.add_argument(
+        "--policies",
+        type=str,
+        default="unbounded,fifo,ri,belady,coverage_oracle",
+        help=(
+            "Comma-separated: unbounded, fifo, belady (oracle), coverage_oracle "
+            "(oracle), ri, slam, slam_ri_blend. The last three reuse the real "
+            "rarity_irreplaceability/slam_covisibility/slam_ri_blend scoring "
+            "functions and additionally write a *_frame_scores.jsonl with each "
+            "score alongside true GT future-need (for summarize_ri_alignment.py)."
+        ),
+    )
     parser.add_argument("--ri_dino_model", type=str, default="facebook/dinov2-base")
-    parser.add_argument("--ri_feature_device", type=str, default="cuda")
+    parser.add_argument(
+        "--ri_feature_device",
+        type=str,
+        default="cuda",
+        help="Device for ri/slam/slam_ri_blend's DINO+RGB feature extraction. "
+        "This whole script is otherwise CPU-only; pass 'cpu' here too to run "
+        "without a GPU allocation (slower, still tractable at analysis scale).",
+    )
     parser.add_argument("--ri_feature_batch_size", type=int, default=16)
     parser.add_argument("--ri_rgb_image_size", type=int, default=64)
+    parser.add_argument(
+        "--slamri_beta",
+        type=float,
+        default=0.5,
+        help="slam_ri_blend mix weight, same meaning as the real pipeline's "
+        "--slamri_beta: beta*norm(SLAM) + (1-beta)*norm(RI).",
+    )
     args = parser.parse_args()
 
     items = load_manifest(args.manifest)
@@ -715,8 +981,10 @@ def main():
 
     policies = parse_str_list(args.policies)
     budgets = parse_int_list(args.budgets) or []
+    needs_visual_features = bool(set(SCORED_POLICIES) & set(policies))
+    needs_poses = bool({"slam", "slam_ri_blend"} & set(policies))
     feature_extractor = None
-    if "ri" in policies:
+    if needs_visual_features:
         feature_extractor = VisualMemoryFeatureExtractor(
             dino_model_name=args.ri_dino_model,
             device=args.ri_feature_device,
@@ -742,11 +1010,20 @@ def main():
         frame_usefulness_rows.extend(compute_frame_usefulness_rows(item, overlap_map))
         dino_features = None
         rgb_features = None
-        if "ri" in policies:
+        if needs_visual_features:
             dino_features, rgb_features = load_visual_feature_maps(
                 item=item,
                 dataset_root=args.dataset_root,
                 feature_extractor=feature_extractor,
+            )
+        c2ws = None
+        if needs_poses:
+            from dataset.poses import load_c2ws_from_json  # noqa: E402 -- only needed for slam/slam_ri_blend
+
+            c2ws = load_c2ws_from_json(
+                json_path=resolve_pose_path(item, args.dataset_root),
+                start_frame=int(item["start_frame"]),
+                num_frames=int(item["num_frames"]),
             )
 
         for policy in policies:
@@ -759,6 +1036,8 @@ def main():
                     overlap_map=overlap_map,
                     dino_features=dino_features,
                     rgb_features=rgb_features,
+                    c2ws=c2ws,
+                    slamri_beta=args.slamri_beta,
                 )
                 summary_rows.append(summary)
                 trace_rows.extend(traces)
@@ -775,7 +1054,6 @@ def main():
     write_csv(args.output_dir / "policy_aggregate.csv", aggregate_summary_rows)
     write_csv(args.output_dir / "frame_usefulness.csv", frame_usefulness_rows)
     write_jsonl(args.output_dir / "policy_traces.jsonl", trace_rows)
-    write_jsonl(args.output_dir / "ri_frame_scores.jsonl", score_rows)
 
     with (args.output_dir / "policy_aggregate.json").open("w", encoding="utf-8") as handle:
         json.dump(aggregate_summary_rows, handle, indent=2, ensure_ascii=False)
@@ -786,7 +1064,22 @@ def main():
     print(f"Wrote: {args.output_dir / 'policy_aggregate.json'}")
     print(f"Wrote: {args.output_dir / 'frame_usefulness.csv'}")
     print(f"Wrote: {args.output_dir / 'policy_traces.jsonl'}")
-    print(f"Wrote: {args.output_dir / 'ri_frame_scores.jsonl'}")
+
+    # One file per scored policy (not a single merged file) -- each has its
+    # own score column name (ri_score / slam_score / blend_score), and
+    # summarize_ri_alignment.py's documented default path expects
+    # ri_frame_scores.jsonl to contain only ri rows.
+    score_filenames = {
+        "ri": "ri_frame_scores.jsonl",
+        "slam": "slam_frame_scores.jsonl",
+        "slam_ri_blend": "slam_ri_blend_frame_scores.jsonl",
+    }
+    for policy_name, filename in score_filenames.items():
+        policy_score_rows = [row for row in score_rows if row["policy"] == policy_name]
+        if not policy_score_rows:
+            continue
+        write_jsonl(args.output_dir / filename, policy_score_rows)
+        print(f"Wrote: {args.output_dir / filename}")
 
 
 if __name__ == "__main__":
