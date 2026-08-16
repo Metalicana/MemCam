@@ -4,6 +4,7 @@
 #SBATCH --error=logs/memcam_slamri_full15_%j.err
 #SBATCH --partition=normal
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
+#SBATCH --exclude=evc33
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=36:00:00

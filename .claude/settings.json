@@ -4,7 +4,15 @@
       "Bash(git add *)",
       "Bash(git commit -m 'add cheap pose-only revisit-structure diagnostic *)",
       "Bash(git push *)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m py_compile utils/diagnose_cut3r_rotation_convention.py)",
+      "Bash(git commit *)",
+      "Bash(python3 -m py_compile utils/audit_context_memory_runs.py)",
+      "Read(//private/tmp/**)",
+      "Bash(mkdir -p audit_test/results/fake_run)",
+      "Bash(touch audit_test/results/fake_run/seed0_scene_0_custom.mp4)",
+      "Bash(touch audit_test/results/fake_run/seed0_scene_2_custom.mp4)",
+      "Bash(bash -n slurm/newton_memcam_h100_60s_budget_sweep_fill15.sbatch)"
     ]
   }
 }
