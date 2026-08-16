@@ -32,6 +32,12 @@ PLAN="${PLAN:-$DECOMP/tables/replay_plan.csv}"
 REPLAY_ROOT="${REPLAY_ROOT:-$ROOT/context_swap_replays_180s}"
 OUT="${OUT:-$REPLAY_ROOT/evaluation}"
 DATASET_ROOT="${DATASET_ROOT:-}"
+# Default (1e-6) demands near-bit-exact GPU reproduction of the shared
+# prefix, which real runs don't hit even when trace_history_match=1 (GPU
+# kernel noise alone gave prefix_mae=0.176 in a real case, vs ~120 MAE for
+# an actually-different generation) -- 1.0 is what separates "matched
+# history, just noise" from "history actually diverged".
+PREFIX_MAE_TOLERANCE="${PREFIX_MAE_TOLERANCE:-1.0}"
 
 mkdir -p "$MEMCAM_ROOT/logs" "$OUT"
 cd "$MEMCAM_ROOT"
@@ -40,6 +46,7 @@ echo "MemCam matched context-swap evaluation"
 echo "Plan: $PLAN"
 echo "Replays: $REPLAY_ROOT"
 echo "Output: $OUT"
+echo "Prefix MAE tolerance: $PREFIX_MAE_TOLERANCE"
 echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Started: $(date)"
 
@@ -55,6 +62,7 @@ cmd=(
   --device cuda
   --batch_size 16
   --frame_stride 4
+  --prefix_mae_tolerance "$PREFIX_MAE_TOLERANCE"
   --strict
 )
 if [ -n "$DATASET_ROOT" ]; then
