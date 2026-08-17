@@ -639,7 +639,9 @@ def simulate_row(
     dino_features=None,
     rgb_features=None,
     c2ws=None,
+    ri_rarity_neighbors=3,
     slamri_beta=0.5,
+    slamri_rarity_neighbors=3,
 ):
     total_frames = int(item["num_frames"])
     total_sections = (total_frames - 1) // PREDICT_FRAMES
@@ -751,6 +753,7 @@ def simulate_row(
             scores, score_details = compute_rarity_irreplaceability_scores(
                 memory_frame_indices=memory_buffer.candidates(),
                 pinned_frames=pinned_frames,
+                rarity_neighbors=ri_rarity_neighbors,
                 dino_features=dino_features,
                 rgb_features=rgb_features,
                 return_details=True,
@@ -818,6 +821,7 @@ def simulate_row(
                 dino_features=dino_features,
                 rgb_features=rgb_features,
                 beta=slamri_beta,
+                ri_kwargs={"rarity_neighbors": slamri_rarity_neighbors},
                 return_details=True,
             )
             memory_buffer.set_scores(scores)
@@ -961,13 +965,28 @@ def main():
     parser.add_argument("--ri_feature_batch_size", type=int, default=16)
     parser.add_argument("--ri_rgb_image_size", type=int, default=64)
     parser.add_argument(
+        "--ri_rarity_neighbors",
+        type=int,
+        default=3,
+        help="Explicit rarity-clustering k for the RI policy.",
+    )
+    parser.add_argument(
         "--slamri_beta",
         type=float,
         default=0.5,
         help="slam_ri_blend mix weight, same meaning as the real pipeline's "
         "--slamri_beta: beta*norm(SLAM) + (1-beta)*norm(RI).",
     )
+    parser.add_argument(
+        "--slamri_rarity_neighbors",
+        type=int,
+        default=3,
+        help="Explicit rarity-clustering k for the RI half of slam_ri_blend.",
+    )
     args = parser.parse_args()
+
+    if args.ri_rarity_neighbors < 1 or args.slamri_rarity_neighbors < 1:
+        raise ValueError("RI rarity-neighbor counts must be at least 1")
 
     items = load_manifest(args.manifest)
     selected = select_rows(
@@ -1037,7 +1056,9 @@ def main():
                     dino_features=dino_features,
                     rgb_features=rgb_features,
                     c2ws=c2ws,
+                    ri_rarity_neighbors=args.ri_rarity_neighbors,
                     slamri_beta=args.slamri_beta,
+                    slamri_rarity_neighbors=args.slamri_rarity_neighbors,
                 )
                 summary_rows.append(summary)
                 trace_rows.extend(traces)

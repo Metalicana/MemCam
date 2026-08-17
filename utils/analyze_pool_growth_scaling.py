@@ -1,21 +1,24 @@
-"""H1: does unbounded memory fail because selector precision decreases as the
-candidate pool grows?
+"""H1 screen: does unbounded retrieval error increase as its pool grows?
 
 Reads an existing tables/query_decomposition.csv already written by
 analyze_retrieval_quality_decomposition.py (e.g. from
 unbounded_failure_decomposition_180s) -- no new generation, no new DINO
 encoding, pure CPU post-processing of a CSV that already exists on disk.
 
-For the requested run (default: the true-unbounded "baseline" run, whose
-bank is the full history by construction, so retention_gap should already be
-~0 everywhere and any avoidable error must show up as retrieval_gap), this
-checks whether retrieval_gap trends upward with candidate_count (pool size)
-and with section_idx (a monotone proxy for elapsed time / pool growth).
+For the requested run (default: the true-unbounded ``baseline``), this checks
+the pool-size/retrieval-gap trend separately within each trajectory and then
+aggregates trajectory-level results. Pool size and elapsed time co-vary in an
+unbounded rollout, so this is evidence of scaling, not a causal isolation of
+pool size. The matched-pool audit or context-swap replay supplies stronger
+causal evidence.
 """
 
 import argparse
 import csv
+import json
+import math
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +65,125 @@ def bin_index(value, edges):
     return int(np.clip(idx, 0, len(edges) - 2))
 
 
+def trajectory_key(row):
+    return (
+        row["row"],
+        row["scene"],
+        row["dataset_start_frame"],
+        row["duration_sec"],
+    )
+
+
+def section_points(rows):
+    grouped = defaultdict(list)
+    for row in rows:
+        count = to_float(row.get("candidate_count"))
+        gap = to_float(row.get("retrieval_gap"))
+        if count is None or gap is None:
+            continue
+        key = (*trajectory_key(row), int(row["section_idx"]))
+        grouped[key].append((count, gap))
+
+    points = []
+    for key, values in sorted(grouped.items()):
+        row, scene, start_frame, duration_sec, section_idx = key
+        points.append(
+            {
+                "row": row,
+                "scene": scene,
+                "dataset_start_frame": start_frame,
+                "duration_sec": duration_sec,
+                "section_idx": section_idx,
+                "candidate_count": float(np.mean([value[0] for value in values])),
+                "retrieval_gap": float(np.mean([value[1] for value in values])),
+                "queries": len(values),
+            }
+        )
+    return points
+
+
+def exact_two_sided_sign_pvalue(positive, negative):
+    trials = int(positive) + int(negative)
+    if trials == 0:
+        return None
+    smaller = min(int(positive), int(negative))
+    tail = sum(math.comb(trials, value) for value in range(smaller + 1))
+    return min(1.0, 2.0 * tail / (2.0**trials))
+
+
+def bootstrap_mean_interval(values, repeats=10000, seed=0):
+    values = np.asarray([float(value) for value in values], dtype=np.float64)
+    if values.size == 0:
+        return None, None
+    if values.size == 1:
+        return float(values[0]), float(values[0])
+    rng = np.random.default_rng(int(seed))
+    sample_indices = rng.integers(
+        0, values.size, size=(int(repeats), values.size)
+    )
+    means = values[sample_indices].mean(axis=1)
+    return float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))
+
+
+def summarize_trajectories(points):
+    grouped = defaultdict(list)
+    for point in points:
+        grouped[
+            (
+                point["row"],
+                point["scene"],
+                point["dataset_start_frame"],
+                point["duration_sec"],
+            )
+        ].append(point)
+
+    rows = []
+    for key, trajectory_points in sorted(grouped.items()):
+        trajectory_points.sort(
+            key=lambda point: (point["candidate_count"], point["section_idx"])
+        )
+        counts = [point["candidate_count"] for point in trajectory_points]
+        gaps = [point["retrieval_gap"] for point in trajectory_points]
+        rho = spearman(counts, gaps)
+        quartile_size = max(1, len(trajectory_points) // 4)
+        early_gap = float(np.mean(gaps[:quartile_size]))
+        late_gap = float(np.mean(gaps[-quartile_size:]))
+        unique_counts = len(set(counts))
+        slope = (
+            float(np.polyfit(counts, gaps, 1)[0])
+            if unique_counts >= 2
+            else None
+        )
+        row, scene, start_frame, duration_sec = key
+        rows.append(
+            {
+                "row": row,
+                "scene": scene,
+                "dataset_start_frame": start_frame,
+                "duration_sec": duration_sec,
+                "sections": len(trajectory_points),
+                "queries": sum(point["queries"] for point in trajectory_points),
+                "candidate_count_min": min(counts),
+                "candidate_count_max": max(counts),
+                "spearman_pool_vs_retrieval_gap": rho,
+                "linear_slope": slope,
+                "early_quartile_gap": early_gap,
+                "late_quartile_gap": late_gap,
+                "late_minus_early_gap": late_gap - early_gap,
+            }
+        )
+    return rows
+
+
+def write_csv(path, rows):
+    fields = list(rows[0].keys()) if rows else []
+    with Path(path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if rows:
+            writer.writeheader()
+            writer.writerows(rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -88,15 +210,38 @@ def main():
     retention_gaps = [to_float(row["retention_gap"]) for row in run_rows]
     retention_gaps = [g for g in retention_gaps if g is not None]
     retention_violations = sum(1 for g in retention_gaps if g > 1e-6)
+    retention_violation_rate = (
+        retention_violations / len(retention_gaps) if retention_gaps else None
+    )
 
     count_xs, count_ys = paired_floats(run_rows, "candidate_count", "retrieval_gap")
     section_xs, section_ys = paired_floats(run_rows, "section_idx", "retrieval_gap")
     rho_count = spearman(count_xs, count_ys)
     rho_section = spearman(section_xs, section_ys)
 
-    edges = quantile_bin_edges(count_xs, args.num_bins)
+    points = section_points(run_rows)
+    if not points:
+        raise RuntimeError(
+            f"No candidate_count/retrieval_gap section points for {args.run_name!r}"
+        )
+    trajectory_rows = summarize_trajectories(points)
+    trajectory_rhos = [
+        row["spearman_pool_vs_retrieval_gap"]
+        for row in trajectory_rows
+        if row["spearman_pool_vs_retrieval_gap"] is not None
+    ]
+    positive_rhos = sum(value > 0 for value in trajectory_rhos)
+    negative_rhos = sum(value < 0 for value in trajectory_rhos)
+    zero_rhos = sum(value == 0 for value in trajectory_rhos)
+    sign_pvalue = exact_two_sided_sign_pvalue(positive_rhos, negative_rhos)
+    late_deltas = [row["late_minus_early_gap"] for row in trajectory_rows]
+    late_ci_low, late_ci_high = bootstrap_mean_interval(late_deltas)
+
+    section_counts = [point["candidate_count"] for point in points]
+    section_gaps = [point["retrieval_gap"] for point in points]
+    edges = quantile_bin_edges(section_counts, args.num_bins)
     bins = [[] for _ in range(len(edges) - 1)]
-    for count, gap in zip(count_xs, count_ys):
+    for count, gap in zip(section_counts, section_gaps):
         bins[bin_index(count, edges)].append(gap)
 
     bin_rows = []
@@ -108,7 +253,7 @@ def main():
                 "bin": bin_idx,
                 "candidate_count_low": edges[bin_idx],
                 "candidate_count_high": edges[bin_idx + 1],
-                "queries": len(gaps),
+                "trajectory_sections": len(gaps),
                 "mean_retrieval_gap": sum(gaps) / len(gaps),
                 "error_rate": sum(1 for g in gaps if g > 1e-6) / len(gaps),
             }
@@ -116,31 +261,77 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_csv = args.output_dir / f"pool_growth_scaling_{args.run_name}.csv"
-    fieldnames = list(bin_rows[0].keys()) if bin_rows else []
-    with out_csv.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if bin_rows:
-            writer.writeheader()
-            writer.writerows(bin_rows)
+    trajectory_csv = (
+        args.output_dir / f"pool_growth_per_trajectory_{args.run_name}.csv"
+    )
+    summary_json = args.output_dir / f"pool_growth_summary_{args.run_name}.json"
+    write_csv(out_csv, bin_rows)
+    write_csv(trajectory_csv, trajectory_rows)
+    summary = {
+        "run_name": args.run_name,
+        "queries": len(run_rows),
+        "trajectory_sections": len(points),
+        "trajectories": len(trajectory_rows),
+        "retention_gap_violations": retention_violations,
+        "pooled_query_spearman_candidate_count": rho_count,
+        "pooled_query_spearman_section_idx": rho_section,
+        "trajectory_positive_rho": positive_rhos,
+        "trajectory_negative_rho": negative_rhos,
+        "trajectory_zero_rho": zero_rhos,
+        "trajectory_sign_test_pvalue": sign_pvalue,
+        "mean_late_minus_early_gap": (
+            float(np.mean(late_deltas)) if late_deltas else None
+        ),
+        "mean_late_minus_early_gap_ci_low": late_ci_low,
+        "mean_late_minus_early_gap_ci_high": late_ci_high,
+        "interpretation_limit": (
+            "Candidate count and elapsed time co-vary in an unbounded rollout; "
+            "this screen does not causally separate them."
+        ),
+    }
+    summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
     print(f"H1: pool-growth scaling for run_name={args.run_name!r}")
     print(f"Queries analyzed: {len(run_rows)}")
+    print(f"Trajectory-sections: {len(points)} across {len(trajectory_rows)} trajectories")
+    retention_rate_text = (
+        f"{retention_violation_rate:.2%}"
+        if retention_violation_rate is not None
+        else "NA"
+    )
     print(
         f"Retention-gap violations (>1e-6): {retention_violations}/{len(retention_gaps)} "
-        f"({retention_violations / len(retention_gaps):.2%}) -- should be ~0 for a "
-        "run whose bank is the full history by construction"
+        f"({retention_rate_text}) -- should be ~0 for a run whose bank is the "
+        "full history by construction"
     )
-    print(f"Spearman(candidate_count, retrieval_gap) = {rho_count}")
-    print(f"Spearman(section_idx, retrieval_gap)     = {rho_section}")
+    print(f"Pooled query Spearman(candidate_count, retrieval_gap) = {rho_count}")
+    print(f"Pooled query Spearman(section_idx, retrieval_gap)     = {rho_section}")
+    print(
+        "Per-trajectory pool/gap trend: "
+        f"positive={positive_rhos}, negative={negative_rhos}, zero={zero_rhos}, "
+        f"exact sign-test p={sign_pvalue}"
+    )
+    if late_deltas:
+        print(
+            "Mean late-minus-early retrieval gap: "
+            f"{np.mean(late_deltas):.6f} "
+            f"(trajectory bootstrap 95% CI {late_ci_low:.6f}, {late_ci_high:.6f})"
+        )
+    print(
+        "Limit: pool size and elapsed time increase together here; H1 is a "
+        "scaling screen, not causal proof that pool size alone is responsible."
+    )
     print()
-    print(f"{'bin':>3}  {'candidate_count range':<24}{'n':>6}  {'mean_retrieval_gap':>18}  {'error_rate':>10}")
+    print(f"{'bin':>3}  {'candidate_count range':<24}{'n sections':>12}  {'mean_retrieval_gap':>18}  {'error_rate':>10}")
     for row in bin_rows:
         count_range = f"[{row['candidate_count_low']:.0f}, {row['candidate_count_high']:.0f})"
         print(
-            f"{row['bin']:>3}  {count_range:<24}{row['queries']:>6}  "
+            f"{row['bin']:>3}  {count_range:<24}{row['trajectory_sections']:>12}  "
             f"{row['mean_retrieval_gap']:>18.4f}  {row['error_rate']:>10.2%}"
         )
     print(f"\nWrote: {out_csv}")
+    print(f"Wrote: {trajectory_csv}")
+    print(f"Wrote: {summary_json}")
 
 
 if __name__ == "__main__":

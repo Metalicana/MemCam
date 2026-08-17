@@ -137,6 +137,30 @@ def selected_trace_map(path, max_section=None):
     return output
 
 
+def compare_replay_trace_maps(control_map, swap_map, section_idx):
+    section_idx = int(section_idx)
+    control_history = {
+        key: value for key, value in control_map.items() if key[0] < section_idx
+    }
+    swap_history = {
+        key: value for key, value in swap_map.items() if key[0] < section_idx
+    }
+    control_target = {
+        key: value for key, value in control_map.items() if key[0] == section_idx
+    }
+    swap_target = {
+        key: value for key, value in swap_map.items() if key[0] == section_idx
+    }
+    trace_history_match = control_history == swap_history
+    target_key_match = bool(control_target) and set(control_target) == set(swap_target)
+    changed_target_count = (
+        sum(control_target[key] != swap_target[key] for key in control_target)
+        if target_key_match
+        else 0
+    )
+    return trace_history_match, target_key_match, changed_target_count
+
+
 def mean(values):
     values = [float(value) for value in values if value is not None and math.isfinite(float(value))]
     return float(np.mean(values)) if values else None
@@ -218,6 +242,7 @@ def save_summary_figure(case_rows, output_path):
         ("dino_distance_delta", "DINO-distance change"),
     ]
     fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.6))
+    case_rows = [row for row in case_rows if row["matched_history_valid"]]
     labels = [f"case {row['case_index']}" for row in case_rows]
     for ax, (field, title) in zip(axes, metrics):
         values = [float(row[field]) for row in case_rows]
@@ -269,6 +294,8 @@ def write_report(path, case_rows, overall):
         "",
         "A pair is valid only when its pre-intervention trace choices match and its sampled pre-intervention output pixels match.",
         "",
+        "The current replay plan deliberately contains the strongest late cases predicted by the offline DINO diagnostic. These replays test whether context selection can cause a failure in those selected cases; they do not estimate how often this happens over the full benchmark.",
+        "",
         "## Cases",
         "",
         markdown_table(
@@ -278,6 +305,7 @@ def write_report(path, case_rows, overall):
                 "row",
                 "section_idx",
                 "changed_target_count",
+                "target_key_match",
                 "prefix_mae",
                 "matched_history_valid",
                 "control_lpips",
@@ -413,14 +441,12 @@ def main():
         )
         control_map = selected_trace_map(control_trace, max_section=section_idx)
         swap_map = selected_trace_map(swap_trace, max_section=section_idx)
-        history_keys = [key for key in control_map if key[0] < section_idx]
-        trace_history_match = all(control_map[key] == swap_map.get(key) for key in history_keys)
-        target_keys = [key for key in control_map if key[0] == section_idx]
-        changed_target_count = sum(
-            control_map[key] != swap_map.get(key) for key in target_keys
+        trace_history_match, target_key_match, changed_target_count = (
+            compare_replay_trace_maps(control_map, swap_map, section_idx)
         )
         matched_history_valid = bool(
             trace_history_match
+            and target_key_match
             and prefix_mae <= float(args.prefix_mae_tolerance)
             and changed_target_count > 0
         )
@@ -490,6 +516,7 @@ def main():
             "section_idx": section_idx,
             "changed_target_count": changed_target_count,
             "trace_history_match": int(trace_history_match),
+            "target_key_match": int(target_key_match),
             "prefix_mae": prefix_mae,
             "matched_history_valid": int(matched_history_valid),
             "evaluated_frames": len(current_rows),

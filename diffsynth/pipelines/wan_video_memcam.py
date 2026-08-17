@@ -369,6 +369,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         mce_gamma=0.25,
         mce_query_stride=19,
         mce_rarity_neighbors=3,
+        ri_rarity_neighbors=3,
         slamri_beta=0.5,
         slamri_rarity_neighbors=3,
         surprise_alpha=0.7,
@@ -511,6 +512,10 @@ class WanVideoMemCamPipeline(BasePipeline):
             raise ValueError("memory_bank_device must be either 'cpu' or 'cuda'")
         if memory_bank_device == "cuda" and torch.device(self.device).type != "cuda":
             raise ValueError("memory_bank_device='cuda' requires a CUDA pipeline device")
+        if int(ri_rarity_neighbors) < 1:
+            raise ValueError("ri_rarity_neighbors must be at least 1")
+        if int(slamri_rarity_neighbors) < 1:
+            raise ValueError("slamri_rarity_neighbors must be at least 1")
         bank_device = torch.device(self.device if memory_bank_device == "cuda" else "cpu")
         
         # ============ 存储结构 ============
@@ -1408,6 +1413,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 eviction_scores, eviction_score_details = compute_rarity_irreplaceability_scores(
                     memory_frame_indices=prospective_memory,
                     pinned_frames=pinned_memory_frames,
+                    rarity_neighbors=ri_rarity_neighbors,
                     dino_features=memory_dino_features,
                     rgb_features=memory_rgb_features,
                     return_details=True,

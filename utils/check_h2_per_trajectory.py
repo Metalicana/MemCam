@@ -18,6 +18,7 @@ is the sign test that tells the two apart.
 
 import argparse
 import csv
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -40,33 +41,76 @@ def trajectory_key(row):
     return (row["row"], row["scene"], row["dataset_start_frame"], row["duration_sec"])
 
 
-def aggregate_by_trajectory(rows, run_name, metric):
-    grouped = defaultdict(list)
+def values_by_section(rows, run_name, metric):
+    values = {}
     for row in rows:
         if row["run_name"] != run_name:
             continue
         value = to_float(row.get(metric))
         if value is None:
             continue
-        grouped[trajectory_key(row)].append(value)
-    return {key: sum(values) / len(values) for key, values in grouped.items()}
+        key = (*trajectory_key(row), int(row["section_idx"]))
+        values[key] = value
+    return values
 
 
-def sign_test(left_by_traj, right_by_traj, comparison):
-    """comparison(left_value, right_value) -> bool "left wins this trajectory"."""
-    shared = sorted(set(left_by_traj) & set(right_by_traj))
-    wins = sum(1 for key in shared if comparison(left_by_traj[key], right_by_traj[key]))
-    return shared, wins
+def paired_by_trajectory(rows, left_run, right_run, metric):
+    left = values_by_section(rows, left_run, metric)
+    right = values_by_section(rows, right_run, metric)
+    shared_sections = sorted(set(left) & set(right))
+    grouped = defaultdict(list)
+    for section_key in shared_sections:
+        trajectory = section_key[:-1]
+        grouped[trajectory].append((left[section_key], right[section_key]))
+
+    paired = {}
+    for trajectory, values in grouped.items():
+        paired[trajectory] = {
+            "left": sum(value[0] for value in values) / len(values),
+            "right": sum(value[1] for value in values) / len(values),
+            "delta": sum(value[0] - value[1] for value in values) / len(values),
+            "shared_sections": len(values),
+        }
+    return paired
 
 
-def print_sign_test(label, shared, wins, left_name, right_name):
-    n = len(shared)
+def exact_two_sided_sign_pvalue(wins, losses):
+    trials = int(wins) + int(losses)
+    if trials == 0:
+        return None
+    smaller = min(int(wins), int(losses))
+    tail = sum(math.comb(trials, value) for value in range(smaller + 1))
+    return min(1.0, 2.0 * tail / (2.0**trials))
+
+
+def sign_test(paired, tolerance=1e-12):
+    wins = sum(values["delta"] < -tolerance for values in paired.values())
+    losses = sum(values["delta"] > tolerance for values in paired.values())
+    ties = len(paired) - wins - losses
+    return {
+        "trajectories": len(paired),
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "pvalue": exact_two_sided_sign_pvalue(wins, losses),
+        "mean_delta": (
+            sum(values["delta"] for values in paired.values()) / len(paired)
+            if paired
+            else None
+        ),
+    }
+
+
+def print_sign_test(label, result, left_name, right_name):
+    n = result["trajectories"]
     if n == 0:
         print(f"{label}: no shared trajectories between {left_name} and {right_name}")
         return
     print(
-        f"{label}: {left_name} wins {wins}/{n} trajectories "
-        f"({wins / n:.0%}) vs {right_name}"
+        f"{label}: {left_name} wins {result['wins']}, loses {result['losses']}, "
+        f"ties {result['ties']} across {n} trajectories vs {right_name}; "
+        f"mean {left_name}-{right_name} delta={result['mean_delta']:+.6f}; "
+        f"exact sign-test p={result['pvalue']}"
     )
 
 
@@ -89,36 +133,39 @@ def main():
     rows = load_rows(args.section_csv)
     available = sorted({row["run_name"] for row in rows})
 
-    def by_run(metric, run_name):
-        result = aggregate_by_trajectory(rows, run_name, metric)
+    def pair(metric, left_run, right_run):
+        result = paired_by_trajectory(rows, left_run, right_run, metric)
         if not result:
-            print(f"  [warn] no {metric} rows for run_name={run_name!r} (available: {available})")
+            print(
+                f"  [warn] no matched {metric} sections for {left_run!r} vs "
+                f"{right_run!r} (available: {available})"
+            )
         return result
 
-    retention_of_retention_run = by_run("retention_gap", args.retention_run)
-    retention_of_retrieval_run = by_run("retention_gap", args.retrieval_run)
-    retrieval_of_retention_run = by_run("retrieval_gap", args.retention_run)
-    retrieval_of_retrieval_run = by_run("retrieval_gap", args.retrieval_run)
+    retention_pair = pair(
+        "retention_gap", args.retention_run, args.retrieval_run
+    )
+    retrieval_pair = pair(
+        "retrieval_gap", args.retrieval_run, args.retention_run
+    )
 
     print(f"H2 per-trajectory sign test: {args.retention_run} vs {args.retrieval_run}")
     print()
 
-    shared, wins = sign_test(
-        retention_of_retention_run,
-        retention_of_retrieval_run,
-        lambda a, b: a < b,
-    )
+    retention_result = sign_test(retention_pair)
     print_sign_test(
-        "retention_gap (lower is better)", shared, wins, args.retention_run, args.retrieval_run
+        "retention_gap (lower is better)",
+        retention_result,
+        args.retention_run,
+        args.retrieval_run,
     )
 
-    shared2, wins2 = sign_test(
-        retrieval_of_retrieval_run,
-        retrieval_of_retention_run,
-        lambda a, b: a < b,
-    )
+    retrieval_result = sign_test(retrieval_pair)
     print_sign_test(
-        "retrieval_gap (lower is better)", shared2, wins2, args.retrieval_run, args.retention_run
+        "retrieval_gap (lower is better)",
+        retrieval_result,
+        args.retrieval_run,
+        args.retention_run,
     )
 
     # Context: does each policy actually beat its "natural" un-optimized
@@ -126,42 +173,48 @@ def main():
     # unbounded on retrieval)? If a policy doesn't even clear that bar
     # per-trajectory, the pooled-average story is on even weaker ground.
     if args.fifo_run:
-        retention_of_fifo = by_run("retention_gap", args.fifo_run)
-        shared3, wins3 = sign_test(
-            retention_of_retention_run, retention_of_fifo, lambda a, b: a < b
-        )
+        fifo_pair = pair("retention_gap", args.retention_run, args.fifo_run)
+        fifo_result = sign_test(fifo_pair)
         print_sign_test(
-            "retention_gap vs fifo", shared3, wins3, args.retention_run, args.fifo_run
+            "retention_gap vs fifo",
+            fifo_result,
+            args.retention_run,
+            args.fifo_run,
         )
     if args.baseline_run:
-        retrieval_of_baseline = by_run("retrieval_gap", args.baseline_run)
-        shared4, wins4 = sign_test(
-            retrieval_of_retrieval_run, retrieval_of_baseline, lambda a, b: a < b
+        baseline_pair = pair(
+            "retrieval_gap", args.retrieval_run, args.baseline_run
         )
+        baseline_result = sign_test(baseline_pair)
         print_sign_test(
-            "retrieval_gap vs baseline (unbounded)", shared4, wins4, args.retrieval_run, args.baseline_run
+            "retrieval_gap vs baseline (unbounded)",
+            baseline_result,
+            args.retrieval_run,
+            args.baseline_run,
         )
 
     if args.output_csv is not None:
-        shared_keys = sorted(
-            set(retention_of_retention_run)
-            & set(retention_of_retrieval_run)
-            & set(retrieval_of_retention_run)
-            & set(retrieval_of_retrieval_run)
-        )
+        shared_keys = sorted(set(retention_pair) & set(retrieval_pair))
         out_rows = []
         for key in shared_keys:
             row, scene, start_frame, duration_sec = key
+            retention_values = retention_pair[key]
+            # retrieval_pair is oriented retrieval_run minus retention_run.
+            retrieval_values = retrieval_pair[key]
             out_rows.append(
                 {
                     "row": row,
                     "scene": scene,
                     "dataset_start_frame": start_frame,
                     "duration_sec": duration_sec,
-                    f"{args.retention_run}_retention_gap": retention_of_retention_run[key],
-                    f"{args.retrieval_run}_retention_gap": retention_of_retrieval_run[key],
-                    f"{args.retention_run}_retrieval_gap": retrieval_of_retention_run[key],
-                    f"{args.retrieval_run}_retrieval_gap": retrieval_of_retrieval_run[key],
+                    "retention_shared_sections": retention_values["shared_sections"],
+                    f"{args.retention_run}_retention_gap": retention_values["left"],
+                    f"{args.retrieval_run}_retention_gap": retention_values["right"],
+                    "retention_delta": retention_values["delta"],
+                    "retrieval_shared_sections": retrieval_values["shared_sections"],
+                    f"{args.retrieval_run}_retrieval_gap": retrieval_values["left"],
+                    f"{args.retention_run}_retrieval_gap": retrieval_values["right"],
+                    "retrieval_delta": retrieval_values["delta"],
                 }
             )
         args.output_csv.parent.mkdir(parents=True, exist_ok=True)

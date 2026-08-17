@@ -218,6 +218,14 @@ def main():
         "bigger); was a dead parameter before the estimate_cluster_threshold fix.",
     )
     parser.add_argument(
+        "--ri_rarity_neighbors",
+        type=int,
+        default=3,
+        help="k for rarity_irreplaceability's DINO clustering threshold "
+        "(estimate_cluster_threshold's k-th nearest-neighbor distance). "
+        "Use 1 only to reproduce legacy runs generated before the threshold fix.",
+    )
+    parser.add_argument(
         "--slamri_beta",
         type=float,
         default=0.5,
@@ -297,6 +305,11 @@ def main():
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
+    if args.ri_rarity_neighbors < 1:
+        raise ValueError("--ri_rarity_neighbors must be at least 1")
+    if args.slamri_rarity_neighbors < 1:
+        raise ValueError("--slamri_rarity_neighbors must be at least 1")
+
     slurm_gpu = os.environ.get("CUDA_VISIBLE_DEVICES")
     if slurm_gpu:
         visible_gpu = slurm_gpu
@@ -334,6 +347,7 @@ def main():
         "mce_gamma": args.mce_gamma,
         "mce_query_stride": args.mce_query_stride,
         "mce_rarity_neighbors": args.mce_rarity_neighbors,
+        "ri_rarity_neighbors": args.ri_rarity_neighbors,
         "slamri_beta": args.slamri_beta,
         "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
         "surprise_alpha": args.surprise_alpha,
@@ -451,6 +465,8 @@ def main():
             f"query stride={args.mce_query_stride}, "
             f"rarity_neighbors={args.mce_rarity_neighbors}"
         )
+    if args.memory_policy == "rarity_irreplaceability":
+        print(f"RI rarity neighbors: {args.ri_rarity_neighbors}")
     if args.memory_policy == "slam_ri_blend":
         print(
             "SLAM+RI blend: "
@@ -534,6 +550,7 @@ def main():
                 mce_gamma=args.mce_gamma,
                 mce_query_stride=args.mce_query_stride,
                 mce_rarity_neighbors=args.mce_rarity_neighbors,
+                ri_rarity_neighbors=args.ri_rarity_neighbors,
                 slamri_beta=args.slamri_beta,
                 slamri_rarity_neighbors=args.slamri_rarity_neighbors,
                 surprise_alpha=args.surprise_alpha,
@@ -574,6 +591,7 @@ def main():
                     "mce_gamma": args.mce_gamma,
                     "mce_query_stride": args.mce_query_stride,
                     "mce_rarity_neighbors": args.mce_rarity_neighbors,
+                    "ri_rarity_neighbors": args.ri_rarity_neighbors,
                     "slamri_beta": args.slamri_beta,
                     "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
                     "surprise_alpha": args.surprise_alpha,

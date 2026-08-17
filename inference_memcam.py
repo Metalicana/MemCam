@@ -80,6 +80,7 @@ if __name__ == "__main__":
             "rarity_irreplaceability",
             "slam_covisibility",
             "slam_max_coverage",
+            "slam_ri_blend",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -89,6 +90,9 @@ if __name__ == "__main__":
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--ri_rarity_neighbors", type=int, default=3)
+    parser.add_argument("--slamri_beta", type=float, default=0.5)
+    parser.add_argument("--slamri_rarity_neighbors", type=int, default=3)
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
@@ -165,6 +169,9 @@ if __name__ == "__main__":
             memory_policy=args.memory_policy,
             memory_budget=args.memory_budget,
             memory_bank_device=args.memory_bank_device,
+            ri_rarity_neighbors=args.ri_rarity_neighbors,
+            slamri_beta=args.slamri_beta,
+            slamri_rarity_neighbors=args.slamri_rarity_neighbors,
             density_coverage_alpha=args.density_coverage_alpha,
             density_coverage_dino_weight=args.density_coverage_dino_weight,
             density_coverage_rgb_weight=args.density_coverage_rgb_weight,
@@ -185,6 +192,9 @@ if __name__ == "__main__":
                 "trajectory_mode": args.trajectory_mode,
                 "dataset_start_frame": args.start_frame,
                 "num_frames": args.num_frames,
+                "ri_rarity_neighbors": args.ri_rarity_neighbors,
+                "slamri_beta": args.slamri_beta,
+                "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
                 "surprise_alpha": args.surprise_alpha,
                 "surprise_ema_momentum": args.surprise_ema_momentum,
                 "surprise_controller_step": args.surprise_controller_step,

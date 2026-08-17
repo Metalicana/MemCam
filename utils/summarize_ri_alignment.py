@@ -24,9 +24,20 @@ def mean(values):
 
 def rank_values(values, reverse=True):
     order = sorted(range(len(values)), key=lambda idx: values[idx], reverse=reverse)
-    ranks = [0] * len(values)
-    for rank, idx in enumerate(order, start=1):
-        ranks[idx] = rank
+    ranks = [0.0] * len(values)
+    start = 0
+    while start < len(order):
+        end = start + 1
+        value = values[order[start]]
+        while end < len(order) and values[order[end]] == value:
+            end += 1
+        # Spearman requires average ranks for ties. Future-use labels contain
+        # many equal counts, especially zeros, so assigning arbitrary distinct
+        # ranks would make the result depend on input order.
+        average_rank = ((start + 1) + end) / 2.0
+        for position in range(start, end):
+            ranks[order[position]] = average_rank
+        start = end
     return ranks
 
 
