@@ -154,15 +154,25 @@ def main():
     print()
     print("How often does geometry find a real match, and what happens when it doesn't:")
     print()
+    def fmt(value, width, spec):
+        # A run can have zero misses (100% hit rate) or, in principle, zero
+        # hits -- either leaves the corresponding stat as None. Missed this
+        # case in the self-test (every synthetic run had some of both), so
+        # the raw f-string format spec crashed on a real run instead of
+        # printing "n/a" -- and "n/a" needs the same column width as the
+        # number would have had, or the table stops lining up.
+        text = format(value, spec) if value is not None else "n/a"
+        return f"{text:>{width}}"
+
     header = f"{'run':<28}{'hit rate':>10}{'zero-ov age (med)':>20}{'zero-ov age (p90)':>20}{'zero-ov age (max)':>20}"
     print(header)
     for row in results:
         print(
             f"{row['run_name']:<28}"
-            f"{row['hit_rate']:>10.1%}"
-            f"{row['zero_overlap_age_median']:>20.1f}"
-            f"{row['zero_overlap_age_p90']:>20.1f}"
-            f"{row['zero_overlap_age_max']:>20.0f}"
+            f"{fmt(row['hit_rate'], 10, '.1%')}"
+            f"{fmt(row['zero_overlap_age_median'], 20, '.1f')}"
+            f"{fmt(row['zero_overlap_age_p90'], 20, '.1f')}"
+            f"{fmt(row['zero_overlap_age_max'], 20, '.0f')}"
         )
     print(f"\nWrote: {out_csv}")
 
