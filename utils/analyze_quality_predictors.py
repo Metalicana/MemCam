@@ -479,6 +479,62 @@ def correlation_rows(paired_rows, predictors, outcomes, bootstrap_repeats, seed)
                         "bootstrap_ci_high": ci_high,
                     }
                 )
+
+    # Pooling policies directly can turn a policy-level offset into an apparent
+    # trajectory-level relationship. Remove each policy's mean x/y shift first
+    # and report that as the primary pooled screen.
+    for predictor in predictors:
+        x_field = f"{predictor}_improvement"
+        for outcome in outcomes:
+            y_field = f"{outcome}_improvement"
+            adjusted = []
+            for run_name, rows in sorted(
+                (item for item in groups.items() if item[0] != "ALL_PAIRED")
+            ):
+                usable = [
+                    row
+                    for row in rows
+                    if to_float(row.get(x_field)) is not None
+                    and to_float(row.get(y_field)) is not None
+                ]
+                if not usable:
+                    continue
+                x_mean = mean(to_float(row[x_field]) for row in usable)
+                y_mean = mean(to_float(row[y_field]) for row in usable)
+                for row in usable:
+                    adjusted.append(
+                        {
+                            **row,
+                            "adjusted_x": to_float(row[x_field]) - x_mean,
+                            "adjusted_y": to_float(row[y_field]) - y_mean,
+                        }
+                    )
+            if len(adjusted) < 5:
+                continue
+            rho = spearman(
+                [row["adjusted_x"] for row in adjusted],
+                [row["adjusted_y"] for row in adjusted],
+            )
+            if rho is None:
+                continue
+            ci_low, ci_high = grouped_bootstrap_spearman(
+                adjusted,
+                "adjusted_x",
+                "adjusted_y",
+                repeats=bootstrap_repeats,
+                seed=seed,
+            )
+            output.append(
+                {
+                    "scope": "ALL_WITHIN_POLICY",
+                    "predictor": predictor,
+                    "outcome": outcome,
+                    "pairs": len(adjusted),
+                    "spearman_rho": rho,
+                    "bootstrap_ci_low": ci_low,
+                    "bootstrap_ci_high": ci_high,
+                }
+            )
     return output
 
 
@@ -652,15 +708,29 @@ def markdown_table(rows, fields, limit=20):
     return "\n".join(lines)
 
 
-def write_report(path, joined, paired, correlations, section_joined, section_stats):
-    source_counts = defaultdict(int)
+def write_report(
+    path,
+    joined,
+    paired,
+    correlations,
+    section_joined,
+    section_stats,
+    outcomes,
+):
+    source_rows = defaultdict(list)
     for row in joined:
-        source_counts[row["run_name"]] += 1
+        source_rows[row["run_name"]].append(row)
     strongest = sorted(
-        [row for row in correlations if row["scope"] == "ALL_PAIRED"],
+        [row for row in correlations if row["scope"] == "ALL_WITHIN_POLICY"],
         key=lambda row: abs(row["spearman_rho"]),
         reverse=True,
     )
+    if not strongest:
+        strongest = sorted(
+            [row for row in correlations if row["scope"] == "ALL_PAIRED"],
+            key=lambda row: abs(row["spearman_rho"]),
+            reverse=True,
+        )
     section_strongest = sorted(
         section_stats,
         key=lambda row: abs(row["spearman_bad_predicts_bad"]),
@@ -671,19 +741,29 @@ def write_report(path, joined, paired, correlations, section_joined, section_sta
         "",
         "## What This Tests",
         "",
-        "For matched trajectories, this asks whether a bounded policy's improvement over unbounded in a memory diagnostic predicts an improvement in downstream quality. Positive paired correlations are in the expected direction: a larger diagnostic improvement accompanies a larger quality improvement.",
+        "For matched trajectories, this asks whether a bounded policy's improvement over unbounded in a memory diagnostic predicts an improvement in downstream quality. For gap and corruption diagnostics, a positive paired correlation is in the expected direction. Candidate count is reported as a reduction, not assumed to be intrinsically better.",
         "",
         "FVD is not included because it is a distribution-level metric, not a per-video observation. DINO-derived outcomes are also omitted from the primary test because retrieval_gap already uses DINO and would create circular evidence.",
         "",
         "## Data Coverage",
         "",
     ]
-    for run_name, count in sorted(source_counts.items()):
-        lines.append(f"- `{run_name}`: {count} trajectory rows joined.")
+    for run_name, rows in sorted(source_rows.items()):
+        coverage = ", ".join(
+            f"{outcome}={sum(to_float(row.get(outcome)) is not None for row in rows)}"
+            for outcome in outcomes
+        )
+        lines.append(
+            f"- `{run_name}`: diagnostics={len(rows)}"
+            + (f"; {coverage}" if coverage else "; no quality outcomes found")
+            + "."
+        )
     lines.extend(
         [
             "",
-            "## Strongest Paired Associations",
+            "## Strongest Within-Policy Paired Associations",
+            "",
+            "Before pooling FIFO, RI, and SLAM, each policy's mean predictor and outcome shift is removed. This prevents a policy-level offset from masquerading as a trajectory-level relationship.",
             "",
             markdown_table(
                 strongest,
@@ -847,6 +927,7 @@ def main():
         correlations,
         section_joined,
         section_stats,
+        outcomes,
     )
     print(f"Joined trajectory rows: {len(joined)}")
     print(f"Matched bounded-vs-unbounded rows: {len(paired)}")
