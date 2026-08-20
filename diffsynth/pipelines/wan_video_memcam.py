@@ -105,6 +105,31 @@ def normalize_context_selection_overrides(overrides):
     return normalized
 
 
+def normalize_context_content_overrides(overrides):
+    """Normalize replay image overrides to ``(section, target) -> metadata``."""
+    normalized = {}
+    for raw_section, target_rows in (overrides or {}).items():
+        section_idx = int(raw_section)
+        if section_idx <= 0:
+            raise ValueError("Context content overrides are only valid after section 0")
+        if not isinstance(target_rows, dict):
+            raise ValueError(
+                "Each context-content override section must map targets to images"
+            )
+        for raw_target, raw_value in target_rows.items():
+            target_frame = int(raw_target)
+            if isinstance(raw_value, dict):
+                if "image" not in raw_value:
+                    raise ValueError("Context-content override metadata requires image")
+                value = dict(raw_value)
+                if value.get("memory_frame") is not None:
+                    value["memory_frame"] = int(value["memory_frame"])
+            else:
+                value = {"image": raw_value}
+            normalized[(section_idx, target_frame)] = value
+    return normalized
+
+
 class WanVideoMemCamPipeline(BasePipeline):
 
     def __init__(self, device="cuda", torch_dtype=torch.float16, tokenizer_path=None):
@@ -384,6 +409,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         surprise_value_layer=15,
         surprise_warmup_sections=3,
         context_selection_overrides=None,
+        context_content_overrides=None,
         stop_after_section=None,
         access_trace_path=None,
         access_trace_metadata=None,
@@ -419,6 +445,9 @@ class WanVideoMemCamPipeline(BasePipeline):
         context_selection_overrides = normalize_context_selection_overrides(
             context_selection_overrides
         )
+        context_content_overrides = normalize_context_content_overrides(
+            context_content_overrides
+        )
         if stop_after_section is None:
             generated_section_count = total_sections
         else:
@@ -445,6 +474,23 @@ class WanVideoMemCamPipeline(BasePipeline):
             print(
                 "Context replay overrides: "
                 f"{len(context_selection_overrides)} target selections"
+            )
+        invalid_content_sections = sorted(
+            {
+                section_idx
+                for section_idx, _target_frame in context_content_overrides
+                if section_idx >= generated_section_count
+            }
+        )
+        if invalid_content_sections:
+            raise ValueError(
+                "Context content overrides refer to sections after the requested stop: "
+                f"{invalid_content_sections}"
+            )
+        if context_content_overrides:
+            print(
+                "Context content overrides: "
+                f"{len(context_content_overrides)} target contexts"
             )
 
         attention_audit_enabled = attention_audit_path is not None
@@ -925,7 +971,35 @@ class WanVideoMemCamPipeline(BasePipeline):
                     for slot_idx, frame_idx, best_idx, best_iou in selected_contexts:
                         if best_idx is not None and best_idx in all_generated_frames:
                             memory_buffer.record_selection(best_idx, best_iou)
-                            chosen_frame = all_generated_frames[best_idx]
+                            content_override = context_content_overrides.get(
+                                (int(section_idx), int(frame_idx))
+                            )
+                            if content_override is not None:
+                                expected_memory_frame = content_override.get(
+                                    "memory_frame"
+                                )
+                                if (
+                                    expected_memory_frame is not None
+                                    and int(expected_memory_frame) != int(best_idx)
+                                ):
+                                    raise ValueError(
+                                        "Context content override does not match the "
+                                        "selected memory frame: "
+                                        f"section={section_idx}, target={frame_idx}, "
+                                        f"selected={best_idx}, "
+                                        f"override={expected_memory_frame}"
+                                    )
+                                chosen_frame = (
+                                    self.preprocess_image(content_override["image"])
+                                    .permute(1, 0, 2, 3)
+                                    .unsqueeze(0)
+                                )
+                                content_source = content_override.get(
+                                    "source", "override"
+                                )
+                            else:
+                                chosen_frame = all_generated_frames[best_idx]
+                                content_source = "generated_memory"
                             if chosen_frame.device.type == "cpu":
                                 section_host_to_device_bytes += (
                                     chosen_frame.numel() * chosen_frame.element_size()
@@ -965,6 +1039,10 @@ class WanVideoMemCamPipeline(BasePipeline):
                                     "memory_policy": memory_policy,
                                     "memory_budget": memory_budget,
                                     "memory_bank_device": memory_bank_device,
+                                    "context_content_source": content_source,
+                                    "context_content_override": int(
+                                        content_override is not None
+                                    ),
                                     **selection_sources.get(
                                         (slot_idx, frame_idx),
                                         {
