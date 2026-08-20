@@ -1,4 +1,4 @@
-"""H1 screen: does unbounded retrieval error increase as its pool grows?
+"""H1 screen: what changes as the unbounded candidate pool grows?
 
 Reads an existing tables/query_decomposition.csv already written by
 analyze_retrieval_quality_decomposition.py (e.g. from
@@ -6,11 +6,18 @@ unbounded_failure_decomposition_180s) -- no new generation, no new DINO
 encoding, pure CPU post-processing of a CSV that already exists on disk.
 
 For the requested run (default: the true-unbounded ``baseline``), this checks
-the pool-size/retrieval-gap trend separately within each trajectory and then
-aggregates trajectory-level results. Pool size and elapsed time co-vary in an
-unbounded rollout, so this is evidence of scaling, not a causal isolation of
-pool size. The matched-pool audit or context-swap replay supplies stronger
-causal evidence.
+three quantities separately within each trajectory:
+
+* the DINO mismatch of the frame the retriever actually selected;
+* the DINO mismatch of the hindsight-best frame in full history; and
+* their difference, called ``retrieval_gap``.
+
+This split matters because the hindsight minimum can improve mechanically as
+the pool grows. A growing gap is evidence that selection falls farther behind
+that benchmark, but it is not evidence that the selected context itself gets
+worse unless ``selected_effective_mismatch`` also increases. Pool size and
+elapsed time still co-vary, so this remains a scaling screen rather than a
+causal isolation of pool size.
 """
 
 import argparse
@@ -28,6 +35,13 @@ if str(UTILS_DIR) not in sys.path:
     sys.path.insert(0, str(UTILS_DIR))
 
 from summarize_ri_alignment import spearman  # noqa: E402
+
+
+MISMATCH_FIELDS = (
+    "selected_effective_mismatch",
+    "full_oracle_effective_mismatch",
+    "retrieval_gap",
+)
 
 
 def load_query_rows(path):
@@ -82,23 +96,38 @@ def section_points(rows):
         if count is None or gap is None:
             continue
         key = (*trajectory_key(row), int(row["section_idx"]))
-        grouped[key].append((count, gap))
+        grouped[key].append(
+            {
+                "candidate_count": count,
+                **{
+                    field: to_float(row.get(field))
+                    for field in MISMATCH_FIELDS
+                },
+            }
+        )
 
     points = []
     for key, values in sorted(grouped.items()):
         row, scene, start_frame, duration_sec, section_idx = key
-        points.append(
-            {
-                "row": row,
-                "scene": scene,
-                "dataset_start_frame": start_frame,
-                "duration_sec": duration_sec,
-                "section_idx": section_idx,
-                "candidate_count": float(np.mean([value[0] for value in values])),
-                "retrieval_gap": float(np.mean([value[1] for value in values])),
-                "queries": len(values),
-            }
-        )
+        point = {
+            "row": row,
+            "scene": scene,
+            "dataset_start_frame": start_frame,
+            "duration_sec": duration_sec,
+            "section_idx": section_idx,
+            "candidate_count": float(
+                np.mean([value["candidate_count"] for value in values])
+            ),
+            "queries": len(values),
+        }
+        for field in MISMATCH_FIELDS:
+            field_values = [
+                value[field] for value in values if value[field] is not None
+            ]
+            point[field] = (
+                float(np.mean(field_values)) if field_values else None
+            )
+        points.append(point)
     return points
 
 
@@ -143,35 +172,47 @@ def summarize_trajectories(points):
             key=lambda point: (point["candidate_count"], point["section_idx"])
         )
         counts = [point["candidate_count"] for point in trajectory_points]
-        gaps = [point["retrieval_gap"] for point in trajectory_points]
-        rho = spearman(counts, gaps)
         quartile_size = max(1, len(trajectory_points) // 4)
-        early_gap = float(np.mean(gaps[:quartile_size]))
-        late_gap = float(np.mean(gaps[-quartile_size:]))
-        unique_counts = len(set(counts))
-        slope = (
-            float(np.polyfit(counts, gaps, 1)[0])
-            if unique_counts >= 2
-            else None
-        )
         row, scene, start_frame, duration_sec = key
-        rows.append(
-            {
-                "row": row,
-                "scene": scene,
-                "dataset_start_frame": start_frame,
-                "duration_sec": duration_sec,
-                "sections": len(trajectory_points),
-                "queries": sum(point["queries"] for point in trajectory_points),
-                "candidate_count_min": min(counts),
-                "candidate_count_max": max(counts),
-                "spearman_pool_vs_retrieval_gap": rho,
-                "linear_slope": slope,
-                "early_quartile_gap": early_gap,
-                "late_quartile_gap": late_gap,
-                "late_minus_early_gap": late_gap - early_gap,
-            }
-        )
+        summary = {
+            "row": row,
+            "scene": scene,
+            "dataset_start_frame": start_frame,
+            "duration_sec": duration_sec,
+            "sections": len(trajectory_points),
+            "queries": sum(point["queries"] for point in trajectory_points),
+            "candidate_count_min": min(counts),
+            "candidate_count_max": max(counts),
+        }
+        for field in MISMATCH_FIELDS:
+            values = [point.get(field) for point in trajectory_points]
+            if any(value is None for value in values):
+                continue
+            early = float(np.mean(values[:quartile_size]))
+            late = float(np.mean(values[-quartile_size:]))
+            summary[f"spearman_pool_vs_{field}"] = spearman(counts, values)
+            summary[f"early_quartile_{field}"] = early
+            summary[f"late_quartile_{field}"] = late
+            summary[f"late_minus_early_{field}"] = late - early
+            summary[f"linear_slope_{field}"] = (
+                float(np.polyfit(counts, values, 1)[0])
+                if len(set(counts)) >= 2
+                else None
+            )
+
+        # Preserve the original column names for downstream users of this CSV.
+        if "spearman_pool_vs_retrieval_gap" in summary:
+            summary["linear_slope"] = summary["linear_slope_retrieval_gap"]
+            summary["early_quartile_gap"] = summary[
+                "early_quartile_retrieval_gap"
+            ]
+            summary["late_quartile_gap"] = summary[
+                "late_quartile_retrieval_gap"
+            ]
+            summary["late_minus_early_gap"] = summary[
+                "late_minus_early_retrieval_gap"
+            ]
+        rows.append(summary)
     return rows
 
 
@@ -214,10 +255,16 @@ def main():
         retention_violations / len(retention_gaps) if retention_gaps else None
     )
 
-    count_xs, count_ys = paired_floats(run_rows, "candidate_count", "retrieval_gap")
-    section_xs, section_ys = paired_floats(run_rows, "section_idx", "retrieval_gap")
-    rho_count = spearman(count_xs, count_ys)
-    rho_section = spearman(section_xs, section_ys)
+    pooled_correlations = {}
+    for field in MISMATCH_FIELDS:
+        count_xs, count_ys = paired_floats(run_rows, "candidate_count", field)
+        section_xs, section_ys = paired_floats(run_rows, "section_idx", field)
+        pooled_correlations[field] = {
+            "candidate_count": spearman(count_xs, count_ys),
+            "section_idx": spearman(section_xs, section_ys),
+        }
+    rho_count = pooled_correlations["retrieval_gap"]["candidate_count"]
+    rho_section = pooled_correlations["retrieval_gap"]["section_idx"]
 
     points = section_points(run_rows)
     if not points:
@@ -234,30 +281,50 @@ def main():
     negative_rhos = sum(value < 0 for value in trajectory_rhos)
     zero_rhos = sum(value == 0 for value in trajectory_rhos)
     sign_pvalue = exact_two_sided_sign_pvalue(positive_rhos, negative_rhos)
-    late_deltas = [row["late_minus_early_gap"] for row in trajectory_rows]
-    late_ci_low, late_ci_high = bootstrap_mean_interval(late_deltas)
+    late_deltas_by_field = {
+        field: [
+            row[f"late_minus_early_{field}"]
+            for row in trajectory_rows
+            if row.get(f"late_minus_early_{field}") is not None
+        ]
+        for field in MISMATCH_FIELDS
+    }
+    late_intervals = {
+        field: bootstrap_mean_interval(values)
+        for field, values in late_deltas_by_field.items()
+    }
+    late_deltas = late_deltas_by_field["retrieval_gap"]
+    late_ci_low, late_ci_high = late_intervals["retrieval_gap"]
 
     section_counts = [point["candidate_count"] for point in points]
-    section_gaps = [point["retrieval_gap"] for point in points]
     edges = quantile_bin_edges(section_counts, args.num_bins)
     bins = [[] for _ in range(len(edges) - 1)]
-    for count, gap in zip(section_counts, section_gaps):
-        bins[bin_index(count, edges)].append(gap)
+    for point in points:
+        bins[bin_index(point["candidate_count"], edges)].append(point)
 
     bin_rows = []
-    for bin_idx, gaps in enumerate(bins):
-        if not gaps:
+    for bin_idx, bin_points in enumerate(bins):
+        if not bin_points:
             continue
-        bin_rows.append(
-            {
-                "bin": bin_idx,
-                "candidate_count_low": edges[bin_idx],
-                "candidate_count_high": edges[bin_idx + 1],
-                "trajectory_sections": len(gaps),
-                "mean_retrieval_gap": sum(gaps) / len(gaps),
-                "error_rate": sum(1 for g in gaps if g > 1e-6) / len(gaps),
-            }
-        )
+        bin_row = {
+            "bin": bin_idx,
+            "candidate_count_low": edges[bin_idx],
+            "candidate_count_high": edges[bin_idx + 1],
+            "trajectory_sections": len(bin_points),
+        }
+        for field in MISMATCH_FIELDS:
+            values = [
+                point[field]
+                for point in bin_points
+                if point.get(field) is not None
+            ]
+            bin_row[f"mean_{field}"] = (
+                float(np.mean(values)) if values else None
+            )
+        bin_row["error_rate"] = sum(
+            1 for point in bin_points if point["retrieval_gap"] > 1e-6
+        ) / len(bin_points)
+        bin_rows.append(bin_row)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_csv = args.output_dir / f"pool_growth_scaling_{args.run_name}.csv"
@@ -275,6 +342,7 @@ def main():
         "retention_gap_violations": retention_violations,
         "pooled_query_spearman_candidate_count": rho_count,
         "pooled_query_spearman_section_idx": rho_section,
+        "pooled_correlations": pooled_correlations,
         "trajectory_positive_rho": positive_rhos,
         "trajectory_negative_rho": negative_rhos,
         "trajectory_zero_rho": zero_rhos,
@@ -284,9 +352,23 @@ def main():
         ),
         "mean_late_minus_early_gap_ci_low": late_ci_low,
         "mean_late_minus_early_gap_ci_high": late_ci_high,
+        "late_minus_early": {
+            field: {
+                "mean": float(np.mean(values)) if values else None,
+                "ci_low": late_intervals[field][0],
+                "ci_high": late_intervals[field][1],
+            }
+            for field, values in late_deltas_by_field.items()
+        },
+        "gap_growth_identity": (
+            "retrieval_gap change = selected mismatch change - hindsight-best "
+            "mismatch change"
+        ),
         "interpretation_limit": (
-            "Candidate count and elapsed time co-vary in an unbounded rollout; "
-            "this screen does not causally separate them."
+            "The hindsight-best mismatch can decrease mechanically as the pool "
+            "grows. Candidate count and elapsed time also co-vary. Only growth "
+            "in selected_effective_mismatch shows that the selected context "
+            "itself becomes less target-matched under DINO."
         ),
     }
     summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -306,6 +388,14 @@ def main():
     )
     print(f"Pooled query Spearman(candidate_count, retrieval_gap) = {rho_count}")
     print(f"Pooled query Spearman(section_idx, retrieval_gap)     = {rho_section}")
+    for field in (
+        "selected_effective_mismatch",
+        "full_oracle_effective_mismatch",
+    ):
+        print(
+            f"Pooled query Spearman(candidate_count, {field}) = "
+            f"{pooled_correlations[field]['candidate_count']}"
+        )
     print(
         "Per-trajectory pool/gap trend: "
         f"positive={positive_rhos}, negative={negative_rhos}, zero={zero_rhos}, "
@@ -317,17 +407,35 @@ def main():
             f"{np.mean(late_deltas):.6f} "
             f"(trajectory bootstrap 95% CI {late_ci_low:.6f}, {late_ci_high:.6f})"
         )
+    print("Late-minus-early decomposition (trajectory means):")
+    for field in MISMATCH_FIELDS:
+        values = late_deltas_by_field[field]
+        ci_low, ci_high = late_intervals[field]
+        if values:
+            print(
+                f"  {field}: {np.mean(values):+.6f} "
+                f"(95% CI {ci_low:+.6f}, {ci_high:+.6f})"
+            )
     print(
-        "Limit: pool size and elapsed time increase together here; H1 is a "
-        "scaling screen, not causal proof that pool size alone is responsible."
+        "Identity: gap change = selected mismatch change - hindsight-best "
+        "mismatch change."
+    )
+    print(
+        "Interpretation: if selected mismatch is flat while the hindsight-best "
+        "mismatch falls, the growing gap is mainly an opportunity-set artifact."
     )
     print()
-    print(f"{'bin':>3}  {'candidate_count range':<24}{'n sections':>12}  {'mean_retrieval_gap':>18}  {'error_rate':>10}")
+    print(
+        f"{'bin':>3}  {'candidate_count range':<24}{'n sections':>12}  "
+        f"{'selected':>10}  {'hindsight':>10}  {'gap':>10}"
+    )
     for row in bin_rows:
         count_range = f"[{row['candidate_count_low']:.0f}, {row['candidate_count_high']:.0f})"
         print(
             f"{row['bin']:>3}  {count_range:<24}{row['trajectory_sections']:>12}  "
-            f"{row['mean_retrieval_gap']:>18.4f}  {row['error_rate']:>10.2%}"
+            f"{row['mean_selected_effective_mismatch']:>10.4f}  "
+            f"{row['mean_full_oracle_effective_mismatch']:>10.4f}  "
+            f"{row['mean_retrieval_gap']:>10.4f}"
         )
     print(f"\nWrote: {out_csv}")
     print(f"Wrote: {trajectory_csv}")

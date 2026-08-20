@@ -60,6 +60,38 @@ class PoolGrowthTest(unittest.TestCase):
         self.assertAlmostEqual(summaries[0]["spearman_pool_vs_retrieval_gap"], 1.0)
         self.assertAlmostEqual(summaries[1]["spearman_pool_vs_retrieval_gap"], -1.0)
 
+    def test_gap_growth_is_split_into_selected_and_hindsight_changes(self):
+        rows = []
+        oracle_values = [0.4, 0.3, 0.2, 0.1]
+        for section_idx, oracle in enumerate(oracle_values, start=1):
+            selected = 0.5
+            rows.append(
+                {
+                    "row": "1",
+                    "scene": "scene_1",
+                    "dataset_start_frame": "0",
+                    "duration_sec": "180",
+                    "section_idx": str(section_idx),
+                    "candidate_count": str(section_idx * 10),
+                    "selected_effective_mismatch": str(selected),
+                    "full_oracle_effective_mismatch": str(oracle),
+                    "retrieval_gap": str(selected - oracle),
+                }
+            )
+
+        points = POOL.section_points(rows)
+        summary = POOL.summarize_trajectories(points)[0]
+
+        self.assertAlmostEqual(
+            summary["late_minus_early_selected_effective_mismatch"], 0.0
+        )
+        self.assertAlmostEqual(
+            summary["late_minus_early_full_oracle_effective_mismatch"], -0.3
+        )
+        self.assertAlmostEqual(
+            summary["late_minus_early_retrieval_gap"], 0.3
+        )
+
 
 class H2PairingTest(unittest.TestCase):
     def test_only_matched_sections_are_compared(self):
