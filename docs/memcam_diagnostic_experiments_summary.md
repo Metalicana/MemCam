@@ -1,5 +1,10 @@
 # MemCam Diagnostic Experiments: Consolidated Results
 
+Reviewer-facing risks, unsupported claims, and the experiments required to
+resolve them are tracked in
+[`iclr_reviewer_risk_register.md`](iclr_reviewer_risk_register.md). That file
+is the decision record for what may enter the manuscript.
+
 ## Bottom line
 
 The strongest current evidence is that unbounded MemCam increasingly selects
