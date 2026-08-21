@@ -19,6 +19,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "h2o_heavy_hitter",
     "surprise_forcing",
     "slam_ri_blend",
+    "reliable_slam_ri",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
@@ -34,6 +35,7 @@ BUDGETED_MEMORY_POLICIES = (
     "h2o_heavy_hitter",
     "surprise_forcing",
     "slam_ri_blend",
+    "reliable_slam_ri",
 )
 
 
@@ -2328,6 +2330,257 @@ def compute_slam_ri_blend_scores(
                 "slamri_slam_redundancy_ratio": slam_details[idx]["redundancy_ratio"],
                 "slamri_slam_unique_bonus": slam_details[idx]["unique_bonus"],
             }
+
+    return (scores, details) if return_details else scores
+
+
+def compute_reliable_slam_ri_scores(
+    memory_frame_indices,
+    c2ws,
+    admission_frame_indices,
+    reference_frame_indices,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    slam_weight=0.75,
+    rarity_neighbors=3,
+    reliability_neighbors=3,
+    reliability_min_support=2,
+    reliability_geometry_threshold=0.50,
+    reliability_threshold=0.80,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Reliability-gated blend of the existing SLAM and RI policies.
+
+    Admission is decided first. A new candidate is rejected only when at least
+    ``reliability_min_support`` older memories depict a geometrically matching
+    view and agree with one another more strongly than they agree with the
+    candidate. Unsupported observations pass because they may be genuinely new.
+
+    Every admitted frame is then scored by ``compute_slam_ri_blend_scores``:
+
+        score = slam_weight * normalized_SLAM
+              + (1 - slam_weight) * normalized_RI.
+
+    The reliability ratio is causal and self-calibrating. For candidate ``i``
+    and its older geometric references ``R_i``, it is
+
+        median_j sim(i, j) / median_{j != k} sim(j, k).
+
+    Similarity is the geometric mean of DINO cosine agreement and RGB
+    agreement. Unsupported observations are not gated because disagreement
+    cannot be distinguished from genuinely new content without a reference.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    admission_frame_indices = list(admission_frame_indices)
+    reference_frame_indices = list(reference_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or ())
+
+    if not 0.0 <= float(slam_weight) <= 1.0:
+        raise ValueError("slam_weight must be in [0, 1]")
+    if int(rarity_neighbors) < 1:
+        raise ValueError("rarity_neighbors must be at least 1")
+    if int(reliability_neighbors) < 2:
+        raise ValueError("reliability_neighbors must be at least 2")
+    if int(reliability_min_support) < 2:
+        raise ValueError("reliability_min_support must be at least 2")
+    if int(reliability_min_support) > int(reliability_neighbors):
+        raise ValueError(
+            "reliability_min_support cannot exceed reliability_neighbors"
+        )
+    if not 0.0 <= float(reliability_geometry_threshold) <= 1.0:
+        raise ValueError("reliability_geometry_threshold must be in [0, 1]")
+    if not 0.0 <= float(reliability_threshold) <= 1.0:
+        raise ValueError("reliability_threshold must be in [0, 1]")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+    if len(set(memory_frame_indices)) != len(memory_frame_indices):
+        raise ValueError("reliable_slam_ri candidates must be unique")
+    if dino_features is None or rgb_features is None:
+        raise ValueError("reliable_slam_ri requires DINO and RGB features")
+
+    candidate_set = set(memory_frame_indices)
+    admission_set = set(admission_frame_indices)
+    reference_set = set(reference_frame_indices)
+    if not admission_set <= candidate_set:
+        raise ValueError("admission frames must be present in the candidate set")
+    if not reference_set <= candidate_set:
+        raise ValueError("reference frames must be present in the candidate set")
+    if admission_set & reference_set:
+        raise ValueError("admission and reference frames must be disjoint")
+    if not forced_keep_frames <= candidate_set:
+        raise ValueError("forced-keep frames must be present in the candidate set")
+    reliability = {frame_idx: 1.0 for frame_idx in memory_frame_indices}
+    candidate_agreement = {frame_idx: None for frame_idx in memory_frame_indices}
+    reference_consensus = {frame_idx: None for frame_idx in memory_frame_indices}
+    support_frames = {frame_idx: [] for frame_idx in memory_frame_indices}
+    supported = {frame_idx: False for frame_idx in memory_frame_indices}
+
+    ordered_admissions = [
+        frame_idx for frame_idx in memory_frame_indices if frame_idx in admission_set
+    ]
+    ordered_references = [
+        frame_idx for frame_idx in memory_frame_indices if frame_idx in reference_set
+    ]
+    if ordered_admissions and len(ordered_references) >= reliability_min_support:
+        geometry = camera_trajectory_similarity(
+            c2ws=c2ws,
+            query_frame_indices=ordered_admissions,
+            memory_frame_indices=ordered_references,
+            fov_half_h=fov_half_h,
+            fov_half_v=fov_half_v,
+            radius=radius,
+        )
+        dino_cross = np.maximum(
+            _feature_cosine_similarity_cross(
+                ordered_admissions,
+                ordered_references,
+                dino_features,
+            ),
+            0.0,
+        )
+        reference_dino = np.maximum(
+            _feature_cosine_similarity(ordered_references, dino_features),
+            0.0,
+        )
+
+        reference_rgb_matrix = np.stack(
+            [rgb_features[frame_idx] for frame_idx in ordered_references]
+        )
+        rgb_cross_distance = np.zeros_like(dino_cross, dtype=np.float64)
+        for row, frame_idx in enumerate(ordered_admissions):
+            rgb_cross_distance[row] = np.mean(
+                np.abs(
+                    np.asarray(rgb_features[frame_idx], dtype=np.float32)[None, :]
+                    - reference_rgb_matrix
+                ),
+                axis=1,
+            )
+        rgb_cross = np.exp(-4.0 * rgb_cross_distance)
+        reference_rgb = np.exp(
+            -4.0 * pairwise_mean_abs_distances(reference_rgb_matrix)
+        )
+        cross_visual = np.sqrt(np.clip(dino_cross * rgb_cross, 0.0, 1.0))
+        reference_visual = np.sqrt(
+            np.clip(reference_dino * reference_rgb, 0.0, 1.0)
+        )
+
+        for row, frame_idx in enumerate(ordered_admissions):
+            eligible_refs = np.flatnonzero(
+                geometry[row] >= float(reliability_geometry_threshold)
+            )
+            if eligible_refs.size < int(reliability_min_support):
+                continue
+            ranked_refs = eligible_refs[
+                np.argsort(geometry[row, eligible_refs])[::-1]
+            ][: int(reliability_neighbors)]
+            if ranked_refs.size < int(reliability_min_support):
+                continue
+
+            pair_values = reference_visual[np.ix_(ranked_refs, ranked_refs)]
+            pair_mask = ~np.eye(ranked_refs.size, dtype=bool)
+            pair_values = pair_values[pair_mask]
+            if pair_values.size == 0:
+                continue
+
+            candidate_value = float(np.median(cross_visual[row, ranked_refs]))
+            consensus_value = float(np.median(pair_values))
+            ratio = candidate_value / max(consensus_value, 1e-12)
+            reliability[frame_idx] = float(np.clip(ratio, 0.0, 1.0))
+            candidate_agreement[frame_idx] = candidate_value
+            reference_consensus[frame_idx] = consensus_value
+            support_frames[frame_idx] = [
+                int(ordered_references[col]) for col in ranked_refs
+            ]
+            supported[frame_idx] = True
+
+    gated_frames = {
+        frame_idx
+        for frame_idx in ordered_admissions
+        if supported[frame_idx]
+        and reliability[frame_idx] < float(reliability_threshold)
+        and frame_idx not in forced_keep_frames
+    }
+    admitted_frames = [
+        frame_idx
+        for frame_idx in memory_frame_indices
+        if frame_idx not in gated_frames
+    ]
+    blend_scores, blend_details = compute_slam_ri_blend_scores(
+        memory_frame_indices=admitted_frames,
+        c2ws=c2ws,
+        forced_keep_frames=None,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        beta=slam_weight,
+        ri_kwargs={"rarity_neighbors": rarity_neighbors},
+        return_details=True,
+    )
+    finite_blend = np.array(
+        [score for score in blend_scores.values() if np.isfinite(score)],
+        dtype=np.float64,
+    )
+    blend_min = float(finite_blend.min()) if finite_blend.size else 0.0
+
+    scores = {}
+    details = {}
+    for frame_idx in memory_frame_indices:
+        forced = frame_idx in forced_keep_frames
+        gated = frame_idx in gated_frames
+        blend_row = blend_details.get(frame_idx)
+        if forced:
+            score = float("inf")
+        elif gated:
+            score = blend_min - 1.0
+        else:
+            score = float(blend_scores[frame_idx])
+        scores[frame_idx] = float(score)
+        details[frame_idx] = {
+            "score": float(score),
+            "rsri_forced_keep": bool(forced),
+            "rsri_admission_candidate": bool(frame_idx in admission_set),
+            "rsri_reliability_supported": bool(supported[frame_idx]),
+            "rsri_reliability": float(reliability[frame_idx]),
+            "rsri_candidate_agreement": candidate_agreement[frame_idx],
+            "rsri_reference_consensus": reference_consensus[frame_idx],
+            "rsri_reference_frames": support_frames[frame_idx],
+            "rsri_gated": bool(gated),
+            "rsri_reliability_threshold": float(reliability_threshold),
+            "rsri_reliability_geometry_threshold": float(
+                reliability_geometry_threshold
+            ),
+            "rsri_fov_half_h": float(fov_half_h),
+            "rsri_fov_half_v": float(fov_half_v),
+            "rsri_fov_radius": float(radius),
+            "rsri_reliability_min_support": int(reliability_min_support),
+            "rsri_reliability_neighbors": int(reliability_neighbors),
+            "rsri_slam_weight": float(slam_weight),
+            "rsri_ri_weight": float(1.0 - float(slam_weight)),
+            "rsri_rarity_neighbors": int(rarity_neighbors),
+            "rsri_slam_raw": (
+                None if blend_row is None else float(blend_row["slamri_slam_raw"])
+            ),
+            "rsri_slam_norm": (
+                None if blend_row is None else float(blend_row["slamri_slam_norm"])
+            ),
+            "rsri_ri_raw": (
+                None if blend_row is None else float(blend_row["slamri_ri_raw"])
+            ),
+            "rsri_ri_norm": (
+                None if blend_row is None else float(blend_row["slamri_ri_norm"])
+            ),
+            "rsri_ri_rarity": (
+                None if blend_row is None else float(blend_row["slamri_ri_rarity"])
+            ),
+            "rsri_ri_irreplaceability": (
+                None
+                if blend_row is None
+                else float(blend_row["slamri_ri_irreplaceability"])
+            ),
+        }
 
     return (scores, details) if return_details else scores
 

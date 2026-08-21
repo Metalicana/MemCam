@@ -155,6 +155,7 @@ def main():
             "slam_covisibility",
             "slam_max_coverage",
             "slam_ri_blend",
+            "reliable_slam_ri",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -241,6 +242,14 @@ def main():
         "threshold (same estimate_cluster_threshold k-th nearest-neighbor knob as "
         "--mce_rarity_neighbors).",
     )
+    parser.add_argument("--rsri_slam_weight", type=float, default=0.75)
+    parser.add_argument("--rsri_rarity_neighbors", type=int, default=3)
+    parser.add_argument("--rsri_reliability_neighbors", type=int, default=3)
+    parser.add_argument("--rsri_reliability_min_support", type=int, default=2)
+    parser.add_argument(
+        "--rsri_reliability_geometry_threshold", type=float, default=0.50
+    )
+    parser.add_argument("--rsri_reliability_threshold", type=float, default=0.80)
     parser.add_argument("--surprise_alpha", type=float, default=0.7)
     parser.add_argument("--surprise_ema_momentum", type=float, default=0.95)
     parser.add_argument("--surprise_controller_step", type=float, default=0.1)
@@ -309,6 +318,23 @@ def main():
         raise ValueError("--ri_rarity_neighbors must be at least 1")
     if args.slamri_rarity_neighbors < 1:
         raise ValueError("--slamri_rarity_neighbors must be at least 1")
+    if not 0.0 <= args.rsri_slam_weight <= 1.0:
+        raise ValueError("--rsri_slam_weight must be in [0, 1]")
+    if args.rsri_rarity_neighbors < 1:
+        raise ValueError("--rsri_rarity_neighbors must be at least 1")
+    if args.rsri_reliability_neighbors < 2:
+        raise ValueError("--rsri_reliability_neighbors must be at least 2")
+    if args.rsri_reliability_min_support < 2:
+        raise ValueError("--rsri_reliability_min_support must be at least 2")
+    if args.rsri_reliability_min_support > args.rsri_reliability_neighbors:
+        raise ValueError(
+            "--rsri_reliability_min_support cannot exceed "
+            "--rsri_reliability_neighbors"
+        )
+    if not 0.0 <= args.rsri_reliability_geometry_threshold <= 1.0:
+        raise ValueError("--rsri_reliability_geometry_threshold must be in [0, 1]")
+    if not 0.0 <= args.rsri_reliability_threshold <= 1.0:
+        raise ValueError("--rsri_reliability_threshold must be in [0, 1]")
 
     slurm_gpu = os.environ.get("CUDA_VISIBLE_DEVICES")
     if slurm_gpu:
@@ -350,6 +376,15 @@ def main():
         "ri_rarity_neighbors": args.ri_rarity_neighbors,
         "slamri_beta": args.slamri_beta,
         "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
+        "rsri_slam_weight": args.rsri_slam_weight,
+        "rsri_ri_weight": 1.0 - args.rsri_slam_weight,
+        "rsri_rarity_neighbors": args.rsri_rarity_neighbors,
+        "rsri_reliability_neighbors": args.rsri_reliability_neighbors,
+        "rsri_reliability_min_support": args.rsri_reliability_min_support,
+        "rsri_reliability_geometry_threshold": (
+            args.rsri_reliability_geometry_threshold
+        ),
+        "rsri_reliability_threshold": args.rsri_reliability_threshold,
         "surprise_alpha": args.surprise_alpha,
         "surprise_ema_momentum": args.surprise_ema_momentum,
         "surprise_controller_step": args.surprise_controller_step,
@@ -473,6 +508,17 @@ def main():
             f"beta={args.slamri_beta}, "
             f"rarity_neighbors={args.slamri_rarity_neighbors}"
         )
+    if args.memory_policy == "reliable_slam_ri":
+        print(
+            "Reliable SLAM+RI: "
+            f"slam_weight={args.rsri_slam_weight}, "
+            f"ri_weight={1.0 - args.rsri_slam_weight}, "
+            f"rarity_neighbors={args.rsri_rarity_neighbors}, "
+            f"reliability_neighbors={args.rsri_reliability_neighbors}, "
+            f"min_support={args.rsri_reliability_min_support}, "
+            f"geometry_threshold={args.rsri_reliability_geometry_threshold}, "
+            f"reliability_threshold={args.rsri_reliability_threshold}"
+        )
     if args.memory_policy == "surprise_forcing":
         print(
             "Surprise Forcing: "
@@ -553,6 +599,14 @@ def main():
                 ri_rarity_neighbors=args.ri_rarity_neighbors,
                 slamri_beta=args.slamri_beta,
                 slamri_rarity_neighbors=args.slamri_rarity_neighbors,
+                rsri_slam_weight=args.rsri_slam_weight,
+                rsri_rarity_neighbors=args.rsri_rarity_neighbors,
+                rsri_reliability_neighbors=args.rsri_reliability_neighbors,
+                rsri_reliability_min_support=args.rsri_reliability_min_support,
+                rsri_reliability_geometry_threshold=(
+                    args.rsri_reliability_geometry_threshold
+                ),
+                rsri_reliability_threshold=args.rsri_reliability_threshold,
                 surprise_alpha=args.surprise_alpha,
                 surprise_ema_momentum=args.surprise_ema_momentum,
                 surprise_controller_step=args.surprise_controller_step,
@@ -594,6 +648,17 @@ def main():
                     "ri_rarity_neighbors": args.ri_rarity_neighbors,
                     "slamri_beta": args.slamri_beta,
                     "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
+                    "rsri_slam_weight": args.rsri_slam_weight,
+                    "rsri_ri_weight": 1.0 - args.rsri_slam_weight,
+                    "rsri_rarity_neighbors": args.rsri_rarity_neighbors,
+                    "rsri_reliability_neighbors": args.rsri_reliability_neighbors,
+                    "rsri_reliability_min_support": (
+                        args.rsri_reliability_min_support
+                    ),
+                    "rsri_reliability_geometry_threshold": (
+                        args.rsri_reliability_geometry_threshold
+                    ),
+                    "rsri_reliability_threshold": args.rsri_reliability_threshold,
                     "surprise_alpha": args.surprise_alpha,
                     "surprise_ema_momentum": args.surprise_ema_momentum,
                     "surprise_controller_step": args.surprise_controller_step,

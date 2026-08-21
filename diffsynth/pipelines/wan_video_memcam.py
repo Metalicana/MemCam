@@ -22,6 +22,7 @@ from .memory_policies import (
     compute_h2o_heavy_hitter_scores,
     compute_kcenter_coreset_scores,
     compute_marginal_coverage_eviction_scores,
+    compute_reliable_slam_ri_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
     compute_slam_max_coverage_scores,
@@ -73,6 +74,7 @@ VISUAL_MEMORY_POLICIES = {
     "density_balanced_view_coverage",
     "future_view_coverage",
     "mce",
+    "reliable_slam_ri",
 }
 ARCHIVE_MEMORY_POLICIES = {
     "facility_coreset",
@@ -397,6 +399,12 @@ class WanVideoMemCamPipeline(BasePipeline):
         ri_rarity_neighbors=3,
         slamri_beta=0.5,
         slamri_rarity_neighbors=3,
+        rsri_slam_weight=0.75,
+        rsri_rarity_neighbors=3,
+        rsri_reliability_neighbors=3,
+        rsri_reliability_min_support=2,
+        rsri_reliability_geometry_threshold=0.50,
+        rsri_reliability_threshold=0.80,
         surprise_alpha=0.7,
         surprise_ema_momentum=0.95,
         surprise_controller_step=0.1,
@@ -541,6 +549,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_covisibility",
                 "slam_max_coverage",
                 "slam_ri_blend",
+                "reliable_slam_ri",
                 "facility_coreset",
                 "kcenter_coreset",
                 "trajectory_coverage",
@@ -562,6 +571,25 @@ class WanVideoMemCamPipeline(BasePipeline):
             raise ValueError("ri_rarity_neighbors must be at least 1")
         if int(slamri_rarity_neighbors) < 1:
             raise ValueError("slamri_rarity_neighbors must be at least 1")
+        if not 0.0 <= float(rsri_slam_weight) <= 1.0:
+            raise ValueError("rsri_slam_weight must be in [0, 1]")
+        if int(rsri_rarity_neighbors) < 1:
+            raise ValueError("rsri_rarity_neighbors must be at least 1")
+        if int(rsri_reliability_neighbors) < 2:
+            raise ValueError("rsri_reliability_neighbors must be at least 2")
+        if int(rsri_reliability_min_support) < 2:
+            raise ValueError("rsri_reliability_min_support must be at least 2")
+        if int(rsri_reliability_min_support) > int(rsri_reliability_neighbors):
+            raise ValueError(
+                "rsri_reliability_min_support cannot exceed "
+                "rsri_reliability_neighbors"
+            )
+        if not 0.0 <= float(rsri_reliability_geometry_threshold) <= 1.0:
+            raise ValueError(
+                "rsri_reliability_geometry_threshold must be in [0, 1]"
+            )
+        if not 0.0 <= float(rsri_reliability_threshold) <= 1.0:
+            raise ValueError("rsri_reliability_threshold must be in [0, 1]")
         bank_device = torch.device(self.device if memory_bank_device == "cuda" else "cpu")
         
         # ============ 存储结构 ============
@@ -576,6 +604,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_covisibility",
                 "slam_max_coverage",
                 "slam_ri_blend",
+                "reliable_slam_ri",
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "future_view_coverage",
@@ -676,6 +705,20 @@ class WanVideoMemCamPipeline(BasePipeline):
             "surprise_route_top_k": int(surprise_route_top_k),
             "surprise_value_layer": int(surprise_value_layer),
             "surprise_warmup_sections": int(surprise_warmup_sections),
+            "rsri_slam_weight": float(rsri_slam_weight),
+            "rsri_ri_weight": float(1.0 - float(rsri_slam_weight)),
+            "rsri_rarity_neighbors": int(rsri_rarity_neighbors),
+            "rsri_reliability_neighbors": int(rsri_reliability_neighbors),
+            "rsri_reliability_min_support": int(
+                rsri_reliability_min_support
+            ),
+            "rsri_reliability_geometry_threshold": float(
+                rsri_reliability_geometry_threshold
+            ),
+            "rsri_reliability_threshold": float(rsri_reliability_threshold),
+            "rsri_fov_half_h": float(FOV_HALF_H),
+            "rsri_fov_half_v": float(FOV_HALF_V),
+            "rsri_fov_radius": float(FOV_RADIUS),
             "total_frames": int(total_frames),
             "total_sections": int(total_sections),
         }
@@ -1433,6 +1476,7 @@ class WanVideoMemCamPipeline(BasePipeline):
             eviction_score_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
+            update_protected_frames = set(protected_frames)
             policy_phase_start = profiler.start_phase()
             if memory_policy in VISUAL_MEMORY_POLICIES:
                 feature_frame_indices = list(new_frame_indices)
@@ -1513,11 +1557,12 @@ class WanVideoMemCamPipeline(BasePipeline):
                 )
             elif memory_policy == "slam_ri_blend":
                 current_memory = list(memory_buffer.candidates())
-                prospective_memory = current_memory + [
+                admission_memory = [
                     frame_idx
                     for frame_idx in new_frame_indices
                     if frame_idx not in current_memory
                 ]
+                prospective_memory = current_memory + admission_memory
                 eviction_scores, eviction_score_details = compute_slam_ri_blend_scores(
                     memory_frame_indices=prospective_memory,
                     c2ws=c2ws,
@@ -1528,6 +1573,42 @@ class WanVideoMemCamPipeline(BasePipeline):
                     ri_kwargs={"rarity_neighbors": slamri_rarity_neighbors},
                     return_details=True,
                 )
+            elif memory_policy == "reliable_slam_ri":
+                current_memory = list(memory_buffer.candidates())
+                admission_memory = [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                prospective_memory = current_memory + admission_memory
+                eviction_scores, eviction_score_details = (
+                    compute_reliable_slam_ri_scores(
+                        memory_frame_indices=prospective_memory,
+                        c2ws=c2ws,
+                        admission_frame_indices=admission_memory,
+                        reference_frame_indices=current_memory,
+                        forced_keep_frames=pinned_memory_frames,
+                        dino_features=memory_dino_features,
+                        rgb_features=memory_rgb_features,
+                        slam_weight=rsri_slam_weight,
+                        rarity_neighbors=rsri_rarity_neighbors,
+                        reliability_neighbors=rsri_reliability_neighbors,
+                        reliability_min_support=rsri_reliability_min_support,
+                        reliability_geometry_threshold=(
+                            rsri_reliability_geometry_threshold
+                        ),
+                        reliability_threshold=rsri_reliability_threshold,
+                        fov_half_h=FOV_HALF_H,
+                        fov_half_v=FOV_HALF_V,
+                        radius=FOV_RADIUS,
+                        return_details=True,
+                    )
+                )
+                update_protected_frames -= {
+                    frame_idx
+                    for frame_idx, row in eviction_score_details.items()
+                    if row["rsri_gated"]
+                }
             elif memory_policy == "slam_max_coverage":
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
@@ -1821,9 +1902,56 @@ class WanVideoMemCamPipeline(BasePipeline):
                 evicted_frames = memory_buffer.update(
                     new_frame_indices,
                     eviction_scores=eviction_scores,
-                    protected_frames=protected_frames,
+                    protected_frames=update_protected_frames,
                 )
-            if memory_policy == "density_balanced_view_coverage":
+            if memory_policy == "reliable_slam_ri":
+                retained_frames_after_update = memory_buffer.candidates()
+                rsri_rows = list(eviction_score_details.values())
+                write_access_trace(
+                    {
+                        "event": "reliable_slam_ri_update",
+                        "section_idx": int(section_idx),
+                        "section_end_frame": int(section_end_frame),
+                        "stored_memory_size": len(memory_buffer),
+                        "memory_policy": memory_policy,
+                        "memory_budget": memory_budget,
+                        "memory_bank_device": memory_bank_device,
+                        "admission_candidate_count": sum(
+                            bool(row["rsri_admission_candidate"])
+                            for row in rsri_rows
+                        ),
+                        "reliability_supported_count": sum(
+                            bool(row["rsri_reliability_supported"])
+                            for row in rsri_rows
+                        ),
+                        "quality_gated_count": sum(
+                            bool(row["rsri_gated"]) for row in rsri_rows
+                        ),
+                        "retained_memory_frames": [
+                            int(frame_idx)
+                            for frame_idx in retained_frames_after_update
+                        ],
+                        "rsri_slam_weight": float(rsri_slam_weight),
+                        "rsri_ri_weight": float(1.0 - float(rsri_slam_weight)),
+                        "rsri_rarity_neighbors": int(rsri_rarity_neighbors),
+                        "rsri_reliability_neighbors": int(
+                            rsri_reliability_neighbors
+                        ),
+                        "rsri_reliability_min_support": int(
+                            rsri_reliability_min_support
+                        ),
+                        "rsri_reliability_geometry_threshold": float(
+                            rsri_reliability_geometry_threshold
+                        ),
+                        "rsri_reliability_threshold": float(
+                            rsri_reliability_threshold
+                        ),
+                        "rsri_fov_half_h": float(FOV_HALF_H),
+                        "rsri_fov_half_v": float(FOV_HALF_V),
+                        "rsri_fov_radius": float(FOV_RADIUS),
+                    }
+                )
+            elif memory_policy == "density_balanced_view_coverage":
                 retained_frames_after_update = memory_buffer.candidates()
                 memory_coverage_masses = {
                     frame_idx: float(
@@ -2014,6 +2142,21 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_slamri_ri_irreplaceability": score_detail.get("slamri_ri_irreplaceability"),
                         "eviction_slamri_slam_redundancy_ratio": score_detail.get("slamri_slam_redundancy_ratio"),
                         "eviction_slamri_slam_unique_bonus": score_detail.get("slamri_slam_unique_bonus"),
+                        "eviction_rsri_admission_candidate": score_detail.get("rsri_admission_candidate"),
+                        "eviction_rsri_reliability_supported": score_detail.get("rsri_reliability_supported"),
+                        "eviction_rsri_reliability": score_detail.get("rsri_reliability"),
+                        "eviction_rsri_candidate_agreement": score_detail.get("rsri_candidate_agreement"),
+                        "eviction_rsri_reference_consensus": score_detail.get("rsri_reference_consensus"),
+                        "eviction_rsri_reference_frames": score_detail.get("rsri_reference_frames"),
+                        "eviction_rsri_gated": score_detail.get("rsri_gated"),
+                        "eviction_rsri_slam_weight": score_detail.get("rsri_slam_weight"),
+                        "eviction_rsri_ri_weight": score_detail.get("rsri_ri_weight"),
+                        "eviction_rsri_slam_raw": score_detail.get("rsri_slam_raw"),
+                        "eviction_rsri_slam_norm": score_detail.get("rsri_slam_norm"),
+                        "eviction_rsri_ri_raw": score_detail.get("rsri_ri_raw"),
+                        "eviction_rsri_ri_norm": score_detail.get("rsri_ri_norm"),
+                        "eviction_rsri_ri_rarity": score_detail.get("rsri_ri_rarity"),
+                        "eviction_rsri_ri_irreplaceability": score_detail.get("rsri_ri_irreplaceability"),
                         "eviction_slam_max_coverage_selected": score_detail.get("slam_max_coverage_selected"),
                         "eviction_slam_max_coverage_forced_keep": score_detail.get("slam_max_coverage_forced_keep"),
                         "eviction_slam_max_coverage_rank": score_detail.get("slam_max_coverage_rank"),

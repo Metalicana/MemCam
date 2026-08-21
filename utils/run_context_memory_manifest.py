@@ -44,6 +44,7 @@ def main():
             "rarity_irreplaceability",
             "slam_covisibility",
             "slam_max_coverage",
+            "reliable_slam_ri",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -53,6 +54,14 @@ def main():
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--rsri_slam_weight", type=float, default=0.75)
+    parser.add_argument("--rsri_rarity_neighbors", type=int, default=3)
+    parser.add_argument("--rsri_reliability_neighbors", type=int, default=3)
+    parser.add_argument("--rsri_reliability_min_support", type=int, default=2)
+    parser.add_argument(
+        "--rsri_reliability_geometry_threshold", type=float, default=0.50
+    )
+    parser.add_argument("--rsri_reliability_threshold", type=float, default=0.80)
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
@@ -119,6 +128,18 @@ def main():
         args.memory_policy,
         "--memory_bank_device",
         args.memory_bank_device,
+        "--rsri_slam_weight",
+        str(args.rsri_slam_weight),
+        "--rsri_rarity_neighbors",
+        str(args.rsri_rarity_neighbors),
+        "--rsri_reliability_neighbors",
+        str(args.rsri_reliability_neighbors),
+        "--rsri_reliability_min_support",
+        str(args.rsri_reliability_min_support),
+        "--rsri_reliability_geometry_threshold",
+        str(args.rsri_reliability_geometry_threshold),
+        "--rsri_reliability_threshold",
+        str(args.rsri_reliability_threshold),
         "--density_coverage_alpha",
         str(args.density_coverage_alpha),
         "--density_coverage_dino_weight",

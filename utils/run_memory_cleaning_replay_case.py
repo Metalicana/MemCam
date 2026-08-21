@@ -231,9 +231,18 @@ def main():
         trace_dir.mkdir(parents=True, exist_ok=True)
         output_path = branch_dir / f"{item['output_prefix']}custom.mp4"
         trace_path = trace_dir / f"{item['output_prefix']}custom.jsonl"
-        if output_path.is_file() and not args.overwrite:
-            print(f"[{branch_name}] skip existing: {output_path}")
+        if output_path.is_file() and trace_path.is_file() and not args.overwrite:
+            print(
+                f"[{branch_name}] skip complete existing replay: "
+                f"{output_path} and {trace_path}"
+            )
             continue
+
+        if not args.overwrite and (output_path.is_file() or trace_path.is_file()):
+            print(
+                f"[{branch_name}] incomplete existing replay; regenerating "
+                f"(video={output_path.is_file()}, trace={trace_path.is_file()})"
+            )
 
         content_overrides = clean_overrides if branch_name == "clean_gt" else None
         print(f"[{branch_name}] starting")
