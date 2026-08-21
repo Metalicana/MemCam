@@ -246,10 +246,22 @@ def classification_metrics(scores, bad_labels, threshold):
         if bad_recall is not None and clean_recall is not None
         else None
     )
+    rejected = tp + fp
+    bad_prevalence = (tp + fn) / len(scores) if len(scores) else None
+    bad_precision = tp / rejected if rejected else None
     return {
         "samples": len(scores),
         "bad_frames": int(bad.sum()),
         "clean_frames": int((~bad).sum()),
+        "rejected_frames": rejected,
+        "rejected_fraction": rejected / len(scores) if len(scores) else None,
+        "bad_prevalence": bad_prevalence,
+        "bad_precision": bad_precision,
+        "rejection_enrichment": (
+            bad_precision / bad_prevalence
+            if bad_precision is not None and bad_prevalence
+            else None
+        ),
         "bad_recall": bad_recall,
         "clean_false_reject_rate": fp / (fp + tn) if fp + tn else None,
         "balanced_accuracy": balanced,
@@ -707,13 +719,14 @@ def write_report(
         "",
         "## Held-Out Results",
         "",
-        "| estimator | quality AUC | balanced accuracy | deployable bad recall | deployable clean reject | rho PSNR | rho SSIM | within-trajectory rho | 95% CI |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| estimator | quality AUC | balanced accuracy | deployable bad precision | deployable bad recall | deployable clean reject | rho PSNR | rho SSIM | within-trajectory rho | 95% CI |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in summaries:
         lines.append(
             f"| {row['estimator']} | {fmt(row['test_quality_auc'])} | "
             f"{fmt(row['test_balanced_accuracy'])} | "
+            f"{fmt(row['gate_test_bad_precision'])} | "
             f"{fmt(row['gate_test_bad_recall'])} | "
             f"{fmt(row['gate_test_clean_false_reject_rate'])} | "
             f"{fmt(row['test_spearman_psnr'])} | {fmt(row['test_spearman_ssim'])} | "
@@ -907,8 +920,9 @@ def main():
         print(
             f"{row['estimator']}: AUC={fmt(row['test_quality_auc'])} "
             f"balanced={fmt(row['test_balanced_accuracy'])} "
-            f"bad_recall={fmt(row['test_bad_recall'])} "
-            f"clean_false_reject={fmt(row['test_clean_false_reject_rate'])}"
+            f"gate_precision={fmt(row['gate_test_bad_precision'])} "
+            f"gate_recall={fmt(row['gate_test_bad_recall'])} "
+            f"gate_clean_reject={fmt(row['gate_test_clean_false_reject_rate'])}"
         )
     print(f"\nWrote: {args.output_dir / 'report.md'}")
 

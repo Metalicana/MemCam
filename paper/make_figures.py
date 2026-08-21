@@ -346,24 +346,26 @@ def plot_model_architecture():
     ax.set_ylim(0, 1)
     ax.axis("off")
 
-    add_box(ax, (0.01, 0.35), 0.14, 0.30, "New memories", "Frames, latents,\nsurfels, or points", "#333333")
-    add_box(ax, (0.20, 0.35), 0.16, 0.30, "Reliability gate", "Reject cross-view\ninconsistent observations", COLORS["corruption"])
-    add_box(ax, (0.41, 0.57), 0.18, 0.25, "Geometric Coverage", "Preserve sparse\nviewpoint anchors", COLORS["geo"])
-    add_box(ax, (0.41, 0.16), 0.18, 0.25, "Rarity protection", "Reserve capacity\nfor rare content", COLORS["ri"])
-    add_box(ax, (0.65, 0.35), 0.15, 0.30, "Fixed bank", "$|M_t| \\leq B$\nconstant memory", COLORS["geo"])
-    add_box(ax, (0.85, 0.35), 0.14, 0.30, "Retriever", "Backbone-native\ncontext selection", "#333333")
+    add_box(ax, (0.01, 0.35), 0.12, 0.30, "New memories", "Incoming generated\ncandidates", "#333333")
+    add_box(ax, (0.17, 0.35), 0.15, 0.30, "Quality gate", "No-reference IQA\nrejects corruption", COLORS["corruption"])
+    add_box(ax, (0.37, 0.57), 0.16, 0.25, "Geometric score", "Pose + DINO\ncoverage, weight 0.75", COLORS["geo"])
+    add_box(ax, (0.37, 0.16), 0.16, 0.25, "RI score", "DINO clusters, $k=3$\nweight 0.25", COLORS["ri"])
+    add_box(ax, (0.59, 0.35), 0.12, 0.30, "Score fusion", "Normalize, blend,\nrank all candidates", COLORS["effective"])
+    add_box(ax, (0.76, 0.35), 0.10, 0.30, "Top-$B$ bank", "Constant\npersistent memory", COLORS["geo"])
+    add_box(ax, (0.91, 0.35), 0.08, 0.30, "Retriever", "Unchanged\nbackbone", "#333333")
 
-    arrow(ax, (0.15, 0.50), (0.20, 0.50))
-    arrow(ax, (0.36, 0.53), (0.41, 0.67))
-    arrow(ax, (0.36, 0.47), (0.41, 0.29))
-    arrow(ax, (0.59, 0.69), (0.65, 0.55))
-    arrow(ax, (0.59, 0.29), (0.65, 0.45))
-    arrow(ax, (0.80, 0.50), (0.85, 0.50))
+    arrow(ax, (0.13, 0.50), (0.17, 0.50))
+    arrow(ax, (0.32, 0.53), (0.37, 0.67))
+    arrow(ax, (0.32, 0.47), (0.37, 0.29))
+    arrow(ax, (0.53, 0.69), (0.59, 0.55))
+    arrow(ax, (0.53, 0.29), (0.59, 0.45))
+    arrow(ax, (0.71, 0.50), (0.76, 0.50))
+    arrow(ax, (0.86, 0.50), (0.91, 0.50))
 
     ax.text(
         0.5,
         0.94,
-        "Quality-Gated Geometric-Rarity Curation",
+        "Quality-Gated Geometric-Rarity Curation (QGRC)",
         ha="center",
         va="center",
         fontsize=12,
@@ -372,7 +374,7 @@ def plot_model_architecture():
     ax.text(
         0.5,
         0.04,
-        "Primary objective: geometric coverage    |    Constraint: rare-content retention    |    Admission: reliability",
+        "Admission: calibrated no-reference quality    |    Retention: 0.75 geometry + 0.25 RI    |    Budget: top B",
         ha="center",
         va="center",
         fontsize=8.5,

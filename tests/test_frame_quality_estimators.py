@@ -51,6 +51,8 @@ class FrameQualityEstimatorTests(unittest.TestCase):
         metrics = classification_metrics(scores, bad, threshold)
         self.assertEqual(metrics["clean_false_reject_rate"], 0.0)
         self.assertGreater(metrics["bad_recall"], 0.0)
+        self.assertAlmostEqual(metrics["bad_precision"], 1.0)
+        self.assertGreater(metrics["rejection_enrichment"], 1.0)
 
     def test_bad_labels_are_defined_within_run_and_trajectory(self):
         rows = []

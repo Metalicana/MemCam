@@ -312,6 +312,49 @@ These are not mechanism proofs, but they constrain policy design.
 - A 50/50 SLAM-RI score blend did not beat both constituent policies. This
   argues against relying on an uncalibrated weighted sum as the final method.
 
+## 11. Failed generic image-quality gate
+
+We tested whether a score computed from the generated RGB frame alone could
+identify the bottom 20% of frames by within-trajectory PSNR/SSIM rank. The
+calibration used 2,160 frames from unbounded and SLAM runs, with ten complete
+trajectories for threshold fitting and five held-out trajectories.
+
+The strongest estimator was `unclipped_fraction`, but it was not deployable:
+
+- held-out AUC: 0.630;
+- balanced accuracy: 0.550;
+- bad-frame recall at the conservative threshold: 0.183;
+- clean-frame false-rejection rate: 0.125;
+- mean within-trajectory Spearman correlation: 0.339, CI [0.138, 0.554].
+
+At 20% bad-frame prevalence, these rates imply that only about 26.8% of
+rejected frames are bad: for every 1,000 frames, the gate catches roughly 37
+bad frames while incorrectly removing 100 clean frames. Generic learned IQA
+(MUSIQ, CLIP-IQA+, and TOPIQ-NR) was near chance. Sharpness, contrast,
+gradient energy, and Laplacian variance were often inversely correlated with
+exact-index fidelity.
+
+**Decision:** generic no-reference IQA must not be injected into the memory
+policy. The diagnosed error is reference-dependent scene fidelity, not simply
+blur, clipping, or aesthetic quality.
+
+## 12. Rejected circular consistency shortcut
+
+Comparing a new frame only with an arbitrary previous generated frame is not
+an absolute quality test. If the previous frame is already corrupted, high
+agreement can certify consistent propagation of the same error. The earlier
+cross-view `reliable_slam_ri` prototype therefore does not constitute a
+validated quality gate and must not be reported as the final method.
+
+The next hypothesis is narrower and remains unproven: compare a new frame with
+the frame that actually conditioned its generation, then subtract the expected
+DINO similarity for that camera displacement. The expected similarity is fit
+from ground-truth frame pairs on training trajectories only. Validation must
+report held-out AUC, bad-frame precision and recall, clean-frame rejection,
+performance when the conditioning frame is itself corrupted, and a control
+anchored to the clean input frame. The score will be integrated into generation
+only if it passes pre-declared deployment criteria.
+
 ## Current scientific conclusion
 
 The defensible claim today is:
