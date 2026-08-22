@@ -1,5 +1,10 @@
 # MemCam Diagnostic Experiments: Consolidated Results
 
+New sessions should begin with
+[`project_handoff_context.md`](project_handoff_context.md), which records the
+workflow, cluster paths, policy definitions, experiment state, and user
+preferences surrounding these results.
+
 Reviewer-facing risks, unsupported claims, and the experiments required to
 resolve them are tracked in
 [`iclr_reviewer_risk_register.md`](iclr_reviewer_risk_register.md). That file

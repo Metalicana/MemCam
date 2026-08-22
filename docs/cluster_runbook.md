@@ -1,6 +1,10 @@
 # MemCam Multi-Cluster Runbook
 
-Last updated: 2026-07-30
+Last updated: 2026-08-22
+
+For the full research, workflow, evidence, and new-session context, read
+[`project_handoff_context.md`](project_handoff_context.md) first. This file is
+the infrastructure-specific companion.
 
 This is the operational record for running MemCam across Newton, the CECSL
 workstation, Purdue Anvil, and Indiana University Jetstream2. Update the

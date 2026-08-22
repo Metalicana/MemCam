@@ -48,9 +48,16 @@ echo "Started: $(date)"
 timeout 90s python -c \
   'import torch; assert torch.cuda.is_available(); print("CUDA:", torch.cuda.get_device_name(0))'
 
-python -m unittest \
-  tests.test_causal_consistency_gate \
-  tests.test_frame_quality_estimators \
+# Use discovery instead of importing ``tests.*`` as a package. Some Newton
+# environments install an unrelated top-level ``tests`` package, while this
+# repository intentionally has no tests/__init__.py.
+python -m unittest discover \
+  -s tests \
+  -p 'test_causal_consistency_gate.py' \
+  -v
+python -m unittest discover \
+  -s tests \
+  -p 'test_frame_quality_estimators.py' \
   -v
 
 python utils/calibrate_causal_consistency_gate.py \
