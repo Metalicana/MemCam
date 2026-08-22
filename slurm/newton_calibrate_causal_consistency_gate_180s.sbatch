@@ -4,7 +4,7 @@
 #SBATCH --error=logs/memcam_cc_gate_%j.err
 #SBATCH --partition=normal
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
-#SBATCH --exclude=evc23,evc33,evc40,evc42,evc44
+#SBATCH --exclude=evc23,evc33,evc40,evc42,evc44,evc46
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00

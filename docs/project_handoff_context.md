@@ -119,9 +119,10 @@ CUT3R checkpoint: ~/MemCam/CUT3R/src/cut3r_512_dpt_4_64.pth
 ```
 
 Known Newton nodes that have produced CUDA initialization failures are
-`evc23`, `evc33`, `evc40`, `evc42`, and `evc44`. Critical H100 jobs currently
-exclude all five. This list is historical rather than a guarantee that every
-other node is healthy.
+`evc23`, `evc33`, `evc40`, `evc42`, `evc44`, and `evc46`. Job `770599` timed
+out during the 90-second CUDA preflight on `evc46` on 2026-08-22. Critical H100
+jobs should exclude these nodes. This list is historical rather than a
+guarantee that every other node is healthy.
 
 The normal job preamble is:
 
@@ -830,4 +831,3 @@ find /data/ab575577/MemCam/outputs/context_180s -maxdepth 2 -type f \
 The first response from a new GPT should summarize what it learned and ask for
 the current scheduler/output status only if the next task depends on it. It
 should not immediately propose a new policy.
-
