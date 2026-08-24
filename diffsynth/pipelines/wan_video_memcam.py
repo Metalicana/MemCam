@@ -29,6 +29,7 @@ from .memory_policies import (
     compute_slam_ri_blend_scores,
     compute_trajectory_coverage_scores,
     image_quality_scores_from_pil_images,
+    select_coverage_hysteresis_admissions,
 )
 from .memory_profiling import (
     MemoryRolloutProfiler,
@@ -75,6 +76,7 @@ VISUAL_MEMORY_POLICIES = {
     "future_view_coverage",
     "mce",
     "reliable_slam_ri",
+    "coverage_hysteresis",
 }
 ARCHIVE_MEMORY_POLICIES = {
     "facility_coreset",
@@ -399,6 +401,9 @@ class WanVideoMemCamPipeline(BasePipeline):
         ri_rarity_neighbors=3,
         slamri_beta=0.5,
         slamri_rarity_neighbors=3,
+        hysteresis_view_threshold=0.90,
+        hysteresis_slam_weight=0.75,
+        hysteresis_rarity_neighbors=3,
         rsri_slam_weight=0.75,
         rsri_rarity_neighbors=3,
         rsri_reliability_neighbors=3,
@@ -550,6 +555,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_max_coverage",
                 "slam_ri_blend",
                 "reliable_slam_ri",
+                "coverage_hysteresis",
                 "facility_coreset",
                 "kcenter_coreset",
                 "trajectory_coverage",
@@ -571,6 +577,12 @@ class WanVideoMemCamPipeline(BasePipeline):
             raise ValueError("ri_rarity_neighbors must be at least 1")
         if int(slamri_rarity_neighbors) < 1:
             raise ValueError("slamri_rarity_neighbors must be at least 1")
+        if not 0.0 <= float(hysteresis_view_threshold) <= 1.0:
+            raise ValueError("hysteresis_view_threshold must be in [0, 1]")
+        if not 0.0 <= float(hysteresis_slam_weight) <= 1.0:
+            raise ValueError("hysteresis_slam_weight must be in [0, 1]")
+        if int(hysteresis_rarity_neighbors) < 1:
+            raise ValueError("hysteresis_rarity_neighbors must be at least 1")
         if not 0.0 <= float(rsri_slam_weight) <= 1.0:
             raise ValueError("rsri_slam_weight must be in [0, 1]")
         if int(rsri_rarity_neighbors) < 1:
@@ -605,6 +617,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                 "slam_max_coverage",
                 "slam_ri_blend",
                 "reliable_slam_ri",
+                "coverage_hysteresis",
                 "trajectory_coverage",
                 "density_balanced_view_coverage",
                 "future_view_coverage",
@@ -632,6 +645,7 @@ class WanVideoMemCamPipeline(BasePipeline):
         coreset_archive_seen = set()
         surprise_controller = None
         surprise_query_frame = None
+        rolling_only_frame = None
         if memory_policy == "surprise_forcing":
             if not 0 <= int(surprise_value_layer) < len(self.dit.blocks):
                 raise ValueError(
@@ -1442,7 +1456,11 @@ class WanVideoMemCamPipeline(BasePipeline):
                 section_start_source.to(dtype=self.torch_dtype, device=self.device),
                 **tiler_kwargs,
             )[0]
-            if (
+            if memory_policy == "coverage_hysteresis" and rolling_only_frame == section_start_frame:
+                memory_buffer.remove(section_start_frame)
+                all_generated_frames.pop(section_start_frame, None)
+                rolling_only_frame = None
+            elif (
                 memory_policy == "surprise_forcing"
                 and section_start_frame not in set(memory_buffer.candidates())
             ):
@@ -1474,6 +1492,8 @@ class WanVideoMemCamPipeline(BasePipeline):
             )
             eviction_scores = None
             eviction_score_details = {}
+            policy_update_frames = list(new_frame_indices)
+            hysteresis_admission_details = {}
             section_end_frame = section_start_frame + section_frames_cpu.shape[2] - 1
             protected_frames = {section_end_frame}
             update_protected_frames = set(protected_frames)
@@ -1573,6 +1593,43 @@ class WanVideoMemCamPipeline(BasePipeline):
                     ri_kwargs={"rarity_neighbors": slamri_rarity_neighbors},
                     return_details=True,
                 )
+            elif memory_policy == "coverage_hysteresis":
+                current_memory = list(memory_buffer.candidates())
+                admission_candidates = [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                policy_update_frames, hysteresis_admission_details = (
+                    select_coverage_hysteresis_admissions(
+                        existing_frame_indices=current_memory,
+                        candidate_frame_indices=admission_candidates,
+                        c2ws=c2ws,
+                        view_similarity_threshold=hysteresis_view_threshold,
+                        fov_half_h=FOV_HALF_H,
+                        fov_half_v=FOV_HALF_V,
+                        radius=FOV_RADIUS,
+                        return_details=True,
+                    )
+                )
+                prospective_memory = current_memory + policy_update_frames
+                eviction_scores, eviction_score_details = compute_slam_ri_blend_scores(
+                    memory_frame_indices=prospective_memory,
+                    c2ws=c2ws,
+                    forced_keep_frames=pinned_memory_frames,
+                    dino_features=memory_dino_features,
+                    rgb_features=memory_rgb_features,
+                    beta=hysteresis_slam_weight,
+                    ri_kwargs={"rarity_neighbors": hysteresis_rarity_neighbors},
+                    return_details=True,
+                )
+                for frame_idx, row in eviction_score_details.items():
+                    row["hysteresis_incumbent"] = frame_idx in current_memory
+                    row.update(hysteresis_admission_details.get(frame_idx, {}))
+
+                # The endpoint may need one transient bank slot to seed the next
+                # chunk. It should not bypass the persistent admission rule.
+                update_protected_frames.discard(section_end_frame)
             elif memory_policy == "reliable_slam_ri":
                 current_memory = list(memory_buffer.candidates())
                 admission_memory = [
@@ -1900,11 +1957,81 @@ class WanVideoMemCamPipeline(BasePipeline):
 
             if memory_policy != "surprise_forcing":
                 evicted_frames = memory_buffer.update(
-                    new_frame_indices,
+                    policy_update_frames,
                     eviction_scores=eviction_scores,
                     protected_frames=update_protected_frames,
                 )
-            if memory_policy == "reliable_slam_ri":
+            if memory_policy == "coverage_hysteresis":
+                # Every policy needs the section endpoint once to seed the next
+                # chunk. If hysteresis did not retain it persistently, hold it
+                # transiently inside the same B-slot budget and remove it after
+                # the next section-start encode.
+                if section_end_frame not in set(memory_buffer.candidates()):
+                    memory_buffer.add(section_end_frame, evict=False)
+                    evicted_frames.extend(
+                        memory_buffer.evict_to_budget(
+                            protected_frames={section_end_frame}
+                        )
+                    )
+                    rolling_only_frame = section_end_frame
+                else:
+                    rolling_only_frame = None
+            if memory_policy == "coverage_hysteresis":
+                retained_frames_after_update = memory_buffer.candidates()
+                admitted_set = set(policy_update_frames)
+                for frame_idx, row in hysteresis_admission_details.items():
+                    write_access_trace(
+                        {
+                            "event": "coverage_hysteresis_admission",
+                            "section_idx": int(section_idx),
+                            "section_end_frame": int(section_end_frame),
+                            "candidate_memory_frame": int(frame_idx),
+                            "memory_policy": memory_policy,
+                            "memory_budget": memory_budget,
+                            **row,
+                        }
+                    )
+                    if frame_idx not in admitted_set:
+                        memory_dino_features.pop(frame_idx, None)
+                        memory_rgb_features.pop(frame_idx, None)
+                        memory_quality_scores.pop(frame_idx, None)
+                write_access_trace(
+                    {
+                        "event": "coverage_hysteresis_update",
+                        "section_idx": int(section_idx),
+                        "section_end_frame": int(section_end_frame),
+                        "stored_memory_size": len(memory_buffer),
+                        "memory_policy": memory_policy,
+                        "memory_budget": memory_budget,
+                        "memory_bank_device": memory_bank_device,
+                        "admission_candidate_count": len(
+                            hysteresis_admission_details
+                        ),
+                        "admitted_count": len(policy_update_frames),
+                        "rejected_covered_count": sum(
+                            not row["hysteresis_admitted"]
+                            for row in hysteresis_admission_details.values()
+                        ),
+                        "view_similarity_threshold": float(
+                            hysteresis_view_threshold
+                        ),
+                        "geometric_coverage_weight": float(
+                            hysteresis_slam_weight
+                        ),
+                        "ri_weight": float(1.0 - hysteresis_slam_weight),
+                        "rarity_neighbors": int(hysteresis_rarity_neighbors),
+                        "retained_memory_frames": [
+                            int(frame_idx)
+                            for frame_idx in retained_frames_after_update
+                        ],
+                        "rolling_only_frame": (
+                            None
+                            if rolling_only_frame is None
+                            else int(rolling_only_frame)
+                        ),
+                    }
+                )
+            elif memory_policy == "reliable_slam_ri":
                 retained_frames_after_update = memory_buffer.candidates()
                 rsri_rows = list(eviction_score_details.values())
                 write_access_trace(
@@ -2142,6 +2269,12 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_slamri_ri_irreplaceability": score_detail.get("slamri_ri_irreplaceability"),
                         "eviction_slamri_slam_redundancy_ratio": score_detail.get("slamri_slam_redundancy_ratio"),
                         "eviction_slamri_slam_unique_bonus": score_detail.get("slamri_slam_unique_bonus"),
+                        "eviction_hysteresis_incumbent": score_detail.get("hysteresis_incumbent"),
+                        "eviction_hysteresis_admitted": score_detail.get("hysteresis_admitted"),
+                        "eviction_hysteresis_reason": score_detail.get("hysteresis_reason"),
+                        "eviction_hysteresis_max_view_similarity": score_detail.get("hysteresis_max_view_similarity"),
+                        "eviction_hysteresis_nearest_reference_frame": score_detail.get("hysteresis_nearest_reference_frame"),
+                        "eviction_hysteresis_view_threshold": score_detail.get("hysteresis_view_threshold"),
                         "eviction_rsri_admission_candidate": score_detail.get("rsri_admission_candidate"),
                         "eviction_rsri_reliability_supported": score_detail.get("rsri_reliability_supported"),
                         "eviction_rsri_reliability": score_detail.get("rsri_reliability"),

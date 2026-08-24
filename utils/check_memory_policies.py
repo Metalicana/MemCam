@@ -26,6 +26,9 @@ compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_sco
 compute_slam_max_coverage_scores = memory_policies.compute_slam_max_coverage_scores
 compute_slam_ri_blend_scores = memory_policies.compute_slam_ri_blend_scores
 compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
+select_coverage_hysteresis_admissions = (
+    memory_policies.select_coverage_hysteresis_admissions
+)
 surprise_forcing_score = memory_policies.surprise_forcing_score
 
 
@@ -103,6 +106,31 @@ def check_slam_ri_blend_requires_budget():
     except ValueError:
         return
     raise AssertionError("slam_ri_blend without a budget should fail")
+
+
+def check_coverage_hysteresis():
+    try:
+        FrameMemoryBuffer(policy="coverage_hysteresis")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("coverage_hysteresis without a budget should fail")
+
+    c2ws = np.repeat(np.eye(4, dtype=np.float64)[None], 4, axis=0)
+    c2ws[:, 0, 3] = [0.0, 0.1, 20.0, 20.1]
+    admitted = select_coverage_hysteresis_admissions(
+        existing_frame_indices=[0],
+        candidate_frame_indices=[1, 2, 3],
+        c2ws=c2ws,
+        view_similarity_threshold=0.90,
+    )
+    assert admitted == [2]
+
+    memory = FrameMemoryBuffer(policy="coverage_hysteresis", budget=2)
+    evicted = memory.update(
+        [0, 1, 2], eviction_scores={0: 1.0, 1: 1.0, 2: 1.0}
+    )
+    assert evicted == [2]
 
 
 def check_facility_coreset_requires_budget():
@@ -724,6 +752,7 @@ if __name__ == "__main__":
     check_slam_max_coverage_scores()
     check_slam_ri_blend_requires_budget()
     check_slam_ri_blend_scores()
+    check_coverage_hysteresis()
     check_facility_coreset_requires_budget()
     check_facility_coreset_scores()
     check_kcenter_coreset_requires_budget()

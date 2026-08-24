@@ -82,6 +82,7 @@ if __name__ == "__main__":
             "slam_max_coverage",
             "slam_ri_blend",
             "reliable_slam_ri",
+            "coverage_hysteresis",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -94,6 +95,9 @@ if __name__ == "__main__":
     parser.add_argument("--ri_rarity_neighbors", type=int, default=3)
     parser.add_argument("--slamri_beta", type=float, default=0.5)
     parser.add_argument("--slamri_rarity_neighbors", type=int, default=3)
+    parser.add_argument("--hysteresis_view_threshold", type=float, default=0.90)
+    parser.add_argument("--hysteresis_slam_weight", type=float, default=0.75)
+    parser.add_argument("--hysteresis_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_slam_weight", type=float, default=0.75)
     parser.add_argument("--rsri_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_reliability_neighbors", type=int, default=3)
@@ -181,6 +185,9 @@ if __name__ == "__main__":
             ri_rarity_neighbors=args.ri_rarity_neighbors,
             slamri_beta=args.slamri_beta,
             slamri_rarity_neighbors=args.slamri_rarity_neighbors,
+            hysteresis_view_threshold=args.hysteresis_view_threshold,
+            hysteresis_slam_weight=args.hysteresis_slam_weight,
+            hysteresis_rarity_neighbors=args.hysteresis_rarity_neighbors,
             rsri_slam_weight=args.rsri_slam_weight,
             rsri_rarity_neighbors=args.rsri_rarity_neighbors,
             rsri_reliability_neighbors=args.rsri_reliability_neighbors,
@@ -212,6 +219,10 @@ if __name__ == "__main__":
                 "ri_rarity_neighbors": args.ri_rarity_neighbors,
                 "slamri_beta": args.slamri_beta,
                 "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
+                "hysteresis_view_threshold": args.hysteresis_view_threshold,
+                "hysteresis_slam_weight": args.hysteresis_slam_weight,
+                "hysteresis_ri_weight": 1.0 - args.hysteresis_slam_weight,
+                "hysteresis_rarity_neighbors": args.hysteresis_rarity_neighbors,
                 "rsri_slam_weight": args.rsri_slam_weight,
                 "rsri_ri_weight": 1.0 - args.rsri_slam_weight,
                 "rsri_rarity_neighbors": args.rsri_rarity_neighbors,

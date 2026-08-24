@@ -20,6 +20,7 @@ SUPPORTED_MEMORY_POLICIES = (
     "surprise_forcing",
     "slam_ri_blend",
     "reliable_slam_ri",
+    "coverage_hysteresis",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
@@ -36,6 +37,7 @@ BUDGETED_MEMORY_POLICIES = (
     "surprise_forcing",
     "slam_ri_blend",
     "reliable_slam_ri",
+    "coverage_hysteresis",
 )
 
 
@@ -124,11 +126,18 @@ class FrameMemoryBuffer:
             if self.policy == "fifo":
                 evicted_frame_idx = evictable[0]
             else:
+                # Coverage hysteresis treats an established representative as
+                # the incumbent. If two views have equal retention utility,
+                # discard the newer rewrite rather than overwriting the anchor.
+                def tie_break_order(idx):
+                    order = self._stats[idx]["insert_order"]
+                    return -order if self.policy == "coverage_hysteresis" else order
+
                 evicted_frame_idx = min(
                     evictable,
                     key=lambda idx: (
                         self._stats[idx].get("score", 0.0),
-                        self._stats[idx]["insert_order"],
+                        tie_break_order(idx),
                     ),
                 )
 
@@ -265,6 +274,78 @@ def camera_trajectory_similarity(
         1.0,
     )
     return position_similarity * horizontal_similarity * vertical_similarity
+
+
+def select_coverage_hysteresis_admissions(
+    existing_frame_indices,
+    candidate_frame_indices,
+    c2ws,
+    view_similarity_threshold=0.90,
+    fov_half_h=45.0,
+    fov_half_v=30.0,
+    radius=50.0,
+    return_details=False,
+):
+    """Promote only candidates that add a camera view not already represented.
+
+    Candidates are processed causally. An admitted candidate immediately
+    becomes a reference for the remaining candidates from the same chunk, so
+    one new camera region cannot flood persistent memory with adjacent frames.
+    """
+    existing = list(dict.fromkeys(int(idx) for idx in existing_frame_indices))
+    candidates = list(dict.fromkeys(int(idx) for idx in candidate_frame_indices))
+    if not 0.0 <= float(view_similarity_threshold) <= 1.0:
+        raise ValueError("view_similarity_threshold must be in [0, 1]")
+
+    references = list(existing)
+    reference_set = set(references)
+    admitted = []
+    details = {}
+    for frame_idx in candidates:
+        if frame_idx in reference_set:
+            details[frame_idx] = {
+                "hysteresis_admitted": False,
+                "hysteresis_reason": "already_stored",
+                "hysteresis_max_view_similarity": 1.0,
+                "hysteresis_nearest_reference_frame": int(frame_idx),
+                "hysteresis_reference_count": len(references),
+                "hysteresis_view_threshold": float(view_similarity_threshold),
+            }
+            continue
+
+        if references:
+            similarities = camera_trajectory_similarity(
+                c2ws=c2ws,
+                query_frame_indices=[frame_idx],
+                memory_frame_indices=references,
+                fov_half_h=fov_half_h,
+                fov_half_v=fov_half_v,
+                radius=radius,
+            )[0]
+            nearest_position = int(np.argmax(similarities))
+            max_similarity = float(similarities[nearest_position])
+            nearest_reference = int(references[nearest_position])
+        else:
+            max_similarity = 0.0
+            nearest_reference = None
+
+        should_admit = max_similarity < float(view_similarity_threshold)
+        details[frame_idx] = {
+            "hysteresis_admitted": bool(should_admit),
+            "hysteresis_reason": (
+                "novel_view" if should_admit else "covered_by_incumbent"
+            ),
+            "hysteresis_max_view_similarity": max_similarity,
+            "hysteresis_nearest_reference_frame": nearest_reference,
+            "hysteresis_reference_count": len(references),
+            "hysteresis_view_threshold": float(view_similarity_threshold),
+        }
+        if should_admit:
+            admitted.append(frame_idx)
+            references.append(frame_idx)
+            reference_set.add(frame_idx)
+
+    return (admitted, details) if return_details else admitted
 
 
 def normalize(values):

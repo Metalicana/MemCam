@@ -45,6 +45,7 @@ def main():
             "slam_covisibility",
             "slam_max_coverage",
             "reliable_slam_ri",
+            "coverage_hysteresis",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -54,6 +55,9 @@ def main():
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--hysteresis_view_threshold", type=float, default=0.90)
+    parser.add_argument("--hysteresis_slam_weight", type=float, default=0.75)
+    parser.add_argument("--hysteresis_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_slam_weight", type=float, default=0.75)
     parser.add_argument("--rsri_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_reliability_neighbors", type=int, default=3)
@@ -128,6 +132,12 @@ def main():
         args.memory_policy,
         "--memory_bank_device",
         args.memory_bank_device,
+        "--hysteresis_view_threshold",
+        str(args.hysteresis_view_threshold),
+        "--hysteresis_slam_weight",
+        str(args.hysteresis_slam_weight),
+        "--hysteresis_rarity_neighbors",
+        str(args.hysteresis_rarity_neighbors),
         "--rsri_slam_weight",
         str(args.rsri_slam_weight),
         "--rsri_rarity_neighbors",
@@ -195,6 +205,14 @@ def main():
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    if args.memory_policy == "coverage_hysteresis":
+        print(
+            "Coverage hysteresis: "
+            f"view threshold={args.hysteresis_view_threshold}, "
+            f"geometric weight={args.hysteresis_slam_weight}, "
+            f"RI weight={1.0 - args.hysteresis_slam_weight}, "
+            f"rarity neighbors={args.hysteresis_rarity_neighbors}"
+        )
     if args.memory_policy == "density_balanced_view_coverage":
         print(
             "Density coverage: "

@@ -156,6 +156,7 @@ def main():
             "slam_max_coverage",
             "slam_ri_blend",
             "reliable_slam_ri",
+            "coverage_hysteresis",
             "facility_coreset",
             "kcenter_coreset",
             "trajectory_coverage",
@@ -242,6 +243,9 @@ def main():
         "threshold (same estimate_cluster_threshold k-th nearest-neighbor knob as "
         "--mce_rarity_neighbors).",
     )
+    parser.add_argument("--hysteresis_view_threshold", type=float, default=0.90)
+    parser.add_argument("--hysteresis_slam_weight", type=float, default=0.75)
+    parser.add_argument("--hysteresis_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_slam_weight", type=float, default=0.75)
     parser.add_argument("--rsri_rarity_neighbors", type=int, default=3)
     parser.add_argument("--rsri_reliability_neighbors", type=int, default=3)
@@ -376,6 +380,10 @@ def main():
         "ri_rarity_neighbors": args.ri_rarity_neighbors,
         "slamri_beta": args.slamri_beta,
         "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
+        "hysteresis_view_threshold": args.hysteresis_view_threshold,
+        "hysteresis_slam_weight": args.hysteresis_slam_weight,
+        "hysteresis_ri_weight": 1.0 - args.hysteresis_slam_weight,
+        "hysteresis_rarity_neighbors": args.hysteresis_rarity_neighbors,
         "rsri_slam_weight": args.rsri_slam_weight,
         "rsri_ri_weight": 1.0 - args.rsri_slam_weight,
         "rsri_rarity_neighbors": args.rsri_rarity_neighbors,
@@ -508,6 +516,14 @@ def main():
             f"beta={args.slamri_beta}, "
             f"rarity_neighbors={args.slamri_rarity_neighbors}"
         )
+    if args.memory_policy == "coverage_hysteresis":
+        print(
+            "Coverage hysteresis: "
+            f"view threshold={args.hysteresis_view_threshold}, "
+            f"geometric weight={args.hysteresis_slam_weight}, "
+            f"RI weight={1.0 - args.hysteresis_slam_weight}, "
+            f"rarity neighbors={args.hysteresis_rarity_neighbors}"
+        )
     if args.memory_policy == "reliable_slam_ri":
         print(
             "Reliable SLAM+RI: "
@@ -599,6 +615,9 @@ def main():
                 ri_rarity_neighbors=args.ri_rarity_neighbors,
                 slamri_beta=args.slamri_beta,
                 slamri_rarity_neighbors=args.slamri_rarity_neighbors,
+                hysteresis_view_threshold=args.hysteresis_view_threshold,
+                hysteresis_slam_weight=args.hysteresis_slam_weight,
+                hysteresis_rarity_neighbors=args.hysteresis_rarity_neighbors,
                 rsri_slam_weight=args.rsri_slam_weight,
                 rsri_rarity_neighbors=args.rsri_rarity_neighbors,
                 rsri_reliability_neighbors=args.rsri_reliability_neighbors,
@@ -648,6 +667,10 @@ def main():
                     "ri_rarity_neighbors": args.ri_rarity_neighbors,
                     "slamri_beta": args.slamri_beta,
                     "slamri_rarity_neighbors": args.slamri_rarity_neighbors,
+                    "hysteresis_view_threshold": args.hysteresis_view_threshold,
+                    "hysteresis_slam_weight": args.hysteresis_slam_weight,
+                    "hysteresis_ri_weight": 1.0 - args.hysteresis_slam_weight,
+                    "hysteresis_rarity_neighbors": args.hysteresis_rarity_neighbors,
                     "rsri_slam_weight": args.rsri_slam_weight,
                     "rsri_ri_weight": 1.0 - args.rsri_slam_weight,
                     "rsri_rarity_neighbors": args.rsri_rarity_neighbors,
