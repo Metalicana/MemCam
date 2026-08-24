@@ -17,11 +17,11 @@ component must beat its simpler ablation or be removed.
 
 - The diagnosis is stronger than the final method.
 - Generic no-reference image-quality gating has failed and is closed.
-- The fixed `0.75 Geometric Coverage + 0.25 RI` blend is an unvalidated
-  hypothesis, not the final method.
-- Pose-calibrated conditioning consistency is being evaluated as a possible
-  admission gate. It enters the policy only if the predeclared held-out test
-  returns `INJECT`.
+- Pose-calibrated conditioning consistency also failed its predeclared
+  held-out test and is closed. It must not be injected into the policy.
+- The ungated `0.75 Geometric Coverage + 0.25 RI` blend is the strongest
+  current final-policy candidate, but it is not established as optimal or
+  transferable.
 - Direct archive-induced softmax dilution is not a valid MemCam mechanism:
   archive growth changes the candidate search pool, while the retriever still
   supplies a fixed-size conditioning set to the generator.
@@ -39,8 +39,8 @@ component must beat its simpler ablation or be removed.
 | Corrupted selected memories cause the next chunk to degrade | Pending causal test | Requires complete matched GT-content cleaning replays. |
 | Archive growth directly dilutes MemCam denoiser attention | Rejected as stated | The archive is reduced to a fixed-size retrieved context before denoising. |
 | Generic IQA can gate corrupted memories | Rejected | Held-out calibration was not deployable. |
-| Pose-calibrated conditioning consistency can gate corrupted memories | Pending | Validation code exists; results are not yet available. |
-| A fixed 75/25 Geometric Coverage-RI blend is optimal or transferable | Not established | The 50/50 blend lost; 75/25 and sensitivity evidence are incomplete. |
+| Pose-calibrated conditioning consistency can gate corrupted memories | Rejected | Held-out AUC was 0.511, precision 0.207, recall 0.119, and pose calibration made raw similarity worse. |
+| A fixed 75/25 Geometric Coverage-RI blend is optimal or transferable | Not established | The completed 15-video run was competitive with Geometric Coverage but did not dominate it on every metric and duration. |
 | The method is representation agnostic | Not established | Equivalent, successful tests on another memory representation are required. |
 
 ## R1: Venue and contribution risk
@@ -180,6 +180,16 @@ Agreement with an arbitrary previous generated frame can reward propagation of
 an already corrupted state. It is circular and is not an accepted quality
 gate.
 
+### Pose-calibrated conditioning consistency
+
+The stricter causal-context variant was evaluated on 2,100 target/context
+pairs from ten calibration and five held-out trajectories. Its held-out AUC
+was `0.511`, bad-frame precision was `0.207`, recall was `0.119`, and clean
+rejection was `0.117`. Raw context similarity achieved AUC `0.546`, so pose
+calibration reduced rather than improved discrimination. AUC with corrupted
+parents was only `0.539`. The predeclared result was `DO_NOT_INJECT`; this gate
+must not appear as a component of the final method.
+
 ### Acceptance guarantees
 
 No experiment can guarantee ICLR acceptance. The goal of this register is to
@@ -188,13 +198,12 @@ remove unsupported claims and expose decisive tests, not to promise an outcome.
 ## Ordered decision queue
 
 1. Complete and evaluate the matched GT-content cleaning replay.
-2. Run the pose-calibrated conditioning-consistency validator and obey its
-   `INJECT` or `DO_NOT_INJECT` result.
-3. Finish the 75/25 blend evaluation and compare it directly with pure
+2. Treat both tested admission gates as closed failures; do not invent another
+   gate without a materially different observable signal.
+3. Complete the 75/25 blend evaluation beyond LPIPS/FVD and compare it directly with pure
    Geometric Coverage and pure RI.
 4. Run a coefficient sensitivity sweep only if the blend remains competitive.
 5. Audit WorldMem's memory-to-attention path before designing an attention
    entropy experiment.
 6. Scope the final claim to the systems on which the locked method actually
    works.
-

@@ -564,12 +564,10 @@ misaligned. Decision: do not inject generic IQA.
 
 ### Pose-calibrated conditioning consistency
 
-This is a validation-only hypothesis, not an implemented final gate. It
-compares a newly generated frame to the actual retrieved context that
-conditioned it, then subtracts expected DINO similarity for that camera
-displacement. Expected similarity is calibrated from GT frame pairs on
-training trajectories. It also tests whether the score fails when the parent
-context is already corrupted.
+This validation-only hypothesis was tested and rejected. It compared a newly
+generated frame to the actual retrieved context that conditioned it, then
+subtracted expected DINO similarity for that camera displacement. Expected
+similarity was calibrated from GT frame pairs on training trajectories.
 
 Code and job:
 
@@ -589,9 +587,21 @@ pose calibration AUC gain >= 0.02 over raw similarity
 low-fidelity-parent AUC >= 0.60
 ```
 
-The output is `INJECT` or `DO_NOT_INJECT`. No result has been shared yet. Obey
-the result rather than rationalizing a failed gate. Do not call this a forward
-cycle; the current validator is pose-calibrated context consistency.
+The completed validator analyzed 2,100 pairs and returned `DO_NOT_INJECT`:
+
+```text
+context_pose_residual AUC:       0.511
+bad precision:                   0.207
+bad recall:                      0.119
+clean false-rejection rate:      0.117
+within-trajectory Spearman:     -0.020
+raw context similarity AUC:      0.546
+low-fidelity-parent AUC:         0.539
+```
+
+Only clean rejection passed. Pose calibration worsened raw similarity, and the
+gate was near random at identifying corrupted frames. Do not inject, port, or
+resurrect this mechanism without a materially different observable signal.
 
 ## Other completed probes
 
@@ -700,10 +710,10 @@ Known unresolved items:
 
 1. GT-content cleaning replay: partial branches existed; final evaluation not
    confirmed.
-2. Pose-calibrated consistency validator: job is ready; result not shared.
-3. `beta=0.75`, k=3 blend: completion and metrics not confirmed.
-4. `beta=0.25`, k=3 blend: last observed with only three videos; may have
-   progressed later.
+2. Pose-calibrated consistency validator: completed; `DO_NOT_INJECT`.
+3. `beta=0.75`, k=3 blend: completed 15/15; prefix LPIPS/FVD recorded in this
+   document, but VBench and CUT3R remain to be confirmed.
+4. `beta=0.25`, k=3 blend: completed 15/15; prefix LPIPS/FVD recorded.
 5. `slam_max_coverage`: job was submitted historically; result not recorded.
 6. Blend CUT3R-only resume: job exists; result not confirmed.
 7. VBench-Long: crashed and was never diagnosed.

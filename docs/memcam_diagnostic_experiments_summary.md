@@ -356,14 +356,29 @@ agreement can certify consistent propagation of the same error. The earlier
 cross-view `reliable_slam_ri` prototype therefore does not constitute a
 validated quality gate and must not be reported as the final method.
 
-The next hypothesis is narrower and remains unproven: compare a new frame with
-the frame that actually conditioned its generation, then subtract the expected
-DINO similarity for that camera displacement. The expected similarity is fit
-from ground-truth frame pairs on training trajectories only. Validation must
-report held-out AUC, bad-frame precision and recall, clean-frame rejection,
-performance when the conditioning frame is itself corrupted, and a control
-anchored to the clean input frame. The score will be integrated into generation
-only if it passes pre-declared deployment criteria.
+The narrower follow-up compared a new frame with the frame that actually
+conditioned its generation, then subtracted expected DINO similarity for that
+camera displacement. It also failed the predeclared held-out test.
+
+## 13. Failed pose-calibrated causal-consistency gate
+
+The validator analyzed 2,100 target/context pairs from ten calibration and
+five held-out trajectories. The proposed `context_pose_residual` produced:
+
+- held-out AUC: 0.511;
+- bad-frame precision: 0.207;
+- bad-frame recall: 0.119;
+- clean-frame rejection: 0.117;
+- within-trajectory Spearman: -0.020.
+
+Raw context similarity had AUC 0.546, so pose calibration worsened the signal
+instead of providing the required 0.02 gain. AUC with low-fidelity conditioning
+parents was 0.539. Only the clean-rejection check passed; the final decision
+was `DO_NOT_INJECT`.
+
+**Decision:** do not implement or port this gate. DINO agreement with the
+conditioning frame does not reliably identify exact-index corruption. The
+current policy candidate is the ungated geometry-dominant RI blend.
 
 ## Current scientific conclusion
 
