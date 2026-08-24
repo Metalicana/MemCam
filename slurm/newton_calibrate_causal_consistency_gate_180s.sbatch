@@ -45,8 +45,8 @@ echo "Output: $OUT"
 echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Started: $(date)"
 
-timeout 90s python -c \
-  'import torch; assert torch.cuda.is_available(); print("CUDA:", torch.cuda.get_device_name(0))'
+echo "=== NVIDIA device ==="
+nvidia-smi
 
 # Use discovery instead of importing ``tests.*`` as a package. Some Newton
 # environments install an unrelated top-level ``tests`` package, while this
