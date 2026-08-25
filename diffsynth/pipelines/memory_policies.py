@@ -2408,6 +2408,13 @@ def compute_slam_ri_blend_scores(
                 "slamri_ri_norm": float(ri_norm[idx]),
                 "slamri_ri_rarity": ri_details[idx]["rarity"],
                 "slamri_ri_irreplaceability": ri_details[idx]["irreplaceability"],
+                "slamri_ri_cluster_id": ri_details[idx]["cluster_id"],
+                "slamri_ri_cluster_size": ri_details[idx]["cluster_size"],
+                "slamri_ri_cluster_threshold": ri_details[idx]["cluster_threshold"],
+                "slamri_ri_nearest_frame": ri_details[idx]["rgb_nearest_frame"],
+                "slamri_ri_nearest_distance": ri_details[idx][
+                    "rgb_nearest_distance"
+                ],
                 "slamri_slam_redundancy_ratio": slam_details[idx]["redundancy_ratio"],
                 "slamri_slam_unique_bonus": slam_details[idx]["unique_bonus"],
             }
