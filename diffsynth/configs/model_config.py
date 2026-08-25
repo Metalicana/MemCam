@@ -41,7 +41,13 @@ from ..models.flux_ipadapter import FluxIpAdapter
 from ..models.cog_vae import CogVAEEncoder, CogVAEDecoder
 from ..models.cog_dit import CogDiT
 
-from ..models.omnigen import OmniGenTransformer
+try:
+    from ..models.omnigen import OmniGenTransformer
+except ImportError:
+    # OmniGen needs Phi-3 classes that are absent from some Transformers
+    # versions used by the video-generation environments. It is optional for
+    # every other model family, including Wan/MemCam.
+    OmniGenTransformer = None
 
 from ..models.hunyuan_video_vae_decoder import HunyuanVideoVAEDecoder
 from ..models.hunyuan_video_vae_encoder import HunyuanVideoVAEEncoder
@@ -99,7 +105,6 @@ model_loader_configs = [
     (None, "280189ee084bca10f70907bf6ce1649d", ["cog_vae_encoder", "cog_vae_decoder"], [CogVAEEncoder, CogVAEDecoder], "diffusers"),
     (None, "9b9313d104ac4df27991352fec013fd4", ["rife"], [IFNet], "civitai"),
     (None, "6b7116078c4170bfbeaedc8fe71f6649", ["esrgan"], [RRDBNet], "civitai"),
-    (None, "61cbcbc7ac11f169c5949223efa960d1", ["omnigen_transformer"], [OmniGenTransformer], "diffusers"),
     (None, "78d18b9101345ff695f312e7e62538c0", ["flux_controlnet"], [FluxControlNet], "diffusers"),
     (None, "b001c89139b5f053c715fe772362dd2a", ["flux_controlnet"], [FluxControlNet], "diffusers"),
     (None, "52357cb26250681367488a8954c271e8", ["flux_controlnet"], [FluxControlNet], "diffusers"),
@@ -123,6 +128,16 @@ model_loader_configs = [
     (None, "1378ea763357eea97acdef78e65d6d96", ["wan_video_vae"], [WanVideoVAE], "civitai"),
     (None, "ccc42284ea13e1ad04693284c7a09be6", ["wan_video_vae"], [WanVideoVAE], "civitai"),
 ]
+if OmniGenTransformer is not None:
+    model_loader_configs.append(
+        (
+            None,
+            "61cbcbc7ac11f169c5949223efa960d1",
+            ["omnigen_transformer"],
+            [OmniGenTransformer],
+            "diffusers",
+        )
+    )
 huggingface_model_loader_configs = [
     # These configs are provided for detecting model type automatically.
     # The format is (architecture_in_huggingface_config, huggingface_lib, model_name, redirected_architecture)

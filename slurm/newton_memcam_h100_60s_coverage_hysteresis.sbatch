@@ -67,6 +67,7 @@ nvidia-smi
 python -m unittest discover -s tests -p 'test_coverage_hysteresis.py' -v
 python -m unittest discover -s tests -p 'test_slam_ri_blend.py' -v
 python utils/check_memory_policies.py
+python -c 'from diffsynth import ModelManager, save_video; from diffsynth.pipelines.wan_video_memcam import WanVideoMemCamPipeline; print("Wan/MemCam imports passed")'
 
 python utils/run_context_memory_batch.py \
   --manifest "$MANIFEST" \
