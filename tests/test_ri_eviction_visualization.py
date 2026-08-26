@@ -78,6 +78,27 @@ class RiEvictionVisualizationTest(unittest.TestCase):
         self.assertEqual(MODULE.frame_status(5, snapshot), "evicted_new")
         self.assertEqual(MODULE.frame_status(6, snapshot), "retained_new")
 
+    def test_representative_labels_include_old_and_diverse_new_clusters(self):
+        snapshot = {
+            "current_memory": [1, 2],
+            "incoming": [5, 6, 7],
+            "evicted": [1, 5, 6, 7],
+        }
+        details = {
+            1: {"score": 0.04, "cluster_id": 0, "cluster_size": 1},
+            5: {"score": 0.01, "cluster_id": 1, "cluster_size": 8},
+            6: {"score": 0.02, "cluster_id": 1, "cluster_size": 8},
+            7: {"score": 0.03, "cluster_id": 2, "cluster_size": 3},
+        }
+
+        labels = MODULE.representative_eviction_labels(
+            snapshot,
+            details,
+            limit=4,
+        )
+
+        self.assertEqual(labels, [1, 5, 7])
+
 
 if __name__ == "__main__":
     unittest.main()

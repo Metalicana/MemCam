@@ -215,6 +215,29 @@ def frame_status(frame_idx, snapshot):
     return "retained_new" if is_new else "retained_old"
 
 
+def representative_eviction_labels(snapshot, details, limit=7):
+    """Choose a few informative labels without covering dense point clouds."""
+    old_frames = [
+        idx for idx in snapshot["evicted"] if idx in set(snapshot["current_memory"])
+    ]
+    new_frames = [
+        idx for idx in snapshot["evicted"] if idx in set(snapshot["incoming"])
+    ]
+    old_frames.sort(key=lambda idx: details[idx]["score"])
+
+    # Pick at most one low-score example from each large incoming cluster.
+    cluster_examples = {}
+    for frame_idx in sorted(new_frames, key=lambda idx: details[idx]["score"]):
+        cluster_id = int(details[frame_idx]["cluster_id"])
+        cluster_examples.setdefault(cluster_id, frame_idx)
+    new_examples = sorted(
+        cluster_examples.values(),
+        key=lambda idx: (-details[idx]["cluster_size"], details[idx]["score"]),
+    )
+    selected = old_frames[:3] + new_examples
+    return selected[: int(limit)]
+
+
 def render_duplicate_montage(common, rows, images, output_path):
     if not rows:
         return None
@@ -263,6 +286,8 @@ def render_duplicate_montage(common, rows, images, output_path):
 
 def render_score_landscape(common, snapshot, details, output_path):
     plt = common.configure_matplotlib()
+    from matplotlib.lines import Line2D
+
     fig, ax = plt.subplots(figsize=(10.5, 7.5))
     for status in (
         "retained_old",
@@ -280,11 +305,10 @@ def render_score_landscape(common, snapshot, details, output_path):
         ax.scatter(
             [details[idx]["rarity"] for idx in frames],
             [details[idx]["irreplaceability"] for idx in frames],
-            s=[45 + 10 * details[idx]["cluster_size"] for idx in frames],
+            s=[min(45 + 8 * details[idx]["cluster_size"], 180) for idx in frames],
             marker=marker,
             color=COLORS[status],
             alpha=0.86,
-            label=status.replace("_", " "),
             edgecolors="white" if marker != "X" else COLORS[status],
             linewidths=0.8,
         )
@@ -325,7 +349,7 @@ def render_score_landscape(common, snapshot, details, output_path):
             va="bottom",
         )
         ax.set_ylim(0, y_limit)
-    for frame_idx in snapshot["evicted"][:12]:
+    for frame_idx in representative_eviction_labels(snapshot, details, limit=6):
         ax.annotate(
             f"f{frame_idx}",
             (details[frame_idx]["rarity"], details[frame_idx]["irreplaceability"]),
@@ -340,7 +364,27 @@ def render_score_landscape(common, snapshot, details, output_path):
         fontsize=16,
         fontweight="bold",
     )
-    ax.legend(frameon=False, loc="best")
+    legend_handles = []
+    for status in (
+        "retained_old",
+        "retained_new",
+        "evicted_old",
+        "evicted_new",
+        "anchor",
+    ):
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=("*" if status == "anchor" else ("X" if "evicted" in status else "o")),
+                color="none",
+                markerfacecolor=COLORS[status],
+                markeredgecolor=COLORS[status],
+                markersize=9,
+                label=status.replace("_", " "),
+            )
+        )
+    ax.legend(handles=legend_handles, frameon=False, loc="best")
     ax.grid(color="#ededed", linewidth=0.8)
     for name in ("top", "right"):
         ax.spines[name].set_visible(False)
@@ -356,6 +400,9 @@ def render_cluster_map(common, snapshot, dino_features, details, output_path):
     coordinates = common.pca_2d(np.stack([dino_features[idx] for idx in frames]))
     cmap = plt.get_cmap("tab20")
     fig, ax = plt.subplots(figsize=(11, 8))
+    labeled_evictions = set(
+        representative_eviction_labels(snapshot, details, limit=9)
+    )
     for position, frame_idx in enumerate(frames):
         status = frame_status(frame_idx, snapshot)
         cluster_id = int(details[frame_idx]["cluster_id"])
@@ -370,7 +417,7 @@ def render_cluster_map(common, snapshot, dino_features, details, output_path):
             linewidths=2.0 if "evicted" in status else 1.0,
             alpha=0.9,
         )
-        if "evicted" in status:
+        if frame_idx in labeled_evictions:
             ax.annotate(
                 f"f{frame_idx}",
                 coordinates[position],
