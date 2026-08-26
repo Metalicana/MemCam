@@ -151,10 +151,12 @@ def main():
         choices=[
             "unbounded",
             "fifo",
+            "rarity_only",
             "rarity_irreplaceability",
             "slam_covisibility",
             "slam_max_coverage",
             "slam_ri_blend",
+            "slam_rarity_blend",
             "reliable_slam_ri",
             "coverage_hysteresis",
             "facility_coreset",
@@ -168,6 +170,18 @@ def main():
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument(
+        "--rarity_neighbors",
+        type=int,
+        default=3,
+        help="k for rarity_only and slam_rarity_blend DINO clustering.",
+    )
+    parser.add_argument(
+        "--slamrarity_slam_weight",
+        type=float,
+        default=0.75,
+        help="Geometric score weight in slam_rarity_blend; rarity gets 1-weight.",
+    )
     parser.add_argument("--density_coverage_alpha", type=float, default=0.5)
     parser.add_argument("--density_coverage_dino_weight", type=float, default=0.5)
     parser.add_argument("--density_coverage_rgb_weight", type=float, default=0.25)
@@ -320,6 +334,10 @@ def main():
 
     if args.ri_rarity_neighbors < 1:
         raise ValueError("--ri_rarity_neighbors must be at least 1")
+    if args.rarity_neighbors < 1:
+        raise ValueError("--rarity_neighbors must be at least 1")
+    if not 0.0 <= args.slamrarity_slam_weight <= 1.0:
+        raise ValueError("--slamrarity_slam_weight must be in [0, 1]")
     if args.slamri_rarity_neighbors < 1:
         raise ValueError("--slamri_rarity_neighbors must be at least 1")
     if not 0.0 <= args.rsri_slam_weight <= 1.0:
@@ -364,6 +382,9 @@ def main():
         "memory_policy": args.memory_policy,
         "memory_budget": args.memory_budget,
         "memory_bank_device": args.memory_bank_device,
+        "rarity_neighbors": args.rarity_neighbors,
+        "slamrarity_slam_weight": args.slamrarity_slam_weight,
+        "slamrarity_rarity_weight": 1.0 - args.slamrarity_slam_weight,
         "density_coverage_alpha": args.density_coverage_alpha,
         "density_coverage_dino_weight": args.density_coverage_dino_weight,
         "density_coverage_rgb_weight": args.density_coverage_rgb_weight,
@@ -510,6 +531,15 @@ def main():
         )
     if args.memory_policy == "rarity_irreplaceability":
         print(f"RI rarity neighbors: {args.ri_rarity_neighbors}")
+    if args.memory_policy == "rarity_only":
+        print(f"Rarity-only neighbors: {args.rarity_neighbors}")
+    if args.memory_policy == "slam_rarity_blend":
+        print(
+            "Geometric+Rarity blend: "
+            f"geometric_weight={args.slamrarity_slam_weight}, "
+            f"rarity_weight={1.0 - args.slamrarity_slam_weight}, "
+            f"rarity_neighbors={args.rarity_neighbors}"
+        )
     if args.memory_policy == "slam_ri_blend":
         print(
             "SLAM+RI blend: "
@@ -612,6 +642,8 @@ def main():
                 mce_gamma=args.mce_gamma,
                 mce_query_stride=args.mce_query_stride,
                 mce_rarity_neighbors=args.mce_rarity_neighbors,
+                rarity_neighbors=args.rarity_neighbors,
+                slamrarity_slam_weight=args.slamrarity_slam_weight,
                 ri_rarity_neighbors=args.ri_rarity_neighbors,
                 slamri_beta=args.slamri_beta,
                 slamri_rarity_neighbors=args.slamri_rarity_neighbors,
@@ -664,6 +696,10 @@ def main():
                     "mce_gamma": args.mce_gamma,
                     "mce_query_stride": args.mce_query_stride,
                     "mce_rarity_neighbors": args.mce_rarity_neighbors,
+                    "rarity_neighbors": args.rarity_neighbors,
+                    "slamrarity_slam_weight": args.slamrarity_slam_weight,
+                    "slamrarity_rarity_weight": 1.0
+                    - args.slamrarity_slam_weight,
                     "ri_rarity_neighbors": args.ri_rarity_neighbors,
                     "slamri_beta": args.slamri_beta,
                     "slamri_rarity_neighbors": args.slamri_rarity_neighbors,

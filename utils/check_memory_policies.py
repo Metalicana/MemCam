@@ -21,9 +21,11 @@ compute_future_view_coverage_scores = memory_policies.compute_future_view_covera
 compute_h2o_heavy_hitter_scores = memory_policies.compute_h2o_heavy_hitter_scores
 compute_kcenter_coreset_scores = memory_policies.compute_kcenter_coreset_scores
 compute_marginal_coverage_eviction_scores = memory_policies.compute_marginal_coverage_eviction_scores
+compute_rarity_scores = memory_policies.compute_rarity_scores
 compute_rarity_irreplaceability_scores = memory_policies.compute_rarity_irreplaceability_scores
 compute_slam_covisibility_scores = memory_policies.compute_slam_covisibility_scores
 compute_slam_max_coverage_scores = memory_policies.compute_slam_max_coverage_scores
+compute_slam_rarity_blend_scores = memory_policies.compute_slam_rarity_blend_scores
 compute_slam_ri_blend_scores = memory_policies.compute_slam_ri_blend_scores
 compute_trajectory_coverage_scores = memory_policies.compute_trajectory_coverage_scores
 select_coverage_hysteresis_admissions = (
@@ -84,6 +86,14 @@ def check_rarity_irreplaceability_requires_budget():
     raise AssertionError("rarity_irreplaceability without a budget should fail")
 
 
+def check_rarity_only_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="rarity_only")
+    except ValueError:
+        return
+    raise AssertionError("rarity_only without a budget should fail")
+
+
 def check_slam_covisibility_requires_budget():
     try:
         FrameMemoryBuffer(policy="slam_covisibility")
@@ -106,6 +116,14 @@ def check_slam_ri_blend_requires_budget():
     except ValueError:
         return
     raise AssertionError("slam_ri_blend without a budget should fail")
+
+
+def check_slam_rarity_blend_requires_budget():
+    try:
+        FrameMemoryBuffer(policy="slam_rarity_blend")
+    except ValueError:
+        return
+    raise AssertionError("slam_rarity_blend without a budget should fail")
 
 
 def check_coverage_hysteresis():
@@ -462,6 +480,38 @@ def check_slam_max_coverage_scores():
     assert scores[1] < 0.0
 
 
+def check_rarity_and_slam_rarity_scores():
+    c2ws = make_line_c2ws(8)
+    dino_features = {
+        0: np.array([1.0, 0.0], dtype=np.float32),
+        1: np.array([0.999, 0.001], dtype=np.float32),
+        2: np.array([0.998, 0.002], dtype=np.float32),
+        7: np.array([0.0, 1.0], dtype=np.float32),
+    }
+    rgb_features = {
+        frame_idx: np.full(12, frame_idx / 7.0, dtype=np.float32)
+        for frame_idx in dino_features
+    }
+    rarity_scores = compute_rarity_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        dino_features=dino_features,
+        rarity_neighbors=1,
+    )
+    assert rarity_scores[7] > rarity_scores[1]
+
+    blend_scores = compute_slam_rarity_blend_scores(
+        memory_frame_indices=[0, 1, 2, 7],
+        c2ws=c2ws,
+        forced_keep_frames={0},
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        slam_weight=0.75,
+        rarity_kwargs={"rarity_neighbors": 1},
+    )
+    assert blend_scores[0] == float("inf")
+    assert blend_scores[7] > blend_scores[1]
+
+
 def check_slam_ri_blend_scores():
     c2ws = make_line_c2ws(8)
     dino_features = {
@@ -746,12 +796,15 @@ if __name__ == "__main__":
     check_rarity_irreplaceability_budgeting()
     check_rarity_irreplaceability_requires_budget()
     check_rarity_irreplaceability_scores()
+    check_rarity_only_requires_budget()
     check_slam_covisibility_requires_budget()
     check_slam_covisibility_scores()
     check_slam_max_coverage_requires_budget()
     check_slam_max_coverage_scores()
     check_slam_ri_blend_requires_budget()
     check_slam_ri_blend_scores()
+    check_slam_rarity_blend_requires_budget()
+    check_rarity_and_slam_rarity_scores()
     check_coverage_hysteresis()
     check_facility_coreset_requires_budget()
     check_facility_coreset_scores()

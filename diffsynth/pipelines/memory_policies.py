@@ -7,6 +7,7 @@ import numpy as np
 SUPPORTED_MEMORY_POLICIES = (
     "unbounded",
     "fifo",
+    "rarity_only",
     "rarity_irreplaceability",
     "slam_covisibility",
     "slam_max_coverage",
@@ -19,11 +20,13 @@ SUPPORTED_MEMORY_POLICIES = (
     "h2o_heavy_hitter",
     "surprise_forcing",
     "slam_ri_blend",
+    "slam_rarity_blend",
     "reliable_slam_ri",
     "coverage_hysteresis",
 )
 BUDGETED_MEMORY_POLICIES = (
     "fifo",
+    "rarity_only",
     "rarity_irreplaceability",
     "slam_covisibility",
     "slam_max_coverage",
@@ -36,6 +39,7 @@ BUDGETED_MEMORY_POLICIES = (
     "h2o_heavy_hitter",
     "surprise_forcing",
     "slam_ri_blend",
+    "slam_rarity_blend",
     "reliable_slam_ri",
     "coverage_hysteresis",
 )
@@ -841,6 +845,100 @@ class SurpriseForcingMemoryController:
         }
 
 
+def _compute_rarity_components(
+    memory_frame_indices,
+    dino_features,
+    rarity_neighbors=3,
+    cluster_distance_threshold=None,
+):
+    """Return DINO-cluster rarity and its shared clustering metadata."""
+    memory_frame_indices = list(memory_frame_indices)
+    if dino_features is None:
+        raise ValueError("Rarity scoring requires DINO features.")
+
+    missing_features = [
+        frame_idx
+        for frame_idx in memory_frame_indices
+        if frame_idx not in dino_features
+    ]
+    if missing_features:
+        raise ValueError(
+            f"Missing DINO memory features for frames: {missing_features[:10]}"
+        )
+
+    dino_matrix = np.stack(
+        [dino_features[frame_idx] for frame_idx in memory_frame_indices]
+    )
+    dino_pairwise = cosine_distances(dino_matrix)
+    np.fill_diagonal(dino_pairwise, np.inf)
+
+    if len(memory_frame_indices) == 1:
+        cluster_ids = np.zeros(1, dtype=np.int64)
+        cluster_sizes = np.ones(1, dtype=np.float64)
+        threshold = 0.0
+    else:
+        threshold = (
+            float(cluster_distance_threshold)
+            if cluster_distance_threshold is not None
+            else estimate_cluster_threshold(dino_pairwise, rarity_neighbors)
+        )
+        cluster_pairwise = dino_pairwise.copy()
+        np.fill_diagonal(cluster_pairwise, 0.0)
+        cluster_ids, clusters = connected_components_from_threshold(
+            cluster_pairwise,
+            threshold=threshold,
+        )
+        cluster_sizes = np.array(
+            [len(clusters[cluster_id]) for cluster_id in cluster_ids]
+        )
+
+    memory_count = float(len(memory_frame_indices))
+    rarity = np.log((memory_count + 1.0) / np.maximum(cluster_sizes, 1.0))
+    return rarity, cluster_ids, cluster_sizes, threshold
+
+
+def compute_rarity_scores(
+    memory_frame_indices,
+    pinned_frames=None,
+    rarity_neighbors=3,
+    cluster_distance_threshold=None,
+    return_details=False,
+    dino_features=None,
+):
+    """Score memory items only by inverse DINO-cluster density.
+
+    Higher scores retain frames from smaller appearance clusters. Unlike RI,
+    this ablation deliberately omits RGB nearest-neighbor irreplaceability.
+    """
+    memory_frame_indices = list(memory_frame_indices)
+    pinned_frames = set(pinned_frames or [])
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+
+    rarity, cluster_ids, cluster_sizes, threshold = _compute_rarity_components(
+        memory_frame_indices=memory_frame_indices,
+        dino_features=dino_features,
+        rarity_neighbors=rarity_neighbors,
+        cluster_distance_threshold=cluster_distance_threshold,
+    )
+
+    scores = {}
+    details = {}
+    for index, frame_idx in enumerate(memory_frame_indices):
+        score = float(rarity[index])
+        if frame_idx in pinned_frames:
+            score = float("inf")
+        scores[frame_idx] = score
+        details[frame_idx] = {
+            "score": score,
+            "rarity": float(rarity[index]),
+            "cluster_id": int(cluster_ids[index]),
+            "cluster_size": int(cluster_sizes[index]),
+            "cluster_threshold": float(threshold),
+        }
+    return (scores, details) if return_details else scores
+
+
 def compute_rarity_irreplaceability_scores(
     memory_frame_indices,
     pinned_frames=None,
@@ -869,32 +967,13 @@ def compute_rarity_irreplaceability_scores(
     if missing_features:
         raise ValueError(f"Missing visual memory features for frames: {missing_features[:10]}")
 
-    dino_matrix = np.stack([dino_features[frame_idx] for frame_idx in memory_frame_indices])
     rgb_matrix = np.stack([rgb_features[frame_idx] for frame_idx in memory_frame_indices])
-
-    dino_pairwise = cosine_distances(dino_matrix)
-    np.fill_diagonal(dino_pairwise, np.inf)
-
-    if len(memory_frame_indices) == 1:
-        cluster_ids = np.zeros(1, dtype=np.int64)
-        cluster_sizes = np.ones(1, dtype=np.float64)
-        threshold = 0.0
-    else:
-        threshold = (
-            float(cluster_distance_threshold)
-            if cluster_distance_threshold is not None
-            else estimate_cluster_threshold(dino_pairwise, rarity_neighbors)
-        )
-        cluster_pairwise = dino_pairwise.copy()
-        np.fill_diagonal(cluster_pairwise, 0.0)
-        cluster_ids, clusters = connected_components_from_threshold(
-            cluster_pairwise,
-            threshold=threshold,
-        )
-        cluster_sizes = np.array([len(clusters[cluster_id]) for cluster_id in cluster_ids])
-
-    memory_count = float(len(memory_frame_indices))
-    rarity = np.log((memory_count + 1.0) / np.maximum(cluster_sizes, 1.0))
+    rarity, cluster_ids, cluster_sizes, threshold = _compute_rarity_components(
+        memory_frame_indices=memory_frame_indices,
+        dino_features=dino_features,
+        rarity_neighbors=rarity_neighbors,
+        cluster_distance_threshold=cluster_distance_threshold,
+    )
 
     rgb_pairwise = pairwise_mean_abs_distances(rgb_matrix)
     np.fill_diagonal(rgb_pairwise, np.inf)
@@ -2311,6 +2390,26 @@ def compute_marginal_coverage_eviction_scores(
     return (scores, details) if return_details else scores
 
 
+def _min_max_normalize_scores(raw_scores, frame_indices):
+    frame_indices = list(frame_indices)
+    values = np.array(
+        [raw_scores[idx] for idx in frame_indices],
+        dtype=np.float64,
+    )
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return {idx: 0.0 for idx in frame_indices}
+    lo, hi = float(finite.min()), float(finite.max())
+    span = hi - lo
+    normalized = {}
+    for idx, value in zip(frame_indices, values):
+        if not np.isfinite(value) or span <= 1e-12:
+            normalized[idx] = 1.0
+        else:
+            normalized[idx] = (float(value) - lo) / span
+    return normalized
+
+
 def compute_slam_ri_blend_scores(
     memory_frame_indices,
     c2ws,
@@ -2371,25 +2470,8 @@ def compute_slam_ri_blend_scores(
         **ri_kwargs,
     )
 
-    def _min_max_normalize(raw):
-        values = np.array([raw[idx] for idx in memory_frame_indices], dtype=np.float64)
-        finite = values[np.isfinite(values)]
-        if finite.size == 0:
-            return {idx: 0.0 for idx in memory_frame_indices}
-        lo, hi = float(finite.min()), float(finite.max())
-        span = hi - lo
-        normalized = {}
-        for idx, value in zip(memory_frame_indices, values):
-            if not np.isfinite(value):
-                normalized[idx] = 1.0
-            elif span <= 1e-12:
-                normalized[idx] = 1.0
-            else:
-                normalized[idx] = (float(value) - lo) / span
-        return normalized
-
-    slam_norm = _min_max_normalize(slam_scores)
-    ri_norm = _min_max_normalize(ri_scores)
+    slam_norm = _min_max_normalize_scores(slam_scores, memory_frame_indices)
+    ri_norm = _min_max_normalize_scores(ri_scores, memory_frame_indices)
 
     scores = {}
     details = {}
@@ -2419,6 +2501,81 @@ def compute_slam_ri_blend_scores(
                 "slamri_slam_unique_bonus": slam_details[idx]["unique_bonus"],
             }
 
+    return (scores, details) if return_details else scores
+
+
+def compute_slam_rarity_blend_scores(
+    memory_frame_indices,
+    c2ws,
+    forced_keep_frames=None,
+    dino_features=None,
+    rgb_features=None,
+    slam_weight=0.75,
+    slam_kwargs=None,
+    rarity_kwargs=None,
+    return_details=False,
+):
+    """Blend geometric coverage with DINO-cluster rarity, excluding RI's RGB term."""
+    memory_frame_indices = list(memory_frame_indices)
+    forced_keep_frames = set(forced_keep_frames or ())
+    slam_kwargs = dict(slam_kwargs or {})
+    rarity_kwargs = dict(rarity_kwargs or {})
+    slam_weight = float(slam_weight)
+    if not 0.0 <= slam_weight <= 1.0:
+        raise ValueError(f"slam_weight must be in [0, 1], got {slam_weight}")
+    if not memory_frame_indices:
+        return ({}, {}) if return_details else {}
+
+    slam_scores, slam_details = compute_slam_covisibility_scores(
+        memory_frame_indices=memory_frame_indices,
+        c2ws=c2ws,
+        pinned_frames=None,
+        dino_features=dino_features,
+        rgb_features=rgb_features,
+        return_details=True,
+        **slam_kwargs,
+    )
+    rarity_scores, rarity_details = compute_rarity_scores(
+        memory_frame_indices=memory_frame_indices,
+        pinned_frames=None,
+        dino_features=dino_features,
+        return_details=True,
+        **rarity_kwargs,
+    )
+    slam_norm = _min_max_normalize_scores(slam_scores, memory_frame_indices)
+    rarity_norm = _min_max_normalize_scores(rarity_scores, memory_frame_indices)
+
+    scores = {}
+    details = {}
+    for idx in memory_frame_indices:
+        is_forced = idx in forced_keep_frames
+        score = (
+            float("inf")
+            if is_forced
+            else slam_weight * slam_norm[idx]
+            + (1.0 - slam_weight) * rarity_norm[idx]
+        )
+        scores[idx] = float(score)
+        if return_details:
+            details[idx] = {
+                "score": float(score),
+                "slamrarity_slam_weight": slam_weight,
+                "slamrarity_rarity_weight": 1.0 - slam_weight,
+                "slamrarity_forced_keep": is_forced,
+                "slamrarity_slam_raw": float(slam_scores[idx]),
+                "slamrarity_slam_norm": float(slam_norm[idx]),
+                "slamrarity_rarity_raw": float(rarity_scores[idx]),
+                "slamrarity_rarity_norm": float(rarity_norm[idx]),
+                "slamrarity_cluster_id": rarity_details[idx]["cluster_id"],
+                "slamrarity_cluster_size": rarity_details[idx]["cluster_size"],
+                "slamrarity_cluster_threshold": rarity_details[idx][
+                    "cluster_threshold"
+                ],
+                "slamrarity_slam_redundancy_ratio": slam_details[idx][
+                    "redundancy_ratio"
+                ],
+                "slamrarity_slam_unique_bonus": slam_details[idx]["unique_bonus"],
+            }
     return (scores, details) if return_details else scores
 
 

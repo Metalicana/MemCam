@@ -41,9 +41,11 @@ def main():
         choices=[
             "unbounded",
             "fifo",
+            "rarity_only",
             "rarity_irreplaceability",
             "slam_covisibility",
             "slam_max_coverage",
+            "slam_rarity_blend",
             "reliable_slam_ri",
             "coverage_hysteresis",
             "facility_coreset",
@@ -55,6 +57,8 @@ def main():
         ],
     )
     parser.add_argument("--memory_budget", type=int, default=None)
+    parser.add_argument("--rarity_neighbors", type=int, default=3)
+    parser.add_argument("--slamrarity_slam_weight", type=float, default=0.75)
     parser.add_argument("--hysteresis_view_threshold", type=float, default=0.90)
     parser.add_argument("--hysteresis_slam_weight", type=float, default=0.75)
     parser.add_argument("--hysteresis_rarity_neighbors", type=int, default=3)
@@ -132,6 +136,10 @@ def main():
         args.memory_policy,
         "--memory_bank_device",
         args.memory_bank_device,
+        "--rarity_neighbors",
+        str(args.rarity_neighbors),
+        "--slamrarity_slam_weight",
+        str(args.slamrarity_slam_weight),
         "--hysteresis_view_threshold",
         str(args.hysteresis_view_threshold),
         "--hysteresis_slam_weight",
@@ -205,6 +213,15 @@ def main():
     print(f"Frames: {item['num_frames']} ({item['actual_duration_sec']}s)")
     print(f"Steps: {num_inference_steps}")
     print(f"Memory policy: {args.memory_policy}, budget: {args.memory_budget}")
+    if args.memory_policy == "rarity_only":
+        print(f"Rarity-only neighbors: {args.rarity_neighbors}")
+    if args.memory_policy == "slam_rarity_blend":
+        print(
+            "Geometric+Rarity blend: "
+            f"geometric_weight={args.slamrarity_slam_weight}, "
+            f"rarity_weight={1.0 - args.slamrarity_slam_weight}, "
+            f"rarity_neighbors={args.rarity_neighbors}"
+        )
     if args.memory_policy == "coverage_hysteresis":
         print(
             "Coverage hysteresis: "

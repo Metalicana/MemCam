@@ -23,9 +23,11 @@ from .memory_policies import (
     compute_kcenter_coreset_scores,
     compute_marginal_coverage_eviction_scores,
     compute_reliable_slam_ri_scores,
+    compute_rarity_scores,
     compute_rarity_irreplaceability_scores,
     compute_slam_covisibility_scores,
     compute_slam_max_coverage_scores,
+    compute_slam_rarity_blend_scores,
     compute_slam_ri_blend_scores,
     compute_trajectory_coverage_scores,
     image_quality_scores_from_pil_images,
@@ -66,10 +68,12 @@ FOV_HALF_V = 30.0    # 垂直半视场角（度）增大→更宽松的重叠判
 FOV_SAMPLES = 5000   # 采样点数 增大→更准确但更慢
 FOV_RADIUS = 50.0    # 采样球体半径
 VISUAL_MEMORY_POLICIES = {
+    "rarity_only",
     "rarity_irreplaceability",
     "slam_covisibility",
     "slam_max_coverage",
     "slam_ri_blend",
+    "slam_rarity_blend",
     "facility_coreset",
     "kcenter_coreset",
     "density_balanced_view_coverage",
@@ -398,6 +402,8 @@ class WanVideoMemCamPipeline(BasePipeline):
         mce_gamma=0.25,
         mce_query_stride=19,
         mce_rarity_neighbors=3,
+        rarity_neighbors=3,
+        slamrarity_slam_weight=0.75,
         ri_rarity_neighbors=3,
         slamri_beta=0.5,
         slamri_rarity_neighbors=3,
@@ -550,10 +556,12 @@ class WanVideoMemCamPipeline(BasePipeline):
         if (
             memory_policy
             in {
+                "rarity_only",
                 "rarity_irreplaceability",
                 "slam_covisibility",
                 "slam_max_coverage",
                 "slam_ri_blend",
+                "slam_rarity_blend",
                 "reliable_slam_ri",
                 "coverage_hysteresis",
                 "facility_coreset",
@@ -575,6 +583,10 @@ class WanVideoMemCamPipeline(BasePipeline):
             raise ValueError("memory_bank_device='cuda' requires a CUDA pipeline device")
         if int(ri_rarity_neighbors) < 1:
             raise ValueError("ri_rarity_neighbors must be at least 1")
+        if int(rarity_neighbors) < 1:
+            raise ValueError("rarity_neighbors must be at least 1")
+        if not 0.0 <= float(slamrarity_slam_weight) <= 1.0:
+            raise ValueError("slamrarity_slam_weight must be in [0, 1]")
         if int(slamri_rarity_neighbors) < 1:
             raise ValueError("slamri_rarity_neighbors must be at least 1")
         if not 0.0 <= float(hysteresis_view_threshold) <= 1.0:
@@ -612,10 +624,12 @@ class WanVideoMemCamPipeline(BasePipeline):
             {0}
             if memory_policy
             in {
+                "rarity_only",
                 "rarity_irreplaceability",
                 "slam_covisibility",
                 "slam_max_coverage",
                 "slam_ri_blend",
+                "slam_rarity_blend",
                 "reliable_slam_ri",
                 "coverage_hysteresis",
                 "trajectory_coverage",
@@ -706,6 +720,11 @@ class WanVideoMemCamPipeline(BasePipeline):
             "memory_policy": memory_policy,
             "memory_budget": memory_budget,
             "memory_bank_device": memory_bank_device,
+            "rarity_neighbors": int(rarity_neighbors),
+            "slamrarity_slam_weight": float(slamrarity_slam_weight),
+            "slamrarity_rarity_weight": float(
+                1.0 - float(slamrarity_slam_weight)
+            ),
             "surprise_alpha": float(surprise_alpha),
             "surprise_ema_momentum": float(surprise_ema_momentum),
             "surprise_controller_step": float(surprise_controller_step),
@@ -1545,7 +1564,21 @@ class WanVideoMemCamPipeline(BasePipeline):
                     ]
                     coreset_archive_seen = set(coreset_archive_frame_indices)
 
-            if memory_policy == "rarity_irreplaceability":
+            if memory_policy == "rarity_only":
+                current_memory = list(memory_buffer.candidates())
+                prospective_memory = current_memory + [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                eviction_scores, eviction_score_details = compute_rarity_scores(
+                    memory_frame_indices=prospective_memory,
+                    pinned_frames=pinned_memory_frames,
+                    rarity_neighbors=rarity_neighbors,
+                    dino_features=memory_dino_features,
+                    return_details=True,
+                )
+            elif memory_policy == "rarity_irreplaceability":
                 current_memory = list(memory_buffer.candidates())
                 prospective_memory = current_memory + [
                     frame_idx
@@ -1592,6 +1625,26 @@ class WanVideoMemCamPipeline(BasePipeline):
                     beta=slamri_beta,
                     ri_kwargs={"rarity_neighbors": slamri_rarity_neighbors},
                     return_details=True,
+                )
+            elif memory_policy == "slam_rarity_blend":
+                current_memory = list(memory_buffer.candidates())
+                admission_memory = [
+                    frame_idx
+                    for frame_idx in new_frame_indices
+                    if frame_idx not in current_memory
+                ]
+                prospective_memory = current_memory + admission_memory
+                eviction_scores, eviction_score_details = (
+                    compute_slam_rarity_blend_scores(
+                        memory_frame_indices=prospective_memory,
+                        c2ws=c2ws,
+                        forced_keep_frames=pinned_memory_frames,
+                        dino_features=memory_dino_features,
+                        rgb_features=memory_rgb_features,
+                        slam_weight=slamrarity_slam_weight,
+                        rarity_kwargs={"rarity_neighbors": rarity_neighbors},
+                        return_details=True,
+                    )
                 )
             elif memory_policy == "coverage_hysteresis":
                 current_memory = list(memory_buffer.candidates())
@@ -2269,6 +2322,15 @@ class WanVideoMemCamPipeline(BasePipeline):
                         "eviction_slamri_ri_irreplaceability": score_detail.get("slamri_ri_irreplaceability"),
                         "eviction_slamri_slam_redundancy_ratio": score_detail.get("slamri_slam_redundancy_ratio"),
                         "eviction_slamri_slam_unique_bonus": score_detail.get("slamri_slam_unique_bonus"),
+                        "eviction_slamrarity_slam_weight": score_detail.get("slamrarity_slam_weight"),
+                        "eviction_slamrarity_rarity_weight": score_detail.get("slamrarity_rarity_weight"),
+                        "eviction_slamrarity_slam_raw": score_detail.get("slamrarity_slam_raw"),
+                        "eviction_slamrarity_slam_norm": score_detail.get("slamrarity_slam_norm"),
+                        "eviction_slamrarity_rarity_raw": score_detail.get("slamrarity_rarity_raw"),
+                        "eviction_slamrarity_rarity_norm": score_detail.get("slamrarity_rarity_norm"),
+                        "eviction_slamrarity_cluster_id": score_detail.get("slamrarity_cluster_id"),
+                        "eviction_slamrarity_cluster_size": score_detail.get("slamrarity_cluster_size"),
+                        "eviction_slamrarity_cluster_threshold": score_detail.get("slamrarity_cluster_threshold"),
                         "eviction_hysteresis_incumbent": score_detail.get("hysteresis_incumbent"),
                         "eviction_hysteresis_admitted": score_detail.get("hysteresis_admitted"),
                         "eviction_hysteresis_reason": score_detail.get("hysteresis_reason"),
