@@ -341,31 +341,32 @@ def plot_problem_scaling():
 
 
 def plot_model_architecture():
-    fig, ax = plt.subplots(figsize=(11.4, 3.0))
+    fig, ax = plt.subplots(figsize=(11.6, 3.1))
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(0, 1)
     ax.axis("off")
 
-    add_box(ax, (0.01, 0.35), 0.12, 0.30, "New memories", "Incoming generated\ncandidates", "#333333")
-    add_box(ax, (0.17, 0.35), 0.15, 0.30, "Quality gate", "No-reference IQA\nrejects corruption", COLORS["corruption"])
-    add_box(ax, (0.37, 0.57), 0.16, 0.25, "Geometric score", "Pose + DINO\ncoverage, weight 0.75", COLORS["geo"])
-    add_box(ax, (0.37, 0.16), 0.16, 0.25, "RI score", "DINO clusters, $k=3$\nweight 0.25", COLORS["ri"])
-    add_box(ax, (0.59, 0.35), 0.12, 0.30, "Score fusion", "Normalize, blend,\nrank all candidates", COLORS["effective"])
-    add_box(ax, (0.76, 0.35), 0.10, 0.30, "Top-$B$ bank", "Constant\npersistent memory", COLORS["geo"])
-    add_box(ax, (0.91, 0.35), 0.08, 0.30, "Retriever", "Unchanged\nbackbone", "#333333")
+    add_box(ax, (0.01, 0.57), 0.12, 0.23, "Existing bank", "At most B historical\nmemories", COLORS["geo"])
+    add_box(ax, (0.01, 0.19), 0.12, 0.23, "New candidates", "Frames from the\nlatest chunk", "#333333")
+    add_box(ax, (0.18, 0.35), 0.13, 0.30, "Candidate pool", "Existing + new\nmemories", COLORS["unbounded"])
+    add_box(ax, (0.36, 0.35), 0.14, 0.30, "Pairwise affinity", "65% camera pose\n35% DINO", COLORS["ri"])
+    add_box(ax, (0.55, 0.35), 0.14, 0.30, "Coverage utility", "Observer count +\nnearest substitute", COLORS["effective"])
+    add_box(ax, (0.74, 0.35), 0.10, 0.30, "Evict low U", "Retain exactly\nB memories", COLORS["geo"])
+    add_box(ax, (0.89, 0.57), 0.10, 0.23, "Retriever", "Original read\noperation", "#333333")
+    add_box(ax, (0.89, 0.19), 0.10, 0.23, "Generator", "Next video\nchunk", COLORS["corruption"])
 
-    arrow(ax, (0.13, 0.50), (0.17, 0.50))
-    arrow(ax, (0.32, 0.53), (0.37, 0.67))
-    arrow(ax, (0.32, 0.47), (0.37, 0.29))
-    arrow(ax, (0.53, 0.69), (0.59, 0.55))
-    arrow(ax, (0.53, 0.29), (0.59, 0.45))
-    arrow(ax, (0.71, 0.50), (0.76, 0.50))
-    arrow(ax, (0.86, 0.50), (0.91, 0.50))
+    arrow(ax, (0.13, 0.68), (0.18, 0.55))
+    arrow(ax, (0.13, 0.30), (0.18, 0.45))
+    arrow(ax, (0.31, 0.50), (0.36, 0.50))
+    arrow(ax, (0.50, 0.50), (0.55, 0.50))
+    arrow(ax, (0.69, 0.50), (0.74, 0.50))
+    arrow(ax, (0.84, 0.54), (0.89, 0.65))
+    arrow(ax, (0.94, 0.57), (0.94, 0.42))
 
     ax.text(
         0.5,
         0.94,
-        "Quality-Gated Geometric-Rarity Curation (QGRC)",
+        "Fixed-budget Geometric Coverage memory controller",
         ha="center",
         va="center",
         fontsize=12,
@@ -374,7 +375,7 @@ def plot_model_architecture():
     ax.text(
         0.5,
         0.04,
-        "Admission: calibrated no-reference quality    |    Retention: 0.75 geometry + 0.25 RI    |    Budget: top B",
+        "Only the candidate bank changes; the retriever and video generator remain frozen",
         ha="center",
         va="center",
         fontsize=8.5,

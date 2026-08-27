@@ -81,6 +81,14 @@ class GeometricCoverageVisualizationTest(unittest.TestCase):
         self.assertEqual(coordinates.shape, (3, 2))
         self.assertTrue(np.all(np.isfinite(coordinates)))
 
+    def test_ffmpeg_select_expression_is_sorted_and_deduplicated(self):
+        expression = MODULE.ffmpeg_select_expression([76, 0, 76, 12])
+        self.assertEqual(expression, r"eq(n\,0)+eq(n\,12)+eq(n\,76)")
+
+    def test_ffmpeg_select_expression_rejects_empty_input(self):
+        with self.assertRaises(ValueError):
+            MODULE.ffmpeg_select_expression([])
+
 
 if __name__ == "__main__":
     unittest.main()

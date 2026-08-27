@@ -10,7 +10,10 @@ import argparse
 import csv
 import importlib.util
 import math
+import shutil
+import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -243,6 +246,90 @@ def support_summary(values):
         "p10": float(np.percentile(values, 10)),
         "minimum": float(np.min(values)),
     }
+
+
+def ffmpeg_select_expression(frame_indices):
+    frame_indices = sorted(set(int(idx) for idx in frame_indices))
+    if not frame_indices:
+        raise ValueError("at least one frame index is required")
+    return "+".join(f"eq(n\\,{idx})" for idx in frame_indices)
+
+
+def load_video_frames_single_pass(video_path, frame_indices, timeout_sec=180):
+    """Decode sparse frames with one sequential FFmpeg scan.
+
+    ImageIO's legacy reader repeatedly seeks and performs a blocking metadata
+    probe. That path can stall on Lustre-hosted MP4 files. A single select
+    filter scans the video once and writes only the requested frames.
+    """
+    from PIL import Image
+
+    requested = sorted(set(int(idx) for idx in frame_indices))
+    if not requested:
+        return {}
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        ffmpeg_exe = shutil.which("ffmpeg")
+    if not ffmpeg_exe:
+        raise RuntimeError("FFmpeg executable not found")
+
+    video_path = Path(video_path)
+    with tempfile.TemporaryDirectory(prefix="memcam_geo_frames_") as tmp:
+        pattern = str(Path(tmp) / "frame_%06d.png")
+        command = [
+            str(ffmpeg_exe),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-threads",
+            "1",
+            "-i",
+            str(video_path),
+            "-an",
+            "-sn",
+            "-dn",
+            "-vf",
+            f"select={ffmpeg_select_expression(requested)}",
+            "-fps_mode",
+            "vfr",
+            "-start_number",
+            "0",
+            pattern,
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=max(int(timeout_sec), 1),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"FFmpeg exceeded {timeout_sec}s while decoding {video_path}"
+            ) from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or "no FFmpeg error text"
+            raise RuntimeError(
+                f"FFmpeg failed to decode {video_path} (exit {result.returncode}): "
+                f"{detail}"
+            )
+
+        decoded = sorted(Path(tmp).glob("frame_*.png"))
+        if len(decoded) != len(requested):
+            raise RuntimeError(
+                f"FFmpeg decoded {len(decoded)}/{len(requested)} requested frames "
+                f"from {video_path}; requested range {requested[0]}..{requested[-1]}"
+            )
+        return {
+            frame_idx: Image.open(path).convert("RGB").copy()
+            for frame_idx, path in zip(requested, decoded)
+        }
 
 
 def nearest_retained_pairs(snapshot, affinity, details, limit=5):
@@ -629,6 +716,12 @@ def main():
     parser.add_argument("--row", type=int, default=None)
     parser.add_argument("--section", type=int, default=None)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--decode_backend",
+        choices=("ffmpeg", "imageio"),
+        default="ffmpeg",
+    )
+    parser.add_argument("--decode_timeout_sec", type=int, default=180)
     parser.add_argument("--max_examples", type=int, default=5)
     parser.add_argument("--output_dir", type=Path, required=True)
     args = parser.parse_args()
@@ -659,7 +752,22 @@ def main():
         num_frames=int(item["num_frames"]),
     )
     video_path = common.resolve_video_path(args.root, args.run_name, item)
-    images = common.load_video_frames(video_path, snapshot["prospective"])
+    print(f"Selected row {row_idx}: {item['scene']}", flush=True)
+    print(f"Selected section: {section_idx}", flush=True)
+    print(f"Video: {video_path}", flush=True)
+    print(
+        f"Decoding {len(snapshot['prospective'])} sparse frames with "
+        f"{args.decode_backend}...",
+        flush=True,
+    )
+    if args.decode_backend == "ffmpeg":
+        images = load_video_frames_single_pass(
+            video_path,
+            snapshot["prospective"],
+            timeout_sec=args.decode_timeout_sec,
+        )
+    else:
+        images = common.load_video_frames(video_path, snapshot["prospective"])
     missing = [idx for idx in snapshot["prospective"] if idx not in images]
     if missing:
         raise RuntimeError(f"Could not decode frames: {missing[:10]}")

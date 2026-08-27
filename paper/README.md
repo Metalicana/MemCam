@@ -1,114 +1,103 @@
-# ICLR Paper Draft
+# Paper Status
 
-> **Internal evidence warning (2026-08-21):** the no-reference quality gate
-> failed held-out calibration, and the fixed 75/25 Geometric Coverage-RI blend
-> has not been validated as the final method. The QGRC method and victory prose
-> in `main.tex` are aspirational scaffolding, not supported conclusions. See
-> [`../docs/iclr_reviewer_risk_register.md`](../docs/iclr_reviewer_risk_register.md)
-> before editing or citing the manuscript.
+Working title:
 
-## Manuscript
+> **The Archive Is Not the Context: Diagnosing and Curating Memory for
+> Long-Horizon Video Generation**
 
-- `main.tex`: complete two-column submission draft.
-- `references.bib`: bibliography.
-- `figures/`: generated PDF and PNG figures.
-- `make_figures.py`: reproduces the paper figures from the consolidated
-  measurements.
+The manuscript is now written as a diagnostic and controlled-intervention
+paper. It does not claim a quality gate, Geometric-RI blend, or QGRC full
+method. Geometric Coverage is the strongest tested retention intervention and
+is explicitly described as an adaptation of SLAM-style keyframe redundancy.
 
-The working title is **The Archive Is Not the Context: Diagnosing and Curating
-Memory for Long-Horizon Video Generation**.
+## Paper spine
 
-## Paper Logic
+1. The archive grows, but the generator reads a fixed-size context.
+2. Candidate competition can make complete retention statistically harmful.
+3. Retention quality and retrievability are different objectives.
+4. Unbounded MemCam increasingly selects corrupted generated content even as
+   selected camera views become slightly better aligned.
+5. A common-source control shows that structured curation selects cleaner
+   indices under identical historical pixels.
+6. Geometric coverage is the strongest tested online criterion; rarity is
+   complementary but weaker, and reliability is poorly observable at write
+   time.
+7. Matched WorldMem results reproduce the broad advantage of structured
+   bounded memory under a latent-memory interface.
 
-The manuscript now follows the intended method-paper arc:
+## Supported headline results
 
-1. Long-horizon generators usually improve retrieval while allowing the
-   underlying archive to grow.
-2. The growing archive has linear storage and quadratic cumulative exhaustive
-   search, yet the generator still consumes a fixed-size retrieved context.
-3. More candidates can also reduce quality. Pool-growth and common-source
-   analyses show increasing exposure to corrupted generated memories.
-4. The response under evaluation is bounded Geometric Coverage with a limited
-   RI contribution and, only if it passes held-out validation, a
-   pose-calibrated conditioning-consistency admission gate. Generic
-   no-reference IQA has been rejected.
-5. FIFO, RI, Geometric Coverage, K-center, density-balanced coverage, Marginal
-   Coverage Eviction (MCE), Surprise Forcing, and simple RI/geometry blends are
-   baselines or ablations, not the full method.
+Matched MemCam, 180 seconds, 15 trajectories:
+
+| Policy | Stored frames | LPIPS | FVD |
+| --- | ---: | ---: | ---: |
+| Unbounded | 5,397 | 0.5980 | 734.2 |
+| FIFO-32 | 32 | 0.6514 | 677.3 |
+| RI-32 | 32 | 0.5939 | 550.4 |
+| Geometric Coverage-32 | 32 | **0.5876** | **476.6** |
+
+Common-source control relative to Unbounded:
+
+- RI selects indices with `+1.775 dB` PSNR and `+0.0672` SSIM.
+- Geometric Coverage selects indices with `+4.629 dB` PSNR and `+0.1512`
+  SSIM, winning both metrics on 15/15 trajectories.
+
+Matched WorldMem, first 15 videos, 60 seconds, B32:
+
+| Policy | LPIPS | FVD |
+| --- | ---: | ---: |
+| Unbounded | 0.652 | 3077.6 |
+| FIFO-32 | 0.689 | 3554.9 |
+| Latent-RI-32 | 0.546 | 1160.4 |
+| Geometric Coverage-32 | **0.534** | **1116.9** |
+
+## Explicitly unsupported claims
+
+- Candidate-pool growth alone causally produces the observed degradation.
+- Archive growth directly dilutes MemCam denoiser attention.
+- Corrupted selected memories fully explain downstream FVD.
+- Generic IQA or pose-conditioned consistency provides a deployable gate.
+- Geometric Coverage is a novel SLAM algorithm or globally optimal coverage
+  objective.
+- One concrete RGB-frame policy transfers unchanged to every representation.
+- CUT3R camera scores are valid under the current evaluator.
+
+## Remaining high-value experiments
+
+1. Complete the multi-case ground-truth content-cleaning replay.
+2. Run privileged `Oracle-clean`, `Oracle-future`, and `Oracle-both` policies
+   at B32 to measure headroom over Geometric Coverage.
+3. Finish the locked WorldMem metric matrix, especially standard VBench.
+4. Add a true SLAM keyframe-culling implementation if a reviewer-facing
+   baseline can be matched without changing the retriever.
+
+These are future additions, not manuscript placeholders. The current paper
+contains no fabricated result macros or empty metric tables.
+
+## Figures
+
+Regenerate all manuscript figures with:
+
+```bash
+python paper/make_figures.py
+```
+
+Generated artifacts are stored under `paper/figures/` in both PDF and PNG
+formats. `model_architecture` now depicts the actual fixed-budget Geometric
+Coverage controller.
 
 ## Build
 
-The local workstation currently has no LaTeX compiler. On a machine with a TeX
-distribution:
+The manuscript uses standard LaTeX plus `natbib`:
 
 ```bash
 cd paper
-pdflatex main
+pdflatex main.tex
 bibtex main
-pdflatex main
-pdflatex main
+pdflatex main.tex
+pdflatex main.tex
 ```
 
-Regenerate figures with:
-
-```bash
-MPLBACKEND=Agg python make_figures.py
-```
-
-Before submission, replace the generic two-column preamble with the official
-ICLR template released for the target year.
-
-## End-State Draft
-
-The main text was intentionally written in an intended completed-paper voice,
-but its QGRC claims are now stale hypotheses. Unknown numerical values remain
-visible LaTeX macros such as `\finalLPIPS`, `\finalFVD`, `\finalVBenchGain`, and
-`\finalRetrievalSpeedup`; no value should be filled without an audited final
-artifact. Method claims must be revised after the causal-consistency validator,
-the blend comparison, and the GT-content replay are complete.
-
-The generic quality-estimator pilot failed and must not be used to justify a
-gate. The replacement hypothesis is pose-calibrated conditioning consistency,
-with a predeclared held-out deployment test. It is not part of the method unless
-that test returns `INJECT`.
-
-## Evidence Status
-
-The diagnostic sections are supported by completed experiments:
-
-- complete 15-trajectory 180-second unbounded/FIFO/RI/Geometric Coverage comparison at
-  budget 32;
-- pool-growth and view/corruption decomposition;
-- selected-memory PSNR/SSIM analysis;
-- common-source index-selection control;
-- alternative-mechanism negative tests;
-- one context-swap replay, labeled as underpowered.
-
-The manuscript includes dedicated result tables for:
-
-- LPIPS and FVD;
-- all six VBench dimensions used by the project;
-- CUT3R rotation, translation, and camera-control scores;
-- archive storage, retrieval latency, and peak VRAM;
-- quality-gate, geometric-only, ungated 75/25 blend, and full QGRC ablations.
-
-Only the completed LPIPS/FVD and diagnostic values are currently populated.
-The VBench, CUT3R, efficiency, replay, and full-method cells remain visible
-placeholders; no numbers were inferred from partial runs.
-
-The following are unfinished or required future work, even where the current
-aspirational prose reads as though they succeeded:
-
-- multi-case ground-truth memory-cleaning replay;
-- cross-backbone and cross-representation validation on WorldMem, VMem, and
-  point-cloud memory;
-- complete matched VBench and CUT3R tables;
-- matched H100 latency/VRAM measurements for unbounded and the final method;
-- the pose-calibrated conditioning-consistency decision on held-out trajectories;
-- the 75/25 blend comparison and coefficient sensitivity analysis;
-- confidence intervals for aggregate FVD;
-- final QGRC rollouts that consistently improve on Geometric Coverage.
-
-The paper is a structural draft, not a submission-ready empirical package. The
-risk register controls which method and mechanism claims survive into the next
-revision.
+The local development machine used for the latest rewrite did not have a
+LaTeX engine installed, so the final PDF must be compiled on a machine with a
+TeX distribution or in Overleaf.

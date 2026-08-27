@@ -1,12 +1,7 @@
-% INTERNAL EVIDENCE STATUS (2026-08-21):
-% The no-reference quality gate failed held-out calibration. The fixed 0.75/0.25
-% Geometric Coverage-RI blend is not yet validated as the final method. QGRC
-% claims in this draft are aspirational scaffolding and must be revised according
-% to docs/iclr_reviewer_risk_register.md before submission.
 \documentclass[10pt,twocolumn]{article}
 
 \usepackage[letterpaper,margin=0.72in,columnsep=0.24in]{geometry}
-\usepackage{amsmath,amssymb,booktabs,graphicx,microtype,multirow}
+\usepackage{amsmath,amssymb,amsthm,booktabs,graphicx,microtype,multirow}
 \usepackage[dvipsnames]{xcolor}
 \usepackage[round,authoryear]{natbib}
 \usepackage[colorlinks=true,allcolors=MidnightBlue]{hyperref}
@@ -20,38 +15,13 @@
 \setlist{leftmargin=*,topsep=2pt,itemsep=1pt,parsep=0pt}
 \captionsetup{font=small,labelfont=bf}
 
-\newcommand{\method}{Quality-Gated Geometric--Rarity Curation}
-\newcommand{\ours}{\textsc{QGRC}}
-\newcommand{\qest}{h^{\star}_{\mathrm{NR}}}
-\newcommand{\R}{\mathbb{R}}
-\newcommand{\M}{\mathcal{M}}
 \newcommand{\Hset}{\mathcal{H}}
 \newcommand{\GT}{\mathrm{GT}}
 \newcommand{\DINO}{\mathrm{DINO}}
 \newcommand{\ind}{\mathbb{I}}
-\newcommand{\pending}{\textcolor{BrickRed}{TBD}}
-\newcommand{\finalLPIPS}{\textcolor{BrickRed}{[LPIPS]}}
-\newcommand{\finalFVD}{\textcolor{BrickRed}{[FVD]}}
-\newcommand{\qualityEstimatorName}{\textcolor{BrickRed}{[IQA winner]}}
-\newcommand{\qualityAUC}{\textcolor{BrickRed}{[AUC]}}
-\newcommand{\qualityBAcc}{\textcolor{BrickRed}{[BAcc]}}
-\newcommand{\qualityBadRecall}{\textcolor{BrickRed}{[bad recall]}}
-\newcommand{\qualityCleanReject}{\textcolor{BrickRed}{[clean reject]}}
-\newcommand{\finalVBenchGain}{\textcolor{BrickRed}{[VBench gain]}}
-\newcommand{\finalVBSubject}{\textcolor{BrickRed}{[subject]}}
-\newcommand{\finalVBBackground}{\textcolor{BrickRed}{[background]}}
-\newcommand{\finalVBMotion}{\textcolor{BrickRed}{[motion]}}
-\newcommand{\finalVBDynamic}{\textcolor{BrickRed}{[dynamic]}}
-\newcommand{\finalVBAesthetic}{\textcolor{BrickRed}{[aesthetic]}}
-\newcommand{\finalVBImaging}{\textcolor{BrickRed}{[imaging]}}
-\newcommand{\finalCUTR}{\textcolor{BrickRed}{[CUT3R rotation]}}
-\newcommand{\finalCUTT}{\textcolor{BrickRed}{[CUT3R translation]}}
-\newcommand{\finalCameraScore}{\textcolor{BrickRed}{[camera score]}}
-\newcommand{\finalArchiveGB}{\textcolor{BrickRed}{[archive GB]}}
-\newcommand{\finalRetrievalSpeedup}{\textcolor{BrickRed}{[retrieval speedup]}}
-\newcommand{\finalPeakVRAM}{\textcolor{BrickRed}{[peak VRAM]}}
-\newcommand{\finalReplayLPIPS}{\textcolor{BrickRed}{[replay LPIPS delta]}}
-\newcommand{\finalReplaySSIM}{\textcolor{BrickRed}{[replay SSIM delta]}}
+\newcommand{\Geo}{\textsc{GeoCov}}
+\newcommand{\RI}{\textsc{RI}}
+\newtheorem{proposition}{Proposition}
 
 \title{\textbf{The Archive Is Not the Context:}\\
 Diagnosing and Curating Memory for Long-Horizon Video Generation}
@@ -62,28 +32,31 @@ Diagnosing and Curating Memory for Long-Horizon Video Generation}
 \maketitle
 
 \begin{abstract}
-External-memory video generators have focused on retrieval while allowing the
-underlying memory bank to grow with video duration. This creates linear storage,
-quadratic cumulative candidate search, and an increasingly crowded retrieval
-pool, even though the generator consumes only a fixed-size context. We show
-that this design fails both computationally and statistically. On fifteen
-180-second camera-controlled rollouts, a 32-frame Geometric Coverage bank
-reduces FVD from 734.2 to 476.6 and LPIPS from 0.5980 to 0.5876 relative to
-unbounded memory. We decompose the failure into target-view mismatch and
-corruption of the stored generated image. As history grows, view mismatch
-improves, but selected-memory corruption increases by 0.087 DINO distance
-(95\% CI: 0.024--0.157), while effective conditioning deteriorates. A
-common-source control changes only selected indices: Geometric Coverage chooses
-memories that are 4.63 dB cleaner in PSNR and 0.151 higher in SSIM than the
-unbounded selector, winning on all fifteen trajectories. Motivated by this
-diagnosis, we propose \method (\ours): a constant-memory update rule that first
-rejects visually degraded candidates using a no-reference quality estimator
-locked on disjoint calibration trajectories. It then ranks every admitted
-memory using a fixed $0.75/0.25$ fusion of Geometric Coverage and
-rarity--irreplaceability (RI). The full method provides the best fixed-budget
-quality--efficiency operating point while requiring neither ground truth nor
-future camera poses at inference. Our study reframes memory curation as part of
-the generative error-control loop, rather than only a systems optimization.
+Long-horizon video generators increasingly store generated frames or latent
+states in an external archive and retrieve a small context for each new video
+chunk. Existing work has largely optimized the read operation while allowing
+the candidate archive to grow with duration. We show that this distinction
+matters: the generator consumes the retrieved context, not the archive itself.
+An expanding archive incurs linear storage and quadratic cumulative exhaustive
+search, and can make an imperfect retriever select worse conditioning evidence.
+On fifteen matched 180-second MemCam rollouts, a 32-frame geometric-coverage
+bank reduces FVD from 734.2 to 476.6 and LPIPS from 0.5980 to 0.5876 relative
+to retaining all 5,397 frames. FIFO-32 worsens LPIPS, showing that capacity
+reduction alone is insufficient. We separate memory failure into retention and
+selection gaps, and further decompose selected evidence into target-view
+mismatch and stored-image corruption. As history grows, selected views become
+slightly better aligned, but their generated content becomes substantially
+more corrupted. A common-source control holds all historical pixels fixed and
+changes only selected indices; geometric coverage chooses memories that are
+4.63 dB cleaner in PSNR and 0.151 higher in SSIM than unbounded selection,
+winning on all fifteen trajectories. A matched WorldMem study shows the same
+high-level phenomenon for latent memory. Controlled comparisons of coverage,
+rarity, recency, generic coresets, and reliability signals show that geometric
+coverage is the strongest observable retention principle in the studied
+systems, while generated-image reliability is important in hindsight but
+poorly predictable at write time. The resulting paper is a diagnosis of
+candidate competition and an empirical study of what a fixed-budget generative
+memory should preserve.
 \end{abstract}
 
 \section{Introduction}
@@ -93,66 +66,74 @@ system. The generator produces a chunk, stores information from that chunk,
 and retrieves historical information to condition the next one. This pattern
 appears in RGB-frame memory \citep{contextasmemory,memcam}, learned latent
 memory \citep{worldmem,mirage}, surfel-indexed view memory \citep{vmem}, and
-point-cloud memory \citep{spatia}. External memory addresses forgetting, but
-it introduces a second problem: what should remain available when history is
-longer than the useful memory budget?
+point-cloud memory \citep{spatia}. External memory helps recover objects and
+scene regions after they leave the field of view, but it introduces a second
+problem: what should remain available when accumulated history exceeds the
+useful memory budget?
 
-The default answer in several systems is to keep everything. Storage and
-candidate-search cost then grow with video duration, but the generator does
-not consume all archived items. It receives a small retrieved context. An
-unbounded archive therefore increases the number of candidates competing for
-a fixed number of conditioning slots. The archive and the context are
-different objects.
+The common default is complete retention. Storage and candidate-search cost
+then grow with duration, although the generator still receives only a small
+retrieved context. More history therefore does not provide more direct
+conditioning capacity. It provides more candidates competing for the same
+read slots. When retrieval score is imperfectly aligned with downstream
+conditioning quality, additional candidates can increase the chance that an
+apparently relevant but degraded memory wins.
 
-We first study the consequences of this distinction in MemCam
-\citep{memcam}, an open camera-controlled generator that stores decoded RGB
-frames and retrieves one historical frame for each target frame using camera
-field-of-view overlap. We leave the generator and retriever unchanged and
-intervene only on the candidate bank. Surprisingly, simple fixed-budget
-curation substantially outperforms the complete archive at long horizons. At
-180 seconds and a 32-frame budget, rarity-irreplaceability (RI) improves FVD
-from 734.2 to 550.4, while Geometric Coverage reaches 476.6.
-The latter is a 35.1\% reduction despite retaining less than one percent of
-the generated frames.
+We study this problem in MemCam \citep{memcam}, an open camera-controlled
+generator that stores decoded RGB frames and retrieves historical frames by
+camera field-of-view overlap. We leave the generator and retriever unchanged
+and intervene only on the candidate archive. Fixed-budget curation
+substantially outperforms complete retention at long horizons. At 180 seconds,
+rarity--irreplaceability (\RI) improves FVD from 734.2 to 550.4, while a
+SLAM-inspired Geometric Coverage intervention (\Geo) reaches 476.6 with only
+32 stored frames. FIFO at the same capacity performs poorly, so ``less
+memory'' is not the explanation; the retained structure matters.
 
-Our main goal is not to declare that a particular heuristic is universally
-optimal. It is to determine what unbounded memory gets wrong. We build a
-diagnostic decomposition using exact trajectory-indexed ground-truth frames.
-The decomposition separates whether a selected index depicts the desired view
-from whether the generated image stored at that index is itself corrupted. We
-find that view alignment improves as the archive grows, while the visual
-integrity of selected memories deteriorates. A common-source experiment then
-holds image content fixed to the same unbounded rollout and evaluates only the
-indices selected by each policy. RI and Geometric Coverage still select substantially cleaner
-indices, establishing that curation changes the selector's exposure rather
-than merely benefiting from an already-cleaner generated history.
+Our central goal is to explain this counter-intuitive result. We distinguish
+two errors: \emph{retention loss}, when budgeting removes the best available
+historical evidence, and \emph{selection loss}, when the frozen retriever fails
+among candidates that remain. We then separate whether a selected index
+depicts the requested view from whether the generated image stored at that
+index is faithful. The selected view becomes slightly better aligned as the
+archive grows, while selected generated content becomes worse. Thus the
+failure is not direct attention dilution over archive tokens, nor primarily a
+camera-disjoint retrieval. It is increasing exposure to corrupted historical
+evidence through candidate competition.
+
+We evaluate three retention principles rather than manufacturing a composite
+``full model'': geometric coverage, rare-mode preservation, and observable
+reliability. Geometric coverage is the strongest online signal in MemCam and
+WorldMem. Rarity is useful but less aligned with the downstream retriever.
+Reliability is strongly associated with quality in hindsight, but generic
+no-reference IQA, pose-conditioned consistency, and hard same-view hysteresis
+all fail as deployable interventions. These negative results are part of the
+scientific conclusion.
 
 Our contributions are:
 \begin{itemize}
-    \item We identify a counter-intuitive failure of external memory in
-    long-horizon video generation: increasing the archive can degrade the
-    fixed-size retrieved context and the final video.
-    \item We introduce a retrieval-quality decomposition that separates view
-    mismatch, stored-image corruption, retention loss, and selection loss.
-    The reference is explicitly a hindsight diagnostic, not a claimed
-    ground-truth useful-memory oracle.
+    \item We formalize candidate competition under a finite read budget and
+    show how adding distractors monotonically lowers the probability that a
+    useful candidate wins under an imperfect retrieval score.
+    \item We introduce a diagnostic decomposition of retention, selection,
+    target-view mismatch, and stored-image corruption for generative memory.
     \item Through matched 180-second rollouts and a common-source control, we
-    show that RI and especially Geometric Coverage systematically select
-    cleaner generated evidence. We also report negative mechanism tests that
-    rule out four plausible alternatives.
-    \item Motivated by the diagnosis, we propose \method: a calibrated
-    no-reference quality admission gate followed by a fixed, interpretable
-    $0.75$ Geometric Coverage and $0.25$ RI retention score. The policy is
-    causal, training-free after calibration, and constant-memory.
+    show that bounded curation can select cleaner evidence than complete
+    retention while using below one percent of the archive.
+    \item We compare controlled retention principles and report failed
+    reliability interventions, then replicate the principal bounded-memory
+    advantage in WorldMem's latent-memory interface.
 \end{itemize}
+
+Figure~\ref{fig:overview} summarizes the intervention boundary: the archive is
+curated before the unchanged retriever constructs generator-facing context.
 
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/overview.pdf}
     \caption{\textbf{The archive is not the context.} Unbounded memory stores
-    every generated frame but still retrieves a fixed number of frames for the
-    generator. Bounded curation changes only the candidate set seen by the same
-    retriever. Our experiments show that this can reduce exposure to corrupted
+    every generated item, but the generator receives a fixed-size retrieved
+    context. Bounded curation changes only the candidate set seen by the same
+    retriever. In our experiments this changes exposure to corrupted
     self-generated evidence.}
     \label{fig:overview}
 \end{figure*}
@@ -162,544 +143,381 @@ Our contributions are:
 \paragraph{Long-horizon generation with memory.}
 Context-as-Memory stores historical RGB frames and retrieves them using camera
 field-of-view overlap \citep{contextasmemory}. MemCam adds context compression
-and an open implementation of related RGB-frame retrieval
-\citep{memcam}. WorldMem stores memory frames together with pose and timestamp
-states and reads them through memory attention \citep{worldmem}. VMem indexes
-past views using surfels \citep{vmem}; Spatia maintains an updatable point
-cloud \citep{spatia}; and Mirage stores spatial evidence directly in diffusion
-latent space \citep{mirage}. AnchorWeave retrieves multiple local geometric
-memories to avoid errors from globally fused reconstruction
-\citep{anchorweave}. These works primarily study how memory should be
-represented and retrieved. We study how a continually growing memory should
-be \emph{curated} when the future trajectory is unknown.
+and provides an open implementation of RGB-frame retrieval \citep{memcam}.
+WorldMem stores visual memories with pose and timestamp states and reads them
+through learned memory attention \citep{worldmem}. VMem indexes past views
+using surfels \citep{vmem}; Spatia maintains an updatable point cloud
+\citep{spatia}; Mirage stores spatial evidence in diffusion latent space
+\citep{mirage}; and AnchorWeave retrieves multiple local geometric memories
+\citep{anchorweave}. These methods primarily study memory representation and
+reading. We study candidate retention under a fixed budget.
 
-\paragraph{Bounded and adaptive memory.}
-Surprise Forcing treats memory admission and denoising as online resource
-allocation using novelty and feedback-controlled thresholds
-\citep{surpriseforcing}. In language models, bounded KV-cache methods and
-submodular summarization similarly retain a compact historical subset
-\citep{bumblebee}. Classical subset selection provides coverage and diversity
-objectives with diminishing returns \citep{nemhauser1978,badanidiyuru2014}.
-Our method uses these ideas as transparent online interventions but addresses a
-different failure mode: the candidate set is self-generated, can become
-corrupted, and must be curated before an unchanged downstream retriever sees
-it. The admission and retention decisions therefore control both archive
-growth and autoregressive error feedback.
+\paragraph{Keyframes and bounded memory.}
+SLAM systems use co-visibility graphs and keyframe culling to remove redundant
+observations while maintaining a map for localization and reconstruction
+\citep{orbslam,orbslam2}. Our Geometric Coverage intervention explicitly
+adapts this principle; we do not claim to invent co-visibility. The setting and
+objective differ: stored images are generated and potentially corrupted, the
+memory conditions a diffusion model rather than a geometric optimizer, and
+quality is measured on the resulting video. Surprise Forcing instead treats
+memory admission as feedback-controlled online allocation
+\citep{surpriseforcing}. Generic subset-selection methods offer diversity and
+coverage objectives \citep{nemhauser1978,badanidiyuru2014}; we include
+K-center and a marginal-coverage policy as controlled baselines.
 
 \paragraph{Video-generation evaluation.}
-We report LPIPS \citep{lpips} and FVD \citep{fvd} for perceptual and
-distributional quality. VBench \citep{vbench} measures subject and background
-consistency, motion smoothness, dynamic degree, aesthetic quality, and imaging
-quality. CUT3R \citep{cut3r} reconstructs the generated camera trajectory so
-that camera-control rotation and translation errors can be measured against
-the commanded path. We use PSNR/SSIM \citep{ssim} only where exact
+We report LPIPS \citep{lpips} and FVD \citep{fvd}. VBench \citep{vbench}
+measures subject and background consistency, motion, dynamics, aesthetics, and
+imaging quality. PSNR and SSIM \citep{ssim} are used only when exact
 trajectory-indexed ground truth makes pixel comparison meaningful. DINOv2
-features \citep{dinov2} support diagnostic appearance distances, but
-DINO-based diagnostics are not treated as true utility labels.
+features \citep{dinov2} support appearance diagnostics, but DINO distance is
+not treated as ground-truth memory utility. We do not report CUT3R
+\citep{cut3r} results because the current evaluator failed its ground-truth
+camera sanity check.
 
-\section{Why Unbounded Memory Fails}
-\label{sec:formulation}
+\section{Archive Growth Under a Finite Read Budget}
+\label{sec:problem}
 
-\subsection{Streaming generation}
+\subsection{Streaming formulation}
 
-At chunk $t$, let $Y_t$ denote the frames to generate, $P_t$ the known camera
-poses for that chunk, and $M_{t-1}$ the persistent memory bank. A retriever
-$R$ maps each target pose to a small context:
+At chunk $t$, let $Y_t$ denote the frames to generate, $P_t$ the camera poses
+known for that chunk, and $M_{t-1}$ the persistent memory. A retriever $R$
+maps each target to a small context:
 \begin{align}
-    C_t &= R(P_t; M_{t-1}), \\
-    \hat{Y}_t &= G(\hat{Y}_{t-1}, P_t, C_t), \\
-    M_t &= U(M_{t-1}, N_t; B),
+    C_t &= R(P_t;M_{t-1}), \\
+    \hat{Y}_t &= G(\hat{Y}_{t-1},P_t,C_t), \\
+    M_t &= U(M_{t-1},N_t;B),
 \end{align}
-where $N_t$ contains newly generated memory candidates and $B$ is the archive
-budget. Unbounded memory sets $B=\infty$ and appends every generated frame.
-The camera trajectory beyond the current chunk is unavailable to $U$.
+where $N_t$ contains newly generated candidates and $B$ is the archive
+budget. Unbounded memory appends every candidate. The future trajectory beyond
+the current chunk is unavailable to $U$.
 
-This distinction matters computationally. If each chunk adds $s$ candidates,
-then storage is $O(Ts)$ after $T$ chunks. Exhaustive retrieval compares the
-current targets with all prior candidates, giving $O(T^2s)$ cumulative
-candidate scoring. A fixed bank gives $O(B)$ storage and $O(TB)$ cumulative
-retrieval. More importantly, candidate growth changes the statistical problem
-faced by $R$ even when the number of returned memories is fixed.
-
-Figure~\ref{fig:problem} makes the failure concrete. In the current MemCam
-implementation, decoded-bank storage grows from 0.38 GB at 10 seconds to
-2.30 GB at 60 seconds; implementation-calibrated extrapolation reaches 22.7 GB
-at 10 minutes and 136 GB at 60 minutes. Because every target is compared with
-all prior candidates, cumulative retrieval grows quadratically. The same
-unbounded runs also show monotonic LPIPS degradation from 0.4886 at 10 seconds
-to 0.5980 at 180 seconds. FVD is noisier but remains high rather than improving
-with additional history. Storage values follow the implemented representation;
-long-duration latency points are extrapolations and are not presented as
-hardware measurements.
+If every chunk adds $s$ candidates, complete retention uses $O(Ts)$ storage
+after $T$ chunks. Exhaustive retrieval against the growing history costs
+$O(T^2s)$ cumulative candidate comparisons. A fixed bank uses $O(B)$ storage
+and $O(TB)$ cumulative retrieval. These are horizon-scaling results; the cost
+of updating a particular fixed-budget policy is separate.
+Figure~\ref{fig:problem} places these scaling laws beside the measured
+duration-dependent quality trend.
 
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/problem_scaling_quality.pdf}
-    \caption{\textbf{The problem appears before the solution.} Left: the
-    unbounded implementation has linear archive storage and quadratic
-    cumulative exhaustive retrieval; the 10- and 60-minute points are
-    implementation-calibrated extrapolations. Right: unbounded perceptual
-    error worsens with duration, while FVD remains high and non-monotonic. We
-    plot measured values without smoothing.}
+    \caption{\textbf{Scaling and quality of complete retention.} Left:
+    decoded-bank storage is linear and cumulative exhaustive retrieval is
+    quadratic; 10- and 60-minute points are implementation-calibrated
+    extrapolations. Right: measured unbounded LPIPS worsens with duration,
+    while FVD remains high and non-monotonic.}
     \label{fig:problem}
 \end{figure*}
 
-\subsection{MemCam retrieval}
+\subsection{Candidate competition}
 
-MemCam estimates camera FOV overlap through Monte Carlo visibility tests and
-selects the maximum-overlap historical frame for each target
-\citep{memcam}. All methods in our controlled study use this same frozen
-retriever, generator, prompts, camera paths, seeds, and denoising schedule.
-Only $U$, the bank-update rule, changes.
+Archive growth also changes the statistical decision faced by the retriever.
+Consider one useful historical candidate with retrieval score $S_c$ and $n$
+distractors with scores $S_1,\ldots,S_n$. The score need only be imperfectly
+aligned with downstream conditioning quality; a distractor may score highly
+because it matches camera geometry while containing corrupted generated
+content.
 
-\subsection{A diagnostic decomposition}
+\begin{proposition}[Candidate competition]
+Assume distractor scores are conditionally independent with CDF $F_d$. The
+probability that the useful candidate wins top-1 retrieval is
+\begin{equation}
+ P_{\mathrm{win}}(n)=\mathbb{E}_{S_c}\left[F_d(S_c)^n\right],
+ \label{eq:competition}
+\end{equation}
+and is non-increasing in $n$.
+\end{proposition}
 
-The dataset provides a ground-truth image $x_i^{\GT}$ at each trajectory index
-$i$, while the model stores its generated image $\hat{x}_i$. For a target index
-$q$ and selected memory index $i$, define
-\begin{align}
- d_{\mathrm{view}}(i,q)
-   &= d_{\DINO}(x_i^{\GT}, x_q^{\GT}), \\
- d_{\mathrm{corr}}(i)
-   &= d_{\DINO}(\hat{x}_i, x_i^{\GT}), \\
- d_{\mathrm{eff}}(i,q)
-   &= d_{\DINO}(\hat{x}_i, x_q^{\GT}).
-\end{align}
-View mismatch asks whether the index depicts a related view. Corruption asks
-whether the stored generated image is faithful at its own index. Effective
-mismatch measures the actual generated evidence supplied for the target.
+\noindent
+For every $s$, $0\leq F_d(s)\leq1$, hence
+$F_d(s)^{n+1}\leq F_d(s)^n$; expectation preserves the inequality. The result
+does not say that every added memory is harmful. It says that adding
+competing draws creates more opportunities for a high-scoring distractor to
+win when retrieval score and conditioning quality disagree. It also predicts
+that geometric match can improve while selected-content fidelity worsens,
+which is the pattern observed in Sec.~\ref{sec:mechanism}.
+Equation~\ref{eq:competition} is a minimal model rather than a fitted law for
+MemCam; the experiments below test its qualitative prediction.
 
-For diagnosis only, we define the hindsight-best candidate over complete
-history $\Hset_{t-1}$ and over the retained bank $M_{t-1}$:
-\begin{align}
- i^*_{\Hset}(q) &= \arg\min_{i\in\Hset_{t-1}} d_{\mathrm{eff}}(i,q), \\
- i^*_{M}(q) &= \arg\min_{i\in M_{t-1}} d_{\mathrm{eff}}(i,q).
-\end{align}
-The retention and retrieval gaps are
-\begin{align}
- \Delta_{\mathrm{ret}}(q)
- &= d_{\mathrm{eff}}(i^*_{M},q)
-    - d_{\mathrm{eff}}(i^*_{\Hset},q), \\
- \Delta_{\mathrm{sel}}(q)
- &= d_{\mathrm{eff}}(R(q;M_{t-1}),q)
-    - d_{\mathrm{eff}}(i^*_{M},q).
-\end{align}
-These quantities separate losing a candidate through eviction from failing to
-select a good retained candidate. They use future ground truth and DINO, so
-they are offline diagnostic proxies rather than deployable scores or a unique
-oracle for useful memory.
+\section{What Should a Fixed-Budget Memory Preserve?}
+\label{sec:principles}
 
-\section{Quality-Gated Geometric--Rarity Curation}
-\label{sec:policies}
-
-The diagnosis suggests three requirements. First, the bank must remain under a
-fixed storage budget. Second, visibly degraded generated observations should
-not enter persistent memory. Third, the retained set should primarily preserve
-geometric coverage while allowing rare, irreplaceable content to influence
-borderline eviction decisions. We therefore propose \method, illustrated in
-Fig.~\ref{fig:architecture}.
+We keep the generator, retriever, prompts, seeds, and camera trajectories
+fixed, and vary only $U$. This turns memory policies into controlled
+interventions rather than a new generation backbone.
+Figure~\ref{fig:architecture} shows the strongest tested intervention.
 
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/model_architecture.pdf}
-    \caption{\textbf{QGRC.} A no-reference quality gate rejects
-    corrupted incoming candidates. Every admitted candidate is then evaluated
-    by the existing Geometric Coverage and RI scores; their normalized
-    $0.75/0.25$ fusion determines top-$B$ retention. The backbone, generator,
-    and retriever remain unchanged.}
+    \caption{\textbf{Fixed-budget Geometric Coverage intervention.} Newly
+    generated candidates are combined with the current bank. Pairwise camera
+    and DINO affinity identifies frames already supported by several nearby
+    memories; low-utility redundant items are evicted until $B$ remain. The
+    original retriever and generator are unchanged.}
     \label{fig:architecture}
 \end{figure*}
 
-\subsection{Calibrated no-reference quality admission}
+\subsection{Recency}
 
-Ground-truth PSNR and SSIM expose corruption during diagnosis but are
-unavailable at inference. We therefore calibrate a causal no-reference image
-quality estimator before evaluating the memory policy. On trajectories
-$\mathcal{D}_{\mathrm{cal}}$ disjoint from the final benchmark, we compare a
-pre-registered family of inexpensive and learned no-reference estimators.
-Each estimator sees only a generated frame; exact-index PSNR and SSIM define
-hidden calibration labels. Whole trajectories, rather than frames, form the
-train/validation split. We select $\qest$ by held-out quality AUC and balanced
-accuracy, and choose threshold $\tau_q$ while limiting clean-frame rejection
-on the calibration split to $\epsilon=0.10$.
+FIFO removes the oldest unpinned memory. It controls for capacity and favors
+the immediately preceding trajectory segment, but cannot retain a view that
+becomes relevant after a long excursion.
 
-At generation step $t$, $N_t$ is the incoming candidate queue. Persistent
-admission is
-\begin{equation}
- N_t^{+}=\{m\in N_t:\qest(m)\geq\tau_q\},\qquad
- A_t=M_{t-1}\cup N_t^{+}.
-\end{equation}
-The gate observes neither ground truth nor future frames. It asks only whether
-the candidate is visually reliable enough to become recurrent evidence.
-Estimator identity, score orientation, image resolution, and $\tau_q$ are
-locked before final video generation. This decision affects only persistent
-external memory. The base generator's transient four-frame latent anchor is
-unchanged, so rejecting an RGB candidate does not break immediate
-autoregressive continuity. If every new candidate is rejected, the persistent
-bank remains $M_{t-1}$.
+\subsection{Rare-mode preservation}
 
-\subsection{Geometric--rarity retention}
-
-Admission removes corrupted inputs; retention decides which reliable memories
-best use the fixed budget. We run the existing RI clustering and Geometric
-Coverage scorer on the same eligible set $A_t$. Let $u_i^{\mathrm{Geo}}$ and
-$u_i^{\mathrm{RI}}$ denote their raw keep scores. Because they have different
-scales, each is min--max normalized over the current eligible set:
-\begin{equation}
- \widetilde{u}_i^p=
- \frac{u_i^p-\min_{j\in A_t}u_j^p}
- {\max_{j\in A_t}u_j^p-\min_{j\in A_t}u_j^p},
- \quad p\in\{\mathrm{Geo},\mathrm{RI}\}.
-\end{equation}
-For a degenerate equal-score set, all normalized scores are one. Our final keep
-score is
-\begin{equation}
- u_i^{\mathrm{QGRC}}=0.75\,\widetilde{u}_i^{\mathrm{Geo}}
-              +0.25\,\widetilde{u}_i^{\mathrm{RI}},
- \qquad M_t=\operatorname{TopB}_{i\in A_t}u_i^{\mathrm{QGRC}}.
- \label{eq:qgrc}
-\end{equation}
-The $0.75/0.25$ split encodes the empirical hierarchy found in the component
-study: geometry is the primary retention signal, while RI has limited but
-nonzero influence on rare-content ties. We select the geometry weight from
-$\{0.50,0.65,0.75,0.85,1.0\}$ on $\mathcal{D}_{\mathrm{cal}}$ and lock it before
-final evaluation; it is never selected per video. No capacity is reserved for
-either component. Only past and present observations are scored; no future
-trajectory is assumed.
-
-\subsection{Component policies used in ablations}
-
-All component policies are training-free, online, and future-agnostic. They
-share the base generator's transient latent anchor and differ only in how the
-persistent external bank is updated. When the bank exceeds $B$, the selected
-update rule removes its lowest-scoring eligible items.
-
-\paragraph{FIFO.}
-FIFO evicts the oldest unpinned frame. It provides a strong recency baseline
-but cannot preserve a view that becomes relevant after a long excursion.
-
-\paragraph{Rarity-irreplaceability (RI).}
-RI clusters DINO features by thresholding pairwise cosine distance. The
-threshold is the median distance to each point's $k$-th nearest neighbor
-($k=3$ in \ours; legacy component runs use the stated value). For frame $i$ in component $C(i)$ among
-$n$ memories, rarity and irreplaceability are
+Rarity--irreplaceability clusters DINO features by thresholding pairwise
+cosine distance. The threshold is the median distance to each point's
+$k$-th-nearest neighbor. For frame $i$ in connected component $C(i)$ among
+$n$ memories,
 \begin{align}
  r_i &= \log\frac{n+1}{|C(i)|}, \\
- e_i &= \min_{j\neq i} \left\|g_{\mathrm{RGB}}(\hat{x}_i)
-                 -g_{\mathrm{RGB}}(\hat{x}_j)\right\|_1, \\
- u_i^{\mathrm{RI}} &= r_i e_i,
+ e_i &= \min_{j\neq i}\left\|g_{\mathrm{RGB}}(\hat{x}_i)
+                    -g_{\mathrm{RGB}}(\hat{x}_j)\right\|_1, \\
+ u_i^{\mathrm{RI}} &= r_i e_i .
 \end{align}
-where $g_{\mathrm{RGB}}$ is a compact RGB descriptor. RI protects memories
-that occupy rare semantic regions and lack a visually similar substitute.
+Here $g_{\mathrm{RGB}}$ is a compact RGB descriptor. A corrected $k=3$
+calibration is used in the final 60-second ablation; the canonical 180-second
+run predates that correction and is labeled accordingly. Rarity-only removes
+$e_i$ and evicts items from large DINO components first.
 
-\paragraph{Geometric Coverage.}
-This is our geometric-coverage component. A frame covered by many similar
-observations is treated as redundant.
-For camera-to-world
-poses $(R_i,t_i)$ and $(R_j,t_j)$, we compute
+\subsection{Geometric coverage}
+
+Our strongest intervention adapts SLAM-style co-visibility culling. For
+camera-to-world poses $(R_i,t_i)$ and $(R_j,t_j)$, define
 \begin{align}
- d_p(i,j) &= \frac{\|t_i-t_j\|_2}{\mathrm{median}_{a\neq b}\|t_a-t_b\|_2}
- + 2\frac{\arccos((\mathrm{tr}(R_i^\top R_j)-1)/2)}{\pi}, \\
+ d_p(i,j) &=
+ \frac{\|t_i-t_j\|_2}
+ {\mathrm{median}_{a\neq b}\|t_a-t_b\|_2}
+ +2\frac{\arccos((\mathrm{tr}(R_i^\top R_j)-1)/2)}{\pi}, \\
  K(i,j) &= 0.65\exp[-d_p(i,j)]
  +0.35\max(\cos(z_i,z_j),0),
+ \label{eq:affinity}
 \end{align}
-where $z_i$ is the normalized DINO feature. Let
+where $z_i$ is a normalized DINO feature. Let
 $c_i=\sum_{j\neq i}\ind[K(i,j)\geq0.65]$ and
-$k_i^{\max}=\max_{j\neq i}K(i,j)$. The retention score is
+$k_i^{\max}=\max_{j\neq i}K(i,j)$. The retention utility is
 \begin{equation}
- u_i^{\mathrm{Geo}} =
+ u_i^{\mathrm{Geo}}=
  1-\min(c_i/3,1)+\frac{0.5}{c_i+1}+0.25(1-k_i^{\max}).
+ \label{eq:geocov}
 \end{equation}
-The policy removes frames already supported by multiple geometrically and
-visually similar observations, leaving sparse historical anchors. The full
-model applies the quality gate and Eq.~\ref{eq:qgrc} above.
+Frames with at least three co-visible observers and a close substitute receive
+low utility. The buffer evicts the lowest utilities until $B$ items remain.
+This is a local redundancy criterion, not an optimal set-coverage theorem.
 
-\section{Experiments}
+\subsection{Generic set coverage and reliability}
 
-\subsection{Setup}
+K-center retains descriptor-space centers. Marginal Coverage Eviction uses a
+noisy-OR facility objective, while density-balanced coverage weights candidate
+regions before computing marginal loss. These policies test whether generic
+set coverage is sufficient.
 
-\paragraph{Generator and data.}
+Reliability asks a different question: can a corrupted generated observation
+be recognized before it becomes persistent evidence? We test generic
+no-reference IQA, pose-calibrated agreement with the actual conditioning
+context, and same-view hysteresis. Ground-truth fidelity is used only as a
+held-out label, never as a policy input. None becomes part of the final policy
+because none passes both held-out discrimination and rollout quality.
+
+\section{Experimental Setup}
+
+\paragraph{MemCam.}
 We use the public MemCam implementation built on the Wan2.1 1.3B diffusion
-transformer \citep{wan,memcam}. Evaluation uses fifteen held-out trajectories
-from the Context-as-Memory dataset \citep{contextasmemory}. Each rollout lasts
-180 seconds (5,397 generated frames) and is produced in 76-frame target
-sections with 50 denoising steps. Policies share seeds, prompts, trajectories,
-and checkpoints.
+transformer \citep{wan,memcam}. The primary study uses fifteen matched
+180-second trajectories from the Context-as-Memory dataset
+\citep{contextasmemory}. Each rollout contains 5,397 frames generated in
+76-frame target sections with 50 denoising steps. Policies share checkpoints,
+prompts, trajectories, and random seeds. The primary budget is $B=32$.
 
-\paragraph{Policies and budgets.}
-The completed diagnostic comparison uses unbounded memory, FIFO, RI, and
-Geometric Coverage at $B=32$. The full method combines calibrated quality
-admission with the fixed $0.75/0.25$ Geometric--RI score. We treat FIFO, RI,
-Geometric Coverage, K-center, density-balanced coverage, Marginal Coverage
-Eviction (MCE), Surprise Forcing, and ungated RI--geometry blends as baselines
-or component ablations.
-Budgets 16, 32, 64, and 128 test whether conclusions survive changes in bank
-capacity. All method choices, including the quality estimator and gate
-threshold, are locked before evaluating the final fifteen trajectories.
+\paragraph{WorldMem.}
+We separately evaluate the first fifteen matched 60-second WorldMem rollouts.
+WorldMem uses a latent-memory interface and a different generator-facing read
+mechanism \citep{worldmem}. The purpose is to test whether complete retention
+is also dominated outside MemCam, not whether one RGB kernel transfers
+unchanged. We report within-system comparisons only.
 
 \paragraph{Metrics.}
-LPIPS compares sampled generated frames with their exact trajectory-indexed
-ground truth. FVD uses StyleGAN-V I3D features, 16-frame clips, and the same
-sampling configuration for every policy. VBench reports the six dimensions
-listed in Table~\ref{tab:vbench}; CUT3R estimates each generated camera path
-and reports relative rotation error, scale-aligned translation error, and a
-WorldScore-style camera-control score. Efficiency reports archive bytes,
-retrieval latency, end-to-end generation latency, and peak GPU memory under
-the same device and bank placement. For diagnostic image quality, each
-retrieved generated frame is compared with the dataset frame at the same
-trajectory index using PSNR and SSIM. Confidence intervals resample the
-fifteen trajectories rather than individual retrieval events.
+LPIPS compares sampled generated frames with exact trajectory-indexed ground
+truth. FVD uses the same StyleGAN-V I3D detector, 16-frame clips, four clips
+per video, stride four, and 224-pixel inputs within each comparison. Standard
+VBench uses identical fifteen-video subsets. PSNR and SSIM compare a selected
+generated frame with dataset ground truth at the same trajectory index.
+Confidence intervals resample trajectories. CUT3R and VBench-Long are excluded:
+the former failed a ground-truth camera sanity check and the latter did not run
+in the available environment. We prefer an explicit missing measurement to an
+invalid number.
 
-\paragraph{Quality-estimator calibration.}
-We compare gradient energy, Laplacian variance, contrast, entropy, clipping,
-the original sharpness--contrast heuristic, MUSIQ, CLIP-IQA+, TOPIQ-NR, and
-NIQE. The selected estimator must beat chance on held-out trajectory AUC and
-balanced accuracy, maintain positive within-trajectory correlation with
-full-reference quality, and satisfy the clean-rejection constraint. This
-calibration uses no final benchmark trajectories and is reported separately
-from final video performance.
+\section{Results}
 
-\subsection{Which quality signal can be used online?}
-
-Table~\ref{tab:iqa-calibration} validates the admission signal before it is
-placed inside the generator. The locked winner, \qualityEstimatorName{},
-achieves held-out AUC \qualityAUC{} and balanced accuracy \qualityBAcc{}. At
-the conservative operating point it rejects \qualityBadRecall{} of corrupted
-frames while rejecting only \qualityCleanReject{} of clean frames. The same
-threshold is then used unchanged for all final rollouts.
+\subsection{Less memory can generate better video}
 
 \begin{table}[t]
 \centering
-\caption{No-reference estimator calibration on trajectories disjoint from the
-final benchmark. Higher AUC and balanced accuracy are better; lower clean
-rejection is better.}
-\label{tab:iqa-calibration}
-\small
-\begin{tabular}{lrrrr}
-\toprule
-Estimator & AUC & BAcc & Bad recall & Clean reject \\
-\midrule
-Sharpness--contrast & \pending & \pending & \pending & \pending \\
-Laplacian variance & \pending & \pending & \pending & \pending \\
-MUSIQ & \pending & \pending & \pending & \pending \\
-CLIP-IQA+ & \pending & \pending & \pending & \pending \\
-TOPIQ-NR & \pending & \pending & \pending & \pending \\
-NIQE & \pending & \pending & \pending & \pending \\
-\midrule
-Selected: \qualityEstimatorName & \textbf{\qualityAUC} &
-\textbf{\qualityBAcc} & \textbf{\qualityBadRecall} &
-\textbf{\qualityCleanReject} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Can less memory generate better video?}
-
-\begin{table}[t]
-\centering
-\caption{Main video-quality comparison at 180 seconds. All bounded methods use
-$B=32$ and the same frozen retriever. Lower is better. Bracketed values are
-filled directly from the locked final-policy evaluation artifact.}
+\caption{Matched MemCam quality at 180 seconds. All bounded policies use
+$B=32$. Lower is better.}
 \label{tab:main-quality}
 \small
 \begin{tabular}{lrrr}
 \toprule
-Policy & Stored frames & LPIPS $\downarrow$ & FVD $\downarrow$ \\
+Policy & Stored & LPIPS $\downarrow$ & FVD $\downarrow$ \\
 \midrule
 Unbounded & 5,397 & 0.5980 & 734.2 \\
 FIFO & 32 & 0.6514 & 677.3 \\
-RI & 32 & 0.5939 & 550.4 \\
-Geometric Coverage & 32 & 0.5876 & 476.6 \\
-\ours{} (full) & 32 & \textbf{\finalLPIPS} & \textbf{\finalFVD} \\
+\RI & 32 & 0.5939 & 550.4 \\
+\Geo & 32 & \textbf{0.5876} & \textbf{476.6} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:main-quality} and Fig.~\ref{fig:quality} show that bounded
-memory is not merely competitive with the complete archive. Geometric Coverage
-improves FVD by 35.1\% and LPIPS by 1.7\%. RI improves FVD by 25.0\%
-and LPIPS by 0.7\%. FIFO improves FVD but substantially worsens LPIPS,
-indicating that a small bank alone is insufficient; what the bank preserves
-matters. The completed \ours{} row is the strongest fixed-budget result on
-both metrics: quality admission removes corrupted recurrent evidence, while
-the geometry-dominant retention rule preserves the coverage behavior that made
-the strongest component successful.
+Table~\ref{tab:main-quality} and Fig.~\ref{fig:quality} establish the main
+phenomenon. \Geo reduces FVD by 35.1\% while retaining 0.59\% of the
+unbounded frames. \RI also improves both metrics. FIFO improves FVD but
+worsens LPIPS by 0.0534, showing that a fixed budget is not inherently
+beneficial. The bank must retain evidence compatible with the downstream
+retriever.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\columnwidth]{figures/quality_180s.pdf}
-    \caption{At 180 seconds, RI and Geometric Coverage outperform
-    unbounded memory on both LPIPS and FVD. FIFO demonstrates that the result
-    cannot be attributed to budget size alone.}
+    \caption{At 180 seconds, \RI and \Geo outperform complete retention on
+    LPIPS and FVD. FIFO demonstrates that capacity reduction alone does not
+    explain the result.}
     \label{fig:quality}
 \end{figure}
 
-\subsection{Full evaluation matrix}
-
-The central claim holds beyond LPIPS and FVD. Table~\ref{tab:vbench}
-tests visual stability and image quality, while
-Table~\ref{tab:camera-efficiency} tests camera control and the systems claim.
-The final policy is selected using only the disjoint calibration split; these
-metrics are confirmatory measurements on the locked benchmark configuration.
-
-\begin{table*}[t]
-\centering
-\caption{VBench evaluation at 60 seconds. Higher is better. Every row uses the
-same fifteen videos and VBench configuration. Bracketed cells are populated
-directly from the audited final artifacts.}
-\label{tab:vbench}
-\small
-\begin{tabular}{lrrrrrr}
-\toprule
-Method & Subject & Background & Motion & Dynamic & Aesthetic & Imaging \\
-\midrule
-Unbounded & \pending & \pending & \pending & \pending & \pending & \pending \\
-FIFO-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-RI-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-Geometric Coverage-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-K-center-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-Density-balanced coverage-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-MCE-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-Surprise Forcing-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-\ours{} (full)-32 & \textbf{\finalVBSubject} &
-\textbf{\finalVBBackground} & \textbf{\finalVBMotion} &
-\textbf{\finalVBDynamic} & \textbf{\finalVBAesthetic} &
-\textbf{\finalVBImaging} \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-Across the six VBench dimensions, \ours{} obtains the highest aggregate score,
-improving the mean by \finalVBenchGain{} over the strongest component policy.
-The gain confirms that rejecting damaged recurrent evidence does not merely
-optimize exact-frame LPIPS; it improves long-horizon visual consistency under
-an independently implemented evaluator.
-
-\begin{table*}[t]
-\centering
-\caption{Camera control and efficiency. CUT3R errors are lower-is-better and
-the camera score is higher-is-better. Latency and memory require the same H100,
-software stack, bank placement, and 60-second inputs. ``Archive GB'' excludes
-the shared generator weights.}
-\label{tab:camera-efficiency}
-\small
-\begin{tabular}{lrrrrrr}
-\toprule
-Method & CUT3R rot. $\downarrow$ & CUT3R trans. $\downarrow$ & Camera score $\uparrow$ & Archive GB $\downarrow$ & Retrieval time $\downarrow$ & Peak VRAM $\downarrow$ \\
-\midrule
-Unbounded & \pending & \pending & \pending & 2.30 & \pending & \pending \\
-FIFO-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-RI-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-Geometric Coverage-32 & \pending & \pending & \pending & \pending & \pending & \pending \\
-\ours{} (full)-32 & \textbf{\finalCUTR} & \textbf{\finalCUTT} &
-\textbf{\finalCameraScore} & \textbf{\finalArchiveGB} &
-\textbf{\finalRetrievalSpeedup} & \textbf{\finalPeakVRAM} \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-\ours{} preserves camera control while making the systems cost independent of
-video duration: it obtains CUT3R rotation \finalCUTR{}, translation
-\finalCUTT{}, and camera score \finalCameraScore{}. The fixed bank occupies
-\finalArchiveGB{} and accelerates retrieval by \finalRetrievalSpeedup{} over
-the complete archive at 60 seconds, with peak GPU memory
-\finalPeakVRAM{}. Because model weights and bank placement are matched, this
-comparison isolates the cost of memory management.
-
-\subsection{Ablating the final model}
-
-Table~\ref{tab:ablations} isolates the role of each design choice. Geometric
-Coverage is the strongest completed component, not the name of the complete
-method. RI tests rare-content preservation; the gate tests whether rejecting
-low-quality generated observations prevents memory poisoning.
-K-center tests generic descriptor dispersion. Density-balanced coverage tests
-an earlier weighted coverage rule, while Marginal Coverage Eviction (MCE)
-tests direct set-level marginal loss; both performed worse than Geometric
-Coverage in their pilots. The decisive comparisons are the complete method
-against Geometric Coverage alone, the ungated $0.75/0.25$ blend, and the
-quality-gated geometric-only variant at equal budget.
+\subsection{A second memory interface}
 
 \begin{table}[t]
 \centering
-\caption{Fixed-budget ablations. ``Blend'' denotes normalized $0.75$ Geometric
-Coverage plus $0.25$ RI. The full policy combines this retention rule with
-quality admission.}
-\label{tab:ablations}
+\caption{Matched first-15 WorldMem videos at 60 seconds. All bounded rows use
+$B=32$. Values are comparable only within WorldMem.}
+\label{tab:worldmem}
 \small
-\begin{tabular}{lcccrr}
+\begin{tabular}{lrr}
 \toprule
-Variant & Gate & RI & Geo & LPIPS $\downarrow$ & FVD $\downarrow$ \\
+Policy & LPIPS $\downarrow$ & FVD $\downarrow$ \\
 \midrule
-FIFO & -- & -- & -- & 0.6514 & 677.3 \\
-RI & -- & \checkmark & -- & 0.5939 & 550.4 \\
-Geometric Coverage & -- & -- & \checkmark & 0.5876 & 476.6 \\
-Gate + Geometric & \checkmark & -- & \checkmark & \pending & \pending \\
-Ungated $0.75/0.25$ blend & -- & \checkmark & \checkmark & \pending & \pending \\
-\ours{} (full) & \checkmark & \checkmark & \checkmark & \finalLPIPS & \finalFVD \\
+Unbounded & 0.652 & 3077.6 \\
+FIFO & 0.689 & 3554.9 \\
+Latent-\RI & 0.546 & 1160.4 \\
+Geometric Coverage & \textbf{0.534} & \textbf{1116.9} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{What deteriorates as history grows?}
+WorldMem exhibits the same ordering at $B=32$: complete retention beats FIFO
+but is substantially worse than structured curation (Table~\ref{tab:worldmem}).
+The result supports the archive-versus-context thesis across two memory
+interfaces. It does not establish that Eq.~\ref{eq:geocov} is universally
+optimal; WorldMem's best measured LPIPS occurs at Geometric Coverage $B=16$
+(0.525), whereas MemCam's primary comparison is fixed at $B=32$.
 
-The unbounded bank has zero retention gap by construction, but a mean
-selection gap of 0.2267. Across 4,200 audited queries and 1,050 sections,
-candidate count correlates positively with selection gap
-($\rho=0.203$). Thirteen of fifteen trajectories have a positive within-video
-trend (exact sign-test $p=0.0074$). Mean late-minus-early selection gap is
-$+0.0723$ with a trajectory-bootstrap 95\% CI of $[0.0396,0.1088]$.
+\subsection{Retention and selection are different objectives}
+\label{sec:decomposition}
 
-Figure~\ref{fig:pool} resolves a key ambiguity in this growing gap. The
-hindsight-best effective mismatch remains approximately flat
-($+0.0008$, CI $[-0.0496,0.0546]$), while selected effective mismatch worsens
-by $+0.0732$ (CI $[0.0165,0.1296]$). The candidate pool still contains
-comparably good historical evidence; the frozen selector fails to surface it.
-Candidate count and rollout depth co-vary, so this is a scaling association,
-not a causal estimate of pool size alone.
+The dataset provides ground-truth image $x_i^{\GT}$ at trajectory index $i$,
+while memory stores generated image $\hat{x}_i$. For target $q$ and memory
+index $i$, define
+\begin{align}
+ d_{\mathrm{view}}(i,q) &= d_{\DINO}(x_i^{\GT},x_q^{\GT}), \\
+ d_{\mathrm{corr}}(i) &= d_{\DINO}(\hat{x}_i,x_i^{\GT}), \\
+ d_{\mathrm{eff}}(i,q) &= d_{\DINO}(\hat{x}_i,x_q^{\GT}).
+\end{align}
+For diagnosis only, let $i^*_{\Hset}$ be the minimum-effective-mismatch item
+in complete history and $i^*_M$ the minimum in the current bank. If $i_R$ is
+the item chosen by the real retriever,
+\begin{align}
+ \Delta_{\mathrm{ret}} &= d_{\mathrm{eff}}(i^*_M,q)
+                         -d_{\mathrm{eff}}(i^*_{\Hset},q), \\
+ \Delta_{\mathrm{sel}} &= d_{\mathrm{eff}}(i_R,q)
+                         -d_{\mathrm{eff}}(i^*_M,q).
+\end{align}
+These are hindsight DINO diagnostics, not true utility labels.
+
+\begin{table}[t]
+\centering
+\caption{Retention and selection gaps at 180 seconds. Lower is better.}
+\label{tab:gaps}
+\small
+\begin{tabular}{lrr}
+\toprule
+Policy & Retention gap & Selection gap \\
+\midrule
+Unbounded & $\approx0$ & 0.2267 \\
+FIFO & 0.2039 & -- \\
+\RI & \textbf{0.0474} & 0.1582 \\
+\Geo & 0.0639 & \textbf{0.1338} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Unbounded preserves every historical possibility and therefore has zero
+retention gap, yet has the largest measured selection gap
+(Table~\ref{tab:gaps}). \RI preserves rare historical modes: it has lower
+retention gap than \Geo on 10/15 trajectories, although the sign test is not
+significant ($p=0.302$). \Geo gives the frozen retriever a more usable bank:
+it has lower selection gap than \RI on 12/15 trajectories ($p=0.035$) and
+beats unbounded on 13/15 ($p=0.0074$). Retaining potentially useful evidence
+and making retained evidence retrievable are different objectives.
+
+\subsection{What deteriorates as the archive grows?}
+\label{sec:mechanism}
+
+Across 4,200 audited unbounded queries and 1,050 sections, candidate count
+correlates with selection gap ($\rho=0.203$). Thirteen of fifteen trajectories
+have a positive trend (sign-test $p=0.0074$). Mean late-minus-early selection
+gap is $+0.0723$ with trajectory-bootstrap 95\% CI
+$[0.0396,0.1088]$. The hindsight-best effective mismatch remains flat
+($+0.0008$, CI $[-0.0496,0.0546]$), while selected mismatch worsens by
+$+0.0732$ (CI $[0.0165,0.1296]$). Candidate count and elapsed generation time
+co-vary, so this is a scaling association rather than a causal estimate of
+pool size alone.
+Figure~\ref{fig:pool} shows that the selected candidate worsens while the best
+available diagnostic candidate remains approximately flat.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\columnwidth]{figures/pool_growth.pdf}
-    \caption{Unbounded pool-growth diagnostic. Effective mismatch of the
-    selected memory increases, while the hindsight-best available candidate
-    stays nearly flat. Bins summarize matched 180-second traces.}
+    \caption{As the unbounded candidate pool grows, selected effective
+    mismatch increases while the hindsight-best available mismatch stays
+    approximately flat.}
     \label{fig:pool}
 \end{figure}
 
-The left panel of Fig.~\ref{fig:mechanism} further decomposes this effect.
+The left panel of Fig.~\ref{fig:mechanism} resolves an important ambiguity.
 Selected view mismatch improves by $-0.0335$ (CI
-$[-0.0511,-0.0171]$), whereas selected-memory corruption worsens by $+0.0873$
-(CI $[0.0236,0.1572]$). Their combined effective mismatch worsens by
-$+0.0732$. Thus, unbounded retrieval does not primarily fail by selecting a
-camera-disjoint view. It increasingly selects a plausible view represented by
-a damaged generated image.
+$[-0.0511,-0.0171]$), while selected-memory corruption worsens by $+0.0873$
+(CI $[0.0236,0.1572]$). Effective mismatch worsens by $+0.0732$. The growing
+archive does not primarily cause camera-disjoint retrieval. It increases
+selection of plausible views represented by damaged generated content, as
+predicted by candidate competition when geometric score and content fidelity
+are imperfectly aligned.
 
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/mechanism_evidence.pdf}
-    \caption{\textbf{Mechanism evidence.} Left: late-minus-early changes in
-    the unbounded run. View alignment improves, but selected generated content
-    becomes more corrupted, worsening effective mismatch. Center and right:
-    common-source control. Every selector is evaluated using image content
-    from the same unbounded videos; RI and Geometric Coverage still choose
+    \caption{\textbf{Mechanism evidence.} Left: view alignment improves late
+    in the unbounded rollout, but selected generated content becomes more
+    corrupted. Center and right: in the common-source control every selector
+    reads pixels from the same unbounded video; \RI and \Geo still choose
     cleaner indices.}
     \label{fig:mechanism}
 \end{figure*}
 
-\subsection{Does the advantage come from selection or cleaner history?}
+\subsection{Common-source control}
 
-Policy rollouts diverge autoregressively, creating a confound: perhaps
-Geometric Coverage retrieves cleaner memories only because it already
-generated a cleaner video.
-We therefore conduct a common-source control. Each policy supplies only its
-selected frame indices; the pixels for every index are read from the exact same
-unbounded rollout and compared with ground truth.
+Independent policy rollouts have different generated histories. To isolate
+index selection, each policy supplies only its selected frame indices, while
+all image pixels are read from the same unbounded rollout and compared with
+ground truth. Table~\ref{tab:common-source} reports the matched result.
 
 \begin{table}[t]
 \centering
-\caption{Common-source selection quality. Positive deltas indicate cleaner
-indices than the unbounded selector on the same videos. CIs bootstrap
-trajectories.}
+\caption{Common-source selection quality. Deltas are relative to unbounded;
+positive is better. CIs resample trajectories.}
 \label{tab:common-source}
 \small
 \begin{tabular}{lrrr}
@@ -708,149 +526,199 @@ Selector & PSNR & $\Delta$PSNR & $\Delta$SSIM \\
 \midrule
 Unbounded & 11.703 & -- & -- \\
 FIFO & 11.487 & -0.216 & -0.0109 \\
-RI & 13.478 & +1.775 & +0.0672 \\
-Geometric Coverage & \textbf{16.332} & \textbf{+4.629} & \textbf{+0.1512} \\
+\RI & 13.478 & +1.775 & +0.0672 \\
+\Geo & \textbf{16.332} & \textbf{+4.629} & \textbf{+0.1512} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-RI improves PSNR by 1.775 dB (CI $[1.005,2.683]$) and SSIM by 0.0672
-(CI $[0.0456,0.0926]$), winning SSIM on all fifteen trajectories. Geometric
-Coverage improves PSNR by 4.629 dB (CI $[3.521,5.874]$) and SSIM by 0.1512
-(CI $[0.1100,0.1929]$), winning both metrics on 15/15 trajectories. This
-control isolates selected indices from rollout history: the bounded rules
-prefer locations at which the unbounded video itself is cleaner.
-
-\subsection{Does retrieved cleanliness predict the next chunk?}
+\RI improves PSNR by 1.775 dB (CI $[1.005,2.683]$) and SSIM by 0.0672
+(CI $[0.0456,0.0926]$). \Geo improves PSNR by 4.629 dB
+(CI $[3.521,5.874]$) and SSIM by 0.1512
+(CI $[0.1100,0.1929]$), winning both metrics on all fifteen trajectories.
+FIFO loses on all fifteen. Thus structured curation favors cleaner historical
+indices even when it receives no benefit from a cleaner prior rollout.
 
 On each policy's own rollout, selected-memory quality follows the same order:
-unbounded obtains 11.703 dB PSNR and 0.3089 SSIM, RI obtains 13.396 and 0.3830,
-and Geometric Coverage obtains 16.522 and 0.4759. Relative to unbounded, late
-next-chunk SSIM improves by 0.0133 for RI (CI $[0.0028,0.0279]$) and 0.0169
-for Geometric Coverage
-(CI $[0.0012,0.0392]$). Next-chunk PSNR changes are positive but unresolved:
-0.015 (CI $[-0.216,0.271]$) for RI and 0.164
-(CI $[-0.111,0.519]$) for Geometric Coverage. The association supports, but
-does not prove,
-propagation of memory corruption.
+unbounded obtains 11.703 dB PSNR and 0.3089 SSIM, \RI obtains 13.396 and
+0.3830, and \Geo obtains 16.522 and 0.4759. Late next-chunk SSIM improves by
+0.0133 for \RI (CI $[0.0028,0.0279]$) and 0.0169 for \Geo
+(CI $[0.0012,0.0392]$), but next-chunk PSNR intervals cross zero. This is
+supportive observational evidence, not a completed causal propagation result.
 
-A matched one-section context swap provides a preliminary causal check. In one
-valid late case, replacing unbounded-selected contexts with Geometric
-Coverage-selected
-contexts while preserving prior history changes LPIPS by $-0.00177$ and DINO
-distance by $-0.01691$. The direction is consistent with the hypothesis but
-$n=1$ is intentionally not treated as conclusive evidence.
-
-\subsection{Alternative explanations}
-
-Table~\ref{tab:negative} summarizes four targeted mechanism tests. Geometry
-and appearance sometimes disagree, context selection sometimes concentrates,
-and Monte Carlo overlap estimates are unstable among near ties. None of these
-effects grows in the required direction with candidate count or carries enough
-appearance cost to explain the main result. MemCam also almost never enters a
-zero-overlap fallback regime.
+\subsection{Rarity and coverage trade different metrics}
 
 \begin{table*}[t]
 \centering
-\caption{Mechanism tests that do not explain the duration-dependent
-degradation. These are useful negative results: each phenomenon is measurable,
-but its magnitude or direction is inconsistent with the main trend.}
+\caption{Matched 60-second MemCam study. LPIPS/FVD are lower-is-better;
+VBench dimensions are higher-is-better. All policies use $B=32$.}
+\label{tab:rarity}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+Policy & LPIPS-10 & FVD-10 & LPIPS-60 & FVD-60 & Subject & Background & Motion & Dynamic & Aesthetic & Imaging \\
+\midrule
+\Geo & 0.4964 & 719.3 & \textbf{0.5850} & 690.5 & \textbf{0.8187} & \textbf{0.9071} & 0.9914 & 1.000 & \textbf{0.4792} & \textbf{0.5294} \\
+Rarity only & \textbf{0.4878} & \textbf{682.2} & 0.5986 & 732.3 & 0.8008 & 0.8996 & \textbf{0.9925} & 1.000 & 0.4495 & 0.4976 \\
+0.75 Geo + 0.25 rarity & 0.4927 & 713.1 & 0.5872 & \textbf{676.4} & 0.8104 & 0.9006 & 0.9922 & 1.000 & 0.4554 & 0.5027 \\
+0.75 Geo + 0.25 RI & 0.4906 & 711.1 & 0.5825 & 691.7 & 0.8111 & 0.9000 & 0.9921 & 1.000 & 0.4589 & 0.5020 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+No blend dominates \Geo (Table~\ref{tab:rarity}). Rarity-only is strongest at
+10 seconds but degrades at 60 seconds. Adding 25\% rarity improves 60-second
+FVD by 14.1 but worsens LPIPS and four meaningful VBench dimensions. Adding
+the full \RI score wins several prefix LPIPS cells but also loses subject,
+background, aesthetic, and imaging quality. Rarity therefore contributes a
+different retention preference, not a free improvement to geometric coverage.
+
+\subsection{Reliability matters but is not observable enough}
+
+The corruption diagnosis naturally suggests rejecting damaged writes. We
+tested that idea before injecting a gate into final rollouts
+(Table~\ref{tab:reliability}).
+
+\begin{table}[t]
+\centering
+\caption{Held-out reliability tests. A useful gate needs discrimination above
+chance and acceptable rejection precision.}
+\label{tab:reliability}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Signal & AUC & Precision & Recall & Clean reject \\
+\midrule
+Unclipped fraction & 0.630 & -- & 0.183 & 0.125 \\
+MUSIQ/PAQ2PIQ & 0.516 & -- & 0.314 & 0.307 \\
+Raw context similarity & 0.546 & 0.294 & 0.245 & 0.151 \\
+Pose-conditioned residual & 0.511 & 0.207 & 0.119 & 0.117 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Generic no-reference IQA was not deployable. At 20\% bad-frame prevalence,
+the best signal would reject roughly 37 bad and 100 clean frames per 1,000
+candidates. Pose-conditioned causal consistency was near chance and worse than
+raw similarity. Both predeclared decisions were \textsc{do not inject}.
+
+An offline same-view test did reveal a population tendency: at camera-view
+threshold 0.90, an older representative was cleaner than a later rewrite by
+0.860 dB PSNR and 0.0397 SSIM across 823 pairs. The effect remained positive
+from thresholds 0.80 to 0.95. However, converting it into hard hysteresis
+worsened 60-second FVD from 690.5 to 768.7 and lost four meaningful VBench
+dimensions. A true retrospective property need not be a useful online control
+signal. The hard rule over-preserved incumbents and blocked useful refresh.
+
+\subsection{Alternative mechanisms}
+
+Table~\ref{tab:negative} summarizes targeted alternatives that are measurable
+but inconsistent with the magnitude or direction of the main trend.
+
+\begin{table*}[t]
+\centering
+\caption{Measured phenomena that do not explain the duration-dependent
+degradation.}
 \label{tab:negative}
 \small
-\begin{tabular}{p{0.18\textwidth}p{0.28\textwidth}p{0.42\textwidth}}
+\begin{tabular}{p{0.18\textwidth}p{0.28\textwidth}p{0.44\textwidth}}
 \toprule
-Hypothesis & Main measurement & Result \\
+Hypothesis & Measurement & Result \\
 \midrule
-Occlusion poisoning & Appearance penalty of geometric argmax & Mean DINO penalty 0.0455; small vs. large pools 0.0364 vs. 0.0464. Real but modest. \\
-Context diversity collapse & Largest repeated-frame share within a section & Mean share 0.172; effective 25.65 frames out of 76. Concentration decreases with pool size ($\rho=-0.314$). \\
-Zero-overlap fallback & FOV-overlap hit rate & 100\% hit rate at thresholds 0.01 and 0.1; median overlap 0.9335. The fallback regime is absent. \\
-Monte Carlo overlap noise & Winner change at 10$\times$ samples & 39.1\% flip rate, but mean appearance cost 0.0029 and flip rate decreases from 57.5\% in small pools to 37.3\% in large pools. \\
+Direct attention dilution & Generator-facing context size & MemCam retrieves a fixed-size context before denoising; archive size never enters the denoiser softmax. \\
+Occlusion poisoning & Appearance cost of geometric argmax & Mean DINO penalty 0.0455; real but modest relative to the main selected-content change. \\
+Context diversity collapse & Largest repeated-frame share per section & Mean share 0.172; concentration decreases with pool size ($\rho=-0.314$), opposite the required trend. \\
+Zero-overlap fallback & FOV-overlap hit rate & 100\% hit rate at thresholds 0.01 and 0.1; median overlap 0.9335. \\
+Monte Carlo overlap noise & Winner changes at $10\times$ samples & 39.1\% flip rate, but mean appearance cost is 0.0029 and flips become less frequent in larger pools. \\
+Aggregate archive drift & Mean stored-frame corruption & The archive average does not worsen monotonically; the query-conditioned selected subset does. \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
 \section{Discussion}
 
-\paragraph{Curation is quality control.}
-The usual systems argument for bounded memory is constant storage and faster
-search. Our results establish a model-quality argument: curation alters which
-self-generated evidence is repeatedly fed back into the generator. The best
-policy is not the one that preserves the greatest number of frames selected by
-the unbounded baseline. Indeed, treating unbounded selection as an oracle leads
-to the wrong conclusion because that selector is precisely what fails.
+\paragraph{The contribution is not a new SLAM rule.}
+Equations~\ref{eq:affinity}--\ref{eq:geocov} deliberately adapt keyframe
+redundancy ideas. Their
+value here is as a controlled intervention into generative memory. The paper's
+scientific contribution is the candidate-competition formulation, the
+retention/selection decomposition, and evidence that complete retention can
+degrade a fixed read interface. Renaming a SLAM-inspired score would not make
+its ingredients novel, so we state the lineage explicitly.
 
-\paragraph{Why does Geometric Coverage help?}
-Geometric Coverage retains sparse historical anchors and removes memories supported by many
-nearby observations. The common-source control shows that this redundancy rule
-indirectly favors cleaner indices, although it never explicitly observes PSNR,
-SSIM, or ground truth. A plausible explanation is that repeatedly generated
-nearby views create dense neighborhoods containing many visually degraded
-distractors; pruning redundant neighborhoods reduces their opportunity to win
-retrieval. This explanation is consistent with current evidence but still
-requires a direct controlled test.
+\paragraph{Why does a geometric policy address a corruption diagnosis?}
+\Geo does not estimate image quality. It intervenes earlier in the chain:
+archive growth creates dense populations of near-equivalent candidates;
+candidate competition lets a geometrically convincing but corrupted item win;
+redundancy culling reduces that population. The common-source control is the
+empirical bridge: with identical historical pixels, \Geo changes only the
+candidate indices and selects substantially cleaner evidence. We therefore
+describe corrupted selected content as the consequence and geometric curation
+as a candidate-set intervention, not as a quality detector.
 
-\paragraph{Why gate before ranking?}
-The common-source experiment shows that selection rules can prefer cleaner
-indices, but neither RI nor Geometric Coverage directly prevents a visibly
-damaged new observation from entering persistent memory. Once admitted, that
-observation can compete in every future retrieval. \ours{} separates these
-decisions: the gate controls evidential integrity, and Eq.~\ref{eq:qgrc}
-allocates limited capacity among candidates that passed. Treating quality as a
-third additive rank term is weaker: a sufficiently rare or geometrically unique
-corrupted frame can still survive. Gate-first admission enforces the diagnosis
-directly.
+\paragraph{Retention, retrievability, and reliability.}
+The experiments expose three distinct objectives. \RI best preserves rare
+historical modes under the hindsight diagnostic. \Geo best supports the frozen
+retriever. Reliability is associated with downstream quality but cannot be
+predicted accurately enough from tested causal observables. A useful memory
+system may eventually optimize all three, but our evidence does not justify a
+weighted sum or quality gate as the final method.
 
-\paragraph{Representation interface.}
-The three decisions are representation-independent at the interface level:
-each system supplies an integrity score, a geometric affinity, and a
-distinctiveness descriptor. Their implementations need not be identical.
-MemCam uses no-reference RGB IQA, camera-pose/DINO Geometric Coverage, and
-DINO/RGB RI; latent memory can score decoded previews or latent confidence,
-while surfel and point-cloud systems can use reconstruction confidence and
-spatial overlap. We distinguish this reusable decision structure from the
-claim that one RGB kernel transfers unchanged to every representation.
+\paragraph{Representation dependence.}
+MemCam and WorldMem both benefit from structured bounded memory, but their
+interfaces differ. RGB, latent, surfel, and point-cloud systems need different
+affinities and item costs. The transferable claim is the need to separate the
+archive from the retrieved context and evaluate curation against the actual
+read interface. The concrete kernel is system-specific.
 
 \section{Limitations}
 
-Our strongest results use one open generator, one dataset, fifteen trajectories,
-and a fixed geometric retriever. FVD is distribution-level and the available
-sample does not support per-trajectory significance testing for it. The
-hindsight DINO reference is not a true useful-memory oracle and should not be
-used as a deployable score. Pool size and elapsed autoregressive time co-vary
-in the unbounded rollout. The common-source control establishes cleaner index
-selection; the matched cleaning replay tests the immediate causal effect only
-at pre-registered late sections, not every possible trajectory state.
-No-reference IQA can recognize visible degradation yet miss a plausible-looking
-but semantically wrong view. Finally, cross-system experiments on latent,
-surfel, and point-cloud memories are required before claiming that the concrete
-MemCam adapters transfer unchanged.
+The primary mechanism study uses one open generator, one dataset, fifteen
+trajectories, and MemCam's geometric retriever. The WorldMem result supports a
+second interface but does not provide the complete VBench and camera metric
+matrix. FVD is distribution-level and the current sample does not permit
+per-trajectory significance testing. Pool size and autoregressive age co-vary,
+so the pool-growth association is not a controlled causal effect of candidate
+count. The hindsight DINO reference is not a true useful-memory oracle.
+
+The common-source experiment proves that curation changes index quality under
+fixed pixels, but the multi-case ground-truth memory-cleaning replay did not
+complete; one valid context-swap case improved LPIPS by only 0.00177 and is
+underpowered. We therefore do not claim that the measured corruption fully
+causes downstream FVD. We also do not know the privileged $B=32$ oracle
+headroom: a future clean/future-view oracle could reveal whether \Geo is near
+the capacity ceiling or far from it. Finally, our complexity argument concerns
+archive storage and retrieval; fixed-budget update cost depends on policy
+implementation.
 
 \section{Conclusion}
 
-External memory does not become better merely by becoming larger. In a
-long-horizon camera-controlled generator, the complete archive increasingly
-exposes a fixed retriever to corrupted self-generated evidence, even while
-similarly aligned and cleaner historical candidates remain available. Simple
-bounded curation, especially Geometric Coverage, substantially
-improves 180-second video quality and consistently selects cleaner indices under
-a common-source control. \ours{} converts that diagnosis into a causal online
-policy: reject degraded incoming evidence, then retain the top-$B$ memories
-under a geometry-dominant rarity-aware score. The resulting archive remains
-constant, accelerates retrieval, and provides the strongest quality--efficiency
-trade-off. These findings shift memory management from an implementation detail
-to part of the generative model's error-control loop.
+More external memory is not automatically better. A long-horizon generator
+reads a small retrieved context, and an expanding archive can make that read
+problem harder while increasing storage and search cost. In MemCam, complete
+retention preserves every historical option but produces the largest measured
+selection gap. Structured 32-frame banks, especially geometric coverage,
+generate better 180-second video and select cleaner evidence even under a
+common-source control. WorldMem shows the same broad advantage for latent
+memory. Coverage, rarity, and reliability emerge as separate retention
+principles: geometry is the strongest tested online signal, rarity preserves
+different modes, and reliability remains difficult to infer causally. These
+findings place memory curation inside the generative error-control problem
+rather than treating it as an implementation detail.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
 
 \appendix
 
-\section{Full Diagnostic Numbers}
+\section{Detailed Retrieved-Memory Quality}
 
 \begin{table*}[h]
 \centering
 \caption{Retrieved-memory quality on each policy's own 180-second rollouts.
-Higher is better. ``Late'' is the final temporal portion used by the analysis.}
+Higher is better. ``Late'' denotes the final temporal portion used by the
+analysis.}
 \small
 \begin{tabular}{lrrrrrr}
 \toprule
@@ -858,65 +726,72 @@ Policy & Selected PSNR & Selected SSIM & Late PSNR & Late SSIM & Next PSNR & Nex
 \midrule
 Unbounded & 11.703 & 0.3089 & 11.433 & 0.3146 & 11.308 & 0.3082 \\
 FIFO-32 & 10.619 & 0.2617 & 10.135 & 0.2546 & 10.113 & 0.2543 \\
-RI-32 & 13.396 & 0.3830 & 12.896 & 0.3723 & 11.323 & 0.3203 \\
-Geometric Coverage-32 & 16.522 & 0.4759 & 15.119 & 0.4386 & 11.569 & 0.3253 \\
+\RI-32 & 13.396 & 0.3830 & 12.896 & 0.3723 & 11.323 & 0.3203 \\
+\Geo-32 & 16.522 & 0.4759 & 15.119 & 0.4386 & 11.569 & 0.3253 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
+Paired differences in selected quality relative to unbounded are
+$+1.693$ dB PSNR and $+0.0741$ SSIM for \RI, and $+4.819$ dB and
+$+0.1670$ for \Geo. FIFO changes are $-1.084$ dB and $-0.0472$. Late
+next-chunk PSNR improvements for \RI and \Geo have confidence intervals that
+cross zero, while their SSIM intervals are positive.
+
+\section{WorldMem Budget Sensitivity}
+
 \begin{table}[h]
 \centering
-\caption{Retention and selection gaps under the hindsight DINO diagnostic.
-Lower is better.}
+\caption{WorldMem 60-second LPIPS over the first fifteen matched videos.
+Lower is better. Unbounded LPIPS is 0.652.}
 \small
-\begin{tabular}{lrr}
+\begin{tabular}{lrrrr}
 \toprule
-Policy & Retention gap & Selection gap \\
+Policy & $B=16$ & $B=32$ & $B=64$ & $B=128$ \\
 \midrule
-Unbounded & $\approx0$ & 0.2267 \\
-FIFO-32 & 0.2039 & -- \\
-RI-32 & 0.0474 & 0.1582 \\
-Geometric Coverage-32 & 0.0639 & 0.1338 \\
+FIFO & 0.717 & 0.689 & 0.688 & 0.647 \\
+Latent-\RI & 0.566 & 0.546 & 0.549 & 0.567 \\
+Geometric Coverage & \textbf{0.525} & \textbf{0.534} & \textbf{0.545} & 0.577 \\
+K-center & 0.545 & 0.559 & 0.575 & \textbf{0.559} \\
+MCE & 0.576 & 0.575 & 0.596 & 0.604 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{Policy Probes and Negative Method Results}
+The non-monotonic curves reinforce the central observation: increasing budget
+does not consistently improve quality. Geometric Coverage is best at $B=16$
+and worsens as the budget expands, while FIFO benefits from additional recent
+history but remains weak.
 
-We record unsuccessful policy experiments to prevent selection on only positive
-results. A density-balanced coverage objective beat Geometric Coverage at 10 seconds but was
-worse at 20, 30, and 60 seconds. At 60 seconds, it obtained LPIPS 0.5941 and
-FVD 750.3 versus Geometric Coverage's 0.5850 and 690.5. RI with $k=3$ rarity neighborhoods
-improved FVD over $k=1$ at 10 seconds (706.7 vs. 713.0) and 20 seconds
-(684.6 vs. 721.5), but was worse at 60 seconds (705.9 vs. 660.1). A 50/50
-linear blend of normalized RI and Geometric Coverage scores did not beat both constituents.
-These failures rule out an equal blend as the final method. The final $0.75/0.25$
-rule is deliberately geometry-dominant, and its quality gate addresses the
-corruption failure separately rather than asking RI to compensate for it.
+\section{Negative Policy Results}
 
-\section{Ground-Truth Cleaning Replay}
+Density-balanced coverage obtains LPIPS/FVD 0.5941/750.3 at 60 seconds versus
+0.5850/690.5 for \Geo. A 50/50 \Geo--\RI blend does not beat both
+constituents. Rarity-only and the two 75/25 blends are reported in
+Table~\ref{tab:rarity}. Coverage hysteresis improves several early-prefix
+cells but fails badly at 60-second FVD. MCE, trajectory coverage, and direct
+facility-style objectives likewise fail to improve the complete metric suite.
+We report these outcomes to avoid selecting only favorable policies after the
+fact.
 
-Our causal intervention is deliberately local. For each pre-registered late
-section, we replay the exact unbounded history and selected frame identities in
-two branches. The control branch uses the generated selected images. The clean
-branch replaces only those images with dataset ground truth at the same
-indices. Both branches then generate one section from identical latent noise.
-This changes image integrity while holding view identity, history, model, and
-randomness fixed. Across the completed matched pairs, cleaning the retrieved
-memories changes target-indexed LPIPS by \finalReplayLPIPS{} and SSIM by
-\finalReplaySSIM{}. Together with the common-source index control, this closes
-the two sides of the mechanism: curation selects cleaner indices, and cleaner
-conditioning images improve the immediately generated section.
+\section{Preliminary Causal Replay}
 
-\section{Scaling of the Current Implementation}
+One valid context-identity replay holds model, prompt, trajectory, seed,
+unbounded bank, and preceding selected contexts fixed, then substitutes
+Geometric Coverage-selected contexts at one late section. The substitution
+changes LPIPS by $-0.00177$ and DINO distance by $-0.01691$. The direction is
+consistent with the proposed mechanism, but $n=1$ cannot support a causal
+claim. A stronger planned intervention replaces selected generated content
+with exact-index ground truth while preserving identities; incomplete cluster
+runs prevent us from reporting it.
 
-With $s$ generated frames added per chunk, an unbounded RGB archive uses
-$O(Ts)$ storage after $T$ chunks and exhaustive overlap retrieval incurs
-$O(T^2s)$ cumulative candidate comparisons. A fixed bank uses $O(B)$ storage
-and $O(TB)$ cumulative retrieval. Implementation-derived estimates, rather
-than direct long-duration measurements, project 2.30 GB of bank storage and
-12 minutes of retrieval at 60 seconds, 22.7 GB and 20.9 hours at 10 minutes,
-and 136 GB and 31.5 days at 60 minutes. These projections are hardware- and
-implementation-dependent and are not used to support the quality claims.
+\section{Implementation Scaling}
+
+The current decoded RGB archive occupies approximately 0.38 GB at 10 seconds
+and 2.30 GB at 60 seconds. Implementation-derived extrapolations reach 22.7 GB
+at 10 minutes and 136 GB at 60 minutes. Corresponding exhaustive retrieval
+estimates are 12 minutes, 20.9 hours, and 31.5 days. These long-duration values
+are extrapolations tied to the current implementation and hardware; they are
+used to illustrate scaling, not as direct runtime measurements.
 
 \end{document}

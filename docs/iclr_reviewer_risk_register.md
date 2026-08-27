@@ -1,6 +1,6 @@
 # ICLR Reviewer Risk Register
 
-Last updated: 2026-08-21
+Last updated: 2026-08-27
 
 ## Purpose
 
@@ -19,9 +19,12 @@ component must beat its simpler ablation or be removed.
 - Generic no-reference image-quality gating has failed and is closed.
 - Pose-calibrated conditioning consistency also failed its predeclared
   held-out test and is closed. It must not be injected into the policy.
-- The ungated `0.75 Geometric Coverage + 0.25 RI` blend is the strongest
-  current final-policy candidate, but it is not established as optimal or
-  transferable.
+- Geometric Coverage is the strongest completed multi-metric intervention.
+  The paper is now framed as a diagnostic study of coverage, rarity, and
+  reliability rather than a composite final-policy paper.
+- The `0.75 Geometric Coverage + 0.25 RI` and
+  `0.75 Geometric Coverage + 0.25 rarity` blends improve isolated metric cells
+  but lose meaningful VBench dimensions and do not replace Geometric Coverage.
 - Direct archive-induced softmax dilution is not a valid MemCam mechanism:
   archive growth changes the candidate search pool, while the retriever still
   supplies a fixed-size conditioning set to the generator.
@@ -59,14 +62,14 @@ from that diagnosis.
    downstream generation damage.
 2. A matched intervention showing that changing memory selection or memory
    content changes the next generated section.
-3. A final bounded policy that consistently beats Geometric Coverage, or an
-   honest decision to make Geometric Coverage the strongest method studied.
+3. An honest decision to make Geometric Coverage the strongest method studied
+   unless a predeclared future intervention clearly dominates it.
 4. Quality, camera consistency, efficiency, and memory scaling results under
    one locked protocol.
 
-**Kill criterion:** if no proposed addition beats Geometric Coverage, do not
-manufacture a complicated final method. Reframe the work around the diagnostic
-finding and the strongest reproducible curation result, then reassess venue.
+**Decision:** no proposed addition beat Geometric Coverage across the complete
+metric suite. The manuscript has been reframed around the diagnostic finding
+and controlled retention principles. Do not restore a composite final method.
 
 ## R2: Softmax dilution and attention entropy
 
@@ -198,12 +201,12 @@ remove unsupported claims and expose decisive tests, not to promise an outcome.
 ## Ordered decision queue
 
 1. Complete and evaluate the matched GT-content cleaning replay.
-2. Treat both tested admission gates as closed failures; do not invent another
-   gate without a materially different observable signal.
-3. Complete the 75/25 blend evaluation beyond LPIPS/FVD and compare it directly with pure
-   Geometric Coverage and pure RI.
-4. Run a coefficient sensitivity sweep only if the blend remains competitive.
-5. Audit WorldMem's memory-to-attention path before designing an attention
-   entropy experiment.
-6. Scope the final claim to the systems on which the locked method actually
-   works.
+2. Implement privileged Oracle-clean, Oracle-future, and Oracle-both B32
+   rollouts to measure headroom over Geometric Coverage.
+3. Finish the locked WorldMem metric matrix without adding policies.
+4. Treat both tested admission gates and hard hysteresis as closed failures;
+   do not invent another gate without a materially different observable signal.
+5. Add a genuine SLAM keyframe-culling baseline if it can be matched without
+   changing the generator or retriever.
+6. Keep concrete transfer claims scoped to the systems and metrics actually
+   validated.
