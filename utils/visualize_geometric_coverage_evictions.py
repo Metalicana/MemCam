@@ -10,6 +10,7 @@ import argparse
 import csv
 import importlib.util
 import math
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -18,6 +19,9 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMMON_PATH = REPO_ROOT / "utils" / "visualize_coverage_hysteresis.py"
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 COLORS = {
     "retained_old": "#2878b5",
