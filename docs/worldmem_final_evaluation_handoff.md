@@ -1,10 +1,11 @@
 # WorldMem Final Evaluation Handoff
 
-Updated: 2026-08-26
+Updated: 2026-08-27
 
-This is the instruction set for the WorldMem Codex session. Broad policy
-development is over for the current paper cycle. One controlled ablation is
-still pending: isolate DINO-cluster rarity from RI's RGB irreplaceability term.
+This is the instruction set for the WorldMem Codex session. Policy development
+is over for the current paper cycle. The final MemCam rarity ablation is now
+complete; WorldMem should finish the locked metric matrix without adding more
+generation policies.
 
 ## Decision from MemCam
 
@@ -21,17 +22,16 @@ The final interpretation is:
 - MCE is the formal set-coverage baseline and a useful negative result.
 - Unbounded is the original-system reference.
 
-Do not invent another policy. The only additional policies permitted are the
-two rarity ablations defined below.
+Do not invent or port another policy before the final metrics are complete.
 
-## Final controlled rarity ablation
+## Completed rarity ablation
 
 The completed `slam_ri_blend` combined Geometric Coverage with the full
 RI product, `rarity * irreplaceability`. It therefore never answered whether
 rarity itself helps or whether the RGB irreplaceability multiplier caused the
 VBench degradation.
 
-Implement exactly these two policies, reusing the existing clustering and
+MemCam tested exactly these two policies using the existing clustering and
 Geometric Coverage implementations:
 
 1. `rarity_only`
@@ -53,17 +53,40 @@ Geometric Coverage implementations:
    exact rarity-only score above. Do not include RGB irreplaceability,
    hysteresis, a quality gate, or a new retrieval rule.
 
-Recommended run names:
+MemCam run names:
 
 ```text
-worldmem_rarity_only_b32_60s_n15
-worldmem_slam_rarity_b32_s75_r25_k3_60s_n15
+rarity_b32_k3
+slamrarity_b32_s75_r25_k3
 ```
 
-Run these as a matched B32 ablation. They enter the final cross-system roster
-only if they improve the complete metric suite; LPIPS/FVD alone is insufficient
-because the earlier 75/25 Geo+RI blend looked competitive there but lost four
-meaningful VBench dimensions.
+Matched MemCam results:
+
+| Policy | 10s LPIPS/FVD | 20s LPIPS/FVD | 30s LPIPS/FVD | 60s LPIPS/FVD |
+| --- | --- | --- | --- | --- |
+| Geometric Coverage | .496427 / 719.279 | .542038 / 663.776 | .556215 / 656.271 | .584950 / 690.532 |
+| Rarity Only | .487774 / 682.187 | .542236 / 651.255 | .563453 / 664.062 | .598634 / 732.294 |
+| 75% Geo + 25% Rarity | .492719 / 713.056 | .543034 / 646.257 | .557632 / 656.149 | .587213 / 676.395 |
+
+| VBench dimension | Geometric Coverage | Rarity Only | 75% Geo + 25% Rarity |
+| --- | ---: | ---: | ---: |
+| Subject consistency | .818691 | .800773 | .810406 |
+| Background consistency | .907117 | .899559 | .900564 |
+| Motion smoothness | .991426 | .992471 | .992187 |
+| Dynamic degree | 1.000000 | 1.000000 | 1.000000 |
+| Aesthetic quality | .479245 | .449500 | .455404 |
+| Imaging quality | .529411 | .497612 | .502729 |
+
+The blend improves FVD, including `690.532 -> 676.395` at 60 seconds, but
+loses LPIPS at 20, 30, and 60 seconds and loses subject consistency,
+background consistency, aesthetic quality, and imaging quality. Rarity-only
+degrades more strongly at the long horizon. Therefore neither policy passes
+the multi-metric promotion criterion: both already fail available LPIPS and
+standard VBench checks. Do not port either to WorldMem for this paper cycle.
+This also shows that RI's RGB irreplaceability multiplier was not the sole
+cause of the earlier blend's perceptual-quality loss. VBench-Long remains
+unavailable because its environment lacks `moviepy.editor`, and current CUT3R
+camera scores remain invalid under the unresolved evaluator sanity check.
 
 ## MemCam policy outcomes that constrain WorldMem
 
@@ -90,6 +113,9 @@ separate LPIPS/FVD sensitivity experiment.
   cells, but lost subject consistency, background consistency, aesthetic
   quality, and imaging quality to pure Geometric Coverage.
 - 50/50 blend: already failed to dominate either constituent.
+- Rarity Only: failed the completed MemCam long-horizon and VBench comparison.
+- 75/25 Geometric Coverage-Rarity blend: improved FVD but lost LPIPS at three
+  later prefixes and lost four meaningful VBench dimensions.
 - Generic IQA gate: rejected by held-out calibration.
 - Pose-calibrated causal-consistency gate: rejected by held-out calibration.
 - `reliable_slam_ri` or `causal_consistency_coverage_ri`: superseded and not
@@ -334,6 +360,8 @@ Also save:
 
 ## Stop conditions
 
+- Do not port Rarity Only or the 75/25 Geometric Coverage-Rarity blend; both
+  failed the MemCam multi-metric promotion gate.
 - Do not generate Coverage-Hysteresis, another blend, or another gate.
 - Do not expand to another budget merely to rescue one metric.
 - Do not compare unmatched video counts.

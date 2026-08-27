@@ -314,6 +314,28 @@ wins motion smoothness by only `0.000632`. It should remain an ablation showing
 the tradeoff between RI and Geometric Coverage, not replace Geometric Coverage
 as the primary method.
 
+### 4.12a Rarity-only isolation
+
+The final controlled ablation removed RI's RGB irreplaceability multiplier and
+tested (1) DINO-cluster rarity alone and (2) 75% Geometric Coverage plus 25%
+rarity. This asked whether irreplaceability caused the earlier blend's VBench
+loss.
+
+| Policy | 10s LPIPS/FVD | 20s LPIPS/FVD | 30s LPIPS/FVD | 60s LPIPS/FVD |
+| --- | --- | --- | --- | --- |
+| Geometric Coverage | .496427 / 719.279 | .542038 / 663.776 | .556215 / 656.271 | .584950 / 690.532 |
+| Rarity Only | .487774 / 682.187 | .542236 / 651.255 | .563453 / 664.062 | .598634 / 732.294 |
+| 75% Geo + 25% Rarity | .492719 / 713.056 | .543034 / 646.257 | .557632 / 656.149 | .587213 / 676.395 |
+
+The Geo-Rarity blend improves 60-second FVD by `14.137`, but loses LPIPS at
+20, 30, and 60 seconds. It also loses subject consistency (`-.008285`),
+background consistency (`-.006553`), aesthetic quality (`-.023841`), and
+imaging quality (`-.026682`) to pure Geometric Coverage. Rarity-only is worse
+at 60 seconds and on the same four VBench dimensions. Therefore
+irreplaceability was not the sole problem: adding cluster rarity itself trades
+perceptual quality for distributional FVD improvement. Neither policy replaces
+Geometric Coverage.
+
 ### 4.13 Generic no-reference quality gate
 
 The project tested MUSIQ, CLIP-IQA+, TOPIQ-NR, PAQ2PIQ, unclipped fraction,
