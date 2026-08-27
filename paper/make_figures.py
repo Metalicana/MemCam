@@ -153,7 +153,7 @@ def plot_overview():
         0.20,
         0.27,
         "Retrieved context",
-        "More exposure to\ncorrupted memories",
+        "Selected indices have\nlower GT fidelity",
         COLORS["corruption"],
     )
     add_box(
@@ -162,7 +162,7 @@ def plot_overview():
         0.20,
         0.27,
         "Retrieved context",
-        "Cleaner indices under\nRI and GeoCov",
+        "Cleaner indices in the\ncommon-source control",
         COLORS["ri"],
     )
 
@@ -241,6 +241,11 @@ def plot_pool_growth():
     ax.set_title("The selector leaves more quality on the table", loc="left")
     ax.grid(axis="y", color="#DADCE0", linewidth=0.7)
     ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(
+        "Observed along one rollout: candidate count and autoregressive age co-vary",
+        fontsize=10,
+        weight="bold",
+    )
     save(fig, "pool_growth")
 
 

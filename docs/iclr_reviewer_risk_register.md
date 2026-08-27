@@ -39,12 +39,34 @@ component must beat its simpler ablation or be removed.
 | Bounded curation can outperform unbounded MemCam | Supported on the current benchmark | Completed LPIPS/FVD comparisons show RI and Geometric Coverage can beat unbounded. |
 | Unbounded selects increasingly corrupted historical images | Supported observationally | Pool-growth split and common-source selection analysis. |
 | Candidate-pool growth alone causes the degradation | Not established | Pool size and elapsed autoregressive time co-vary. |
+| Fixed candidate cardinality reduction is sufficient | Not established | FIFO is a recency policy, not a neutral random/reservoir control. |
 | Corrupted selected memories cause the next chunk to degrade | Pending causal test | Requires complete matched GT-content cleaning replays. |
 | Archive growth directly dilutes MemCam denoiser attention | Rejected as stated | The archive is reduced to a fixed-size retrieved context before denoising. |
 | Generic IQA can gate corrupted memories | Rejected | Held-out calibration was not deployable. |
 | Pose-calibrated conditioning consistency can gate corrupted memories | Rejected | Held-out AUC was 0.511, precision 0.207, recall 0.119, and pose calibration made raw similarity worse. |
 | A fixed 75/25 Geometric Coverage-RI blend is optimal or transferable | Not established | The completed 15-video run was competitive with Geometric Coverage but did not dominate it on every metric and duration. |
 | The method is representation agnostic | Not established | Equivalent, successful tests on another memory representation are required. |
+
+## R0: Decisive acceptance blockers
+
+The current strongest external review identified four concrete blockers. They
+must remain visible rather than being softened through prose:
+
+1. **Candidate-count identification:** replay one frozen unbounded history with
+   nested candidate pools while holding pixels, queries, poses, generator
+   state, and retriever fixed.
+2. **Neutral capacity control:** add uniform reservoir/random-B. FIFO alone
+   cannot establish that structured curation, rather than generic pool
+   reduction, is responsible.
+3. **Headline uncertainty:** report paired trajectory intervals and win counts
+   for LPIPS, video-bootstrap sensitivity for FVD, and uncertainty for VBench.
+4. **Development separation:** policy constants were inspected on the current
+   benchmark suite. Either run an untouched test split or label the study as
+   exploratory and avoid generalization claims.
+
+Until these are complete, the paper may claim that complete retention is not a
+safe empirical upper bound and that curation changes selected-index fidelity.
+It may not claim that pool cardinality alone causally produces the degradation.
 
 ## R1: Venue and contribution risk
 

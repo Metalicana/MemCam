@@ -13,7 +13,9 @@ is explicitly described as an adaptation of SLAM-style keyframe redundancy.
 ## Paper spine
 
 1. The archive grows, but the generator reads a fixed-size context.
-2. Candidate competition can make complete retention statistically harmful.
+2. Candidate competition is a formal mechanism hypothesis for why complete
+   retention can be harmful; current rollout evidence does not isolate pool
+   cardinality from autoregressive age.
 3. Retention quality and retrievability are different objectives.
 4. Unbounded MemCam increasingly selects corrupted generated content even as
    selected camera views become slightly better aligned.
@@ -64,11 +66,19 @@ Matched WorldMem, first 15 videos, 60 seconds, B32:
 
 ## Remaining high-value experiments
 
-1. Complete the multi-case ground-truth content-cleaning replay.
-2. Run privileged `Oracle-clean`, `Oracle-future`, and `Oracle-both` policies
+1. Run a fixed-history nested candidate-pool intervention at
+   `B=16,32,64,128,256,512,...,all`, holding pixels, query, poses, and
+   retriever fixed. This is the decisive test of candidate competition.
+2. Add uniform reservoir/random-B as the neutral capacity control.
+3. Report paired trajectory bootstrap intervals and win counts for LPIPS,
+   video-level bootstrap sensitivity for FVD, and uncertainty for VBench.
+4. Freeze policy constants on a development split and evaluate on untouched
+   trajectories, or clearly preserve the current exploratory-study label.
+5. Complete the multi-case ground-truth content-cleaning replay.
+6. Run privileged `Oracle-clean`, `Oracle-future`, and `Oracle-both` policies
    at B32 to measure headroom over Geometric Coverage.
-3. Finish the locked WorldMem metric matrix, especially standard VBench.
-4. Add a true SLAM keyframe-culling implementation if a reviewer-facing
+7. Finish the locked WorldMem metric matrix, especially standard VBench.
+8. Add a true SLAM keyframe-culling implementation if a reviewer-facing
    baseline can be matched without changing the retriever.
 
 These are future additions, not manuscript placeholders. The current paper
