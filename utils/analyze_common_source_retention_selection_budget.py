@@ -101,6 +101,31 @@ def audit_inputs(items, root, runs, feature_cache_dir, content_run):
     return missing
 
 
+def split_complete_items(items, root, runs, feature_cache_dir, content_run):
+    complete = []
+    excluded = []
+    for item in items:
+        missing = audit_inputs(
+            [item],
+            root=root,
+            runs=runs,
+            feature_cache_dir=feature_cache_dir,
+            content_run=content_run,
+        )
+        if missing:
+            excluded.append(
+                {
+                    "row": int(item["_row"]),
+                    "scene": item["scene"],
+                    "missing_count": len(missing),
+                    "missing_paths": " | ".join(str(path) for path in missing),
+                }
+            )
+        else:
+            complete.append(item)
+    return complete, excluded
+
+
 def sampled_shared_queries(selected_by_run, reference_run, target_stride):
     shared = None
     for selected in selected_by_run.values():
@@ -496,7 +521,17 @@ def format_summary_table(rows):
     return lines
 
 
-def write_report(path, overall, late, steps, content_run, target_stride, late_section):
+def write_report(
+    path,
+    overall,
+    late,
+    steps,
+    content_run,
+    target_stride,
+    late_section,
+    matched_rows,
+    excluded_rows,
+):
     lines = [
         "# Common-Source Retention--Selection Budget Sweep",
         "",
@@ -505,6 +540,9 @@ def write_report(path, overall, late, steps, content_run, target_stride, late_se
         f"Every policy supplies its real reconstructed bank and selected indices. Candidate image features for every policy come from the same `{content_run}` rollout. Target features come from exact-index dataset ground truth. One of every `{target_stride}` context slots is sampled.",
         "",
         "This isolates candidate-set retention and selection from policy-specific generated histories. The DINO hindsight-best candidate is a diagnostic proxy, not a deployable oracle.",
+        "",
+        f"Matched manifest rows used by every plotted policy: `{','.join(str(row) for row in matched_rows)}` (`n={len(matched_rows)}`).",
+        f"Rows excluded because at least one requested trace/cache was missing: `{','.join(str(row['row']) for row in excluded_rows) if excluded_rows else 'none'}`.",
         "",
         "## Whole Rollout",
         "",
@@ -557,6 +595,14 @@ def main():
     parser.add_argument("--late_section", type=int, default=35)
     parser.add_argument("--feature_cache_dir", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
+    parser.add_argument(
+        "--allow_incomplete_rows",
+        action="store_true",
+        help=(
+            "Use the intersection of trajectories with every requested trace/cache. "
+            "The report records all excluded rows."
+        ),
+    )
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
 
@@ -573,19 +619,35 @@ def main():
     if not items:
         raise RuntimeError("No manifest rows selected")
 
-    missing = audit_inputs(
+    complete_items, excluded_rows = split_complete_items(
         items,
         root=args.root,
         runs=runs,
         feature_cache_dir=args.feature_cache_dir,
         content_run=args.content_run,
     )
-    if missing:
-        preview = "\n".join(str(path) for path in missing[:30])
+    if excluded_rows and not args.allow_incomplete_rows:
+        missing = [
+            path
+            for row in excluded_rows
+            for path in row["missing_paths"].split(" | ")
+        ]
+        preview = "\n".join(missing[:30])
         raise FileNotFoundError(
             f"Missing {len(missing)} traces or cached feature files. "
             f"The CPU sweep does not silently re-encode DINO:\n{preview}"
         )
+    if excluded_rows:
+        print("Using the common complete trajectory subset:")
+        for row in excluded_rows:
+            print(
+                f"  excluded row {row['row']} {row['scene']}: "
+                f"{row['missing_count']} missing input(s)"
+            )
+        items = complete_items
+    if not items:
+        raise RuntimeError("No trajectory has every requested trace and feature cache")
+    print(f"Matched rows used for every policy: {[int(item['_row']) for item in items]}")
 
     query_rows = []
     for position, item in enumerate(items, start=1):
@@ -656,6 +718,8 @@ def main():
         content_run=args.content_run,
         target_stride=args.target_stride,
         late_section=args.late_section,
+        matched_rows=[int(item["_row"]) for item in items],
+        excluded_rows=excluded_rows,
     )
     print(f"Wrote: {args.output_dir / 'report.md'}")
     print(f"Wrote: {figures / 'retention_selection_budget_all.png'}")

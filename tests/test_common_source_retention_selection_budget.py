@@ -40,6 +40,47 @@ class CommonSourceRetentionSelectionBudgetTest(unittest.TestCase):
             ("GeoCov", 128),
         )
 
+    def test_split_complete_items_preserves_common_subset(self):
+        from tempfile import TemporaryDirectory
+
+        items = [
+            {
+                "_row": 0,
+                "scene": "A",
+                "output_prefix": "a_",
+            },
+            {
+                "_row": 1,
+                "scene": "B",
+                "output_prefix": "b_",
+            },
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            cache = Path(tmp) / "cache"
+            for directory in (
+                root / "baseline" / "access_traces",
+                root / "ri_b16_dino_rgb" / "access_traces",
+                cache / "gt",
+                cache / "baseline",
+            ):
+                directory.mkdir(parents=True)
+            for stem in ("a_", "b_"):
+                (root / "baseline" / "access_traces" / f"{stem}custom.jsonl").touch()
+                (cache / "gt" / f"{stem}dino.npy").touch()
+                (cache / "baseline" / f"{stem}dino.npy").touch()
+            (root / "ri_b16_dino_rgb" / "access_traces" / "a_custom.jsonl").touch()
+
+            complete, excluded = MODULE.split_complete_items(
+                items,
+                root=root,
+                runs=["baseline", "ri_b16_dino_rgb"],
+                feature_cache_dir=cache,
+                content_run="baseline",
+            )
+            self.assertEqual([item["_row"] for item in complete], [0])
+            self.assertEqual([row["row"] for row in excluded], [1])
+
     def test_common_source_rows_separate_retention_and_selection(self):
         item = {
             "_row": 0,

@@ -62,6 +62,7 @@ python -u utils/analyze_common_source_retention_selection_budget.py \
   --late_section "$LATE_SECTION" \
   --feature_cache_dir "$FEATURE_CACHE_DIR" \
   --output_dir "$OUT" \
+  --allow_incomplete_rows \
   --strict
 
 echo "Finished: $(date)"
