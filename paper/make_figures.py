@@ -389,6 +389,134 @@ def plot_model_architecture():
     save(fig, "model_architecture")
 
 
+def plot_online_generation_loop():
+    fig, ax = plt.subplots(figsize=(12.0, 3.25))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    boxes = [
+        (0.02, "Persistent bank", "$M_{t-1}$\nHistorical evidence", COLORS["geo"]),
+        (0.19, "Fixed retriever", "Select small context\n$C_t=R(P_t;M_{t-1})$", "#333333"),
+        (0.36, "Retrieved context", "Generator-facing\nread budget is fixed", COLORS["ri"]),
+        (0.53, "Video generator", "Generate chunk\n$\\hat{Y}_t=G(P_t,C_t)$", COLORS["corruption"]),
+        (0.70, "New memories", "Generated frames or latents\nplus camera metadata", COLORS["unbounded"]),
+        (0.86, "Online controller", "Insert and evict\n$M_t=U(M_{t-1},N_t;B)$", COLORS["geo"]),
+    ]
+    width = 0.12
+    height = 0.34
+    y = 0.38
+    for x, title, detail, color in boxes:
+        add_box(ax, (x, y), width, height, title, detail, color)
+    for index in range(len(boxes) - 1):
+        arrow(
+            ax,
+            (boxes[index][0] + width, y + height / 2),
+            (boxes[index + 1][0], y + height / 2),
+        )
+
+    ax.add_patch(
+        FancyArrowPatch(
+            (0.92, y),
+            (0.08, y),
+            connectionstyle="arc3,rad=-0.34",
+            arrowstyle="-|>",
+            mutation_scale=14,
+            linewidth=1.8,
+            color=COLORS["geo"],
+        )
+    )
+    ax.text(
+        0.505,
+        0.105,
+        r"The curated bank $M_t$ directly becomes the candidate archive for chunk $t+1$",
+        ha="center",
+        va="center",
+        fontsize=9,
+        weight="bold",
+        color=COLORS["geo"],
+    )
+    ax.text(
+        0.5,
+        0.91,
+        "Memory curation runs inside every step of long-video generation",
+        ha="center",
+        va="center",
+        fontsize=13,
+        weight="bold",
+    )
+    ax.text(
+        0.5,
+        0.81,
+        "Our intervention changes U online; the generator G and retriever R remain unchanged",
+        ha="center",
+        va="center",
+        fontsize=9,
+        color="#444444",
+    )
+    save(fig, "online_generation_loop")
+
+
+def plot_retention_selection_tradeoff():
+    points = {
+        "Unbounded": (0.0, 0.2267, COLORS["unbounded"]),
+        "RI-32": (0.0474, 0.1582, COLORS["ri"]),
+        "GeoCov-32": (0.0639, 0.1338, COLORS["geo"]),
+    }
+
+    fig, ax = plt.subplots(figsize=(7.3, 4.6), constrained_layout=True)
+    for label, (retention, selection, color) in points.items():
+        ax.scatter(
+            retention,
+            selection,
+            s=150,
+            color=color,
+            edgecolor="white",
+            linewidth=1.5,
+            zorder=3,
+        )
+        offsets = {
+            "Unbounded": (7, -2),
+            "RI-32": (8, 8),
+            "GeoCov-32": (8, -14),
+        }
+        ax.annotate(
+            label,
+            (retention, selection),
+            xytext=offsets[label],
+            textcoords="offset points",
+            fontsize=10,
+            weight="bold",
+            color=color,
+        )
+
+    ax.annotate(
+        "Ideal: preserve useful evidence\nand make it easy to retrieve",
+        xy=(0.005, 0.126),
+        xytext=(0.018, 0.185),
+        arrowprops={"arrowstyle": "->", "color": "#777777", "linewidth": 1.2},
+        fontsize=9,
+        color="#444444",
+    )
+    ax.set_xlim(-0.006, 0.082)
+    ax.set_ylim(0.12, 0.24)
+    ax.set_xlabel("Deleted a useful option?  Retention gap (lower is better)")
+    ax.set_ylabel("Picked poorly from what remained?  Selection gap (lower is better)")
+    ax.set_title("Retention and retrieval are different memory objectives", loc="left")
+    ax.grid(color="#DADCE0", linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.text(
+        0.002,
+        0.235,
+        "Unbounded keeps every frame, yet gives the retriever the least usable candidate set",
+        fontsize=8.5,
+        color="#555555",
+        va="top",
+    )
+    save(fig, "retention_selection_tradeoff")
+
+
 def main():
     configure()
     plot_overview()
@@ -397,6 +525,8 @@ def main():
     plot_mechanism()
     plot_problem_scaling()
     plot_model_architecture()
+    plot_online_generation_loop()
+    plot_retention_selection_tradeoff()
 
 
 if __name__ == "__main__":
