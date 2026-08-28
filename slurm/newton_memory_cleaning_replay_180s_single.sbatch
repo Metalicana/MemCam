@@ -56,20 +56,10 @@ echo "Evaluation: $OUT"
 echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Started: $(date)"
 
-cuda_ready=0
-for attempt in 1 2 3; do
-  echo "CUDA preflight attempt $attempt/3"
-  if timeout 90s python -c \
-    'import torch; assert torch.cuda.is_available(); print("CUDA:", torch.cuda.get_device_name(0))'; then
-    cuda_ready=1
-    break
-  fi
-  sleep 15
-done
-if [ "$cuda_ready" -ne 1 ]; then
-  echo "CUDA failed all preflight attempts on ${SLURMD_NODENAME:-unknown}" >&2
-  exit 124
-fi
+echo "=== NVIDIA device ==="
+nvidia-smi
+python -c \
+  'import torch; assert torch.cuda.is_available(); print("PyTorch CUDA:", torch.cuda.get_device_name(0))'
 
 for ((case_index=0; case_index<CASE_COUNT; case_index++)); do
   if [ "$case_index" -eq 0 ]; then

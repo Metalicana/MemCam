@@ -45,6 +45,15 @@ echo "Runs: $RUNS"
 echo "Dimensions: $DIMENSIONS"
 echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Started: $(date)"
+echo "=== NVIDIA device ==="
+nvidia-smi
+
+if ! python -c 'from moviepy.editor import VideoFileClip'; then
+  echo "VBench-Long requires MoviePy 1.x's moviepy.editor API." >&2
+  echo "Run this once in the vbench environment, then resubmit:" >&2
+  echo "  python -m pip install 'moviepy==1.0.3'" >&2
+  exit 2
+fi
 
 for run in $RUNS; do
   out_dir="$OUTPUT_ROOT/$run"

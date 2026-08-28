@@ -463,25 +463,28 @@ comparison is fixed at $B=32$.
 \begin{table}[t]
 \centering
 \caption{Geometric Coverage across the complete tested budget sweep. MemCam
-uses 180-second videos; WorldMem uses 60-second videos. Lower is better.}
+uses 180-second videos; WorldMem uses 60-second videos. Lower is better. The
+unbounded comparisons remain in Tables~\ref{tab:main-quality}
+and~\ref{tab:worldmem}; this table isolates budget sensitivity.}
 \label{tab:geo-budget}
 \small
-\begin{tabular}{llrrrrr}
+\begin{tabular}{llrrrr}
 \toprule
-System & Metric & Unbounded & $B=16$ & $B=32$ & $B=64$ & $B=128$ \\
+System & Metric & $B=16$ & $B=32$ & $B=64$ & $B=128$ \\
 \midrule
-MemCam & LPIPS & 0.5980 & 0.5876 & 0.5876 & \textbf{0.5865} & 0.5913 \\
-MemCam & FVD & 734.2 & \textbf{446.1} & 476.6 & 493.9 & 515.5 \\
-WorldMem & LPIPS & 0.652 & \textbf{0.525} & 0.534 & 0.545 & 0.577 \\
+MemCam & LPIPS & 0.5876 & 0.5876 & \textbf{0.5865} & 0.5913 \\
+MemCam & FVD & \textbf{446.1} & 476.6 & 493.9 & 515.5 \\
+WorldMem & LPIPS & \textbf{0.525} & 0.534 & 0.545 & 0.577 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Table~\ref{tab:geo-budget} reports all completed Geometric Coverage budgets,
-not only the $B=32$ slice used for cross-policy comparison. Every tested
-budget improves over complete retention on the reported metric in both
-systems. Quality is not monotone in capacity: the best FVD occurs at $B=16$
-in MemCam, while the best MemCam LPIPS occurs at $B=64$. This behavior does
+not only the $B=32$ slice used for cross-policy comparison. Quality is not
+monotone in capacity: the best FVD occurs at $B=16$ in MemCam, while the best
+MemCam LPIPS occurs at $B=64$. The MemCam LPIPS range is only 0.0048 across an
+eight-fold budget change, and every listed value is numerically below the
+unbounded point estimate in Table~\ref{tab:main-quality}. This behavior does
 not imply that the policy ceases to work as capacity changes; it shows that
 capacity is itself a resource--quality parameter and that retaining additional
 candidates need not improve a fixed-read generator. We do not claim a
