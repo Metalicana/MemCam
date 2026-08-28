@@ -44,6 +44,15 @@ are checked.
    crosses zero.
 6. FIFO-32 is worse than unbounded on LPIPS, so an arbitrary small recent bank
    is not enough. Structured candidate-set composition matters.
+7. The fixed-history cardinality intervention is now complete. Expanding the
+   same recent B32 core to full history changes the selected identity 72.2% of
+   the time, but fidelity is slightly higher rather than lower (+0.228 dB
+   PSNR, +0.0011 SSIM). Candidate count alone does not explain corruption.
+8. The common-source budget sweep is complete on fourteen matched
+   trajectories. Every RI and GeoCov budget increase reduces retention gap but
+   increases selection gap. GeoCov total diagnostic gap worsens from 0.1750
+   at B16 to 0.2100 at B128, while unbounded is 0.2199. More capacity preserves
+   options but makes the unchanged retriever less effective at using them.
 
 ## New work completed since the review
 
@@ -51,10 +60,11 @@ are checked.
 - The complexity statement now applies specifically to MemCam's implemented
   exhaustive FOV scan. The paper explicitly acknowledges ANN prefiltering and
   no longer presents exhaustive search as a universal lower bound.
-- A fixed-history nested-pool intervention is implemented and tested. It
+- A fixed-history nested-pool intervention is completed. It
   freezes the generated video, target query, poses, candidate pixels, and one
   full vector of real FOV-overlap scores. It changes only which candidates are
-  admitted: B32, B64, B128, B256, B512, B1024, and full history.
+  admitted: B32, B64, B128, B256, B512, B1024, and full history. Retrieval
+  identity becomes unstable, but selected-frame fidelity does not decline.
 - The multi-case ground-truth memory-cleaning replay has a single sequential,
   resume-safe H100 job. The harmful 90-second CUDA timeout was removed.
 - The VBench-Long job now prints `nvidia-smi` and diagnoses the exact MoviePy
@@ -64,36 +74,33 @@ are checked.
 
 ### Acceptance-critical
 
-1. **Fixed-history candidate-pool intervention.** CPU-only; no generation.
-   This identifies whether admitting candidates can lower selected-frame
-   fidelity while autoregressive age and score noise are fixed.
-2. **Multi-case GT-memory cleaning replay.** H100 generation. Keep selected
+1. **Multi-case GT-memory cleaning replay.** H100 generation. Keep selected
    identities and all preceding history fixed; replace only selected memory
    pixels with exact-index GT at the intervention section. This is the causal
    test of corruption propagation.
-3. **Uniform reservoir-32 rollout.** H100 generation. This is the neutral
+2. **Uniform reservoir-32 rollout.** H100 generation. This is the neutral
    capacity control missing from FIFO. It tests whether random cardinality
    reduction is sufficient or geometric composition is necessary.
-4. **Headline uncertainty.** Reuse completed outputs. Report paired
+3. **Headline uncertainty.** Reuse completed outputs. Report paired
    trajectory bootstrap intervals and win counts for LPIPS, video-resampling
    sensitivity for FVD, and video-bootstrap intervals for VBench.
-5. **VBench-Long.** Fix the MoviePy environment, smoke-test one completed run,
+4. **VBench-Long.** Fix the MoviePy environment, smoke-test one completed run,
    then score the locked matched policies. No videos need regeneration.
-6. **Budget-protocol audit.** Compare video IDs and metric configuration for
+5. **Budget-protocol audit.** Compare video IDs and metric configuration for
    the two unbounded exports, then reevaluate baseline and the four GeoCov
    budgets together only if they differ. No videos need regeneration.
 
 ### Important reviewer insurance
 
-7. **Indexed retrieval control.** Use a pose ANN index only as a prefilter,
+6. **Indexed retrieval control.** Use a pose ANN index only as a prefilter,
    then run the unchanged FOV scorer on top-K. Report latency, recall of the
    exhaustive winner, and selected-memory fidelity. This concedes that ANN can
    address lookup cost while testing whether archive quality remains a
    separate problem.
-8. **Untouched test trajectories.** Either generate a genuinely unused set
+7. **Untouched test trajectories.** Either generate a genuinely unused set
    after freezing the policy or keep the paper explicitly exploratory. The
    current fifteen MemCam trajectories were used during development.
-9. **WorldMem final metric matrix.** Complete matched VBench and VBench-Long.
+8. **WorldMem final metric matrix.** Complete matched VBench and VBench-Long.
    Report CUT3R only if its GT sanity test is repaired.
 
 ### Not required for the core claim
@@ -112,11 +119,15 @@ are checked.
    view mismatch.
 3. The common-source control with the +4.629 dB / +0.1512 result and 15/15
    trajectory wins.
-4. The fixed-history experiment diagram: one frozen score vector, nested
-   candidate admission, exact-index GT fidelity of each winner.
-5. The causal cleaning replay diagram: same identity and history, generated
+4. The fixed-history result: winner identity changes from 0% to 72.2%, while
+   PSNR/SSIM remain flat. State the negative conclusion clearly: cardinality
+   alone is not the poisoning mechanism.
+5. The all-budget retention-selection figure. Follow each family from B16 to
+   larger budgets: every step moves left and upward. State that capacity buys
+   retention at the cost of retrievability.
+6. The causal cleaning replay diagram: same identity and history, generated
    memory pixels versus GT memory pixels, compare the next chunk.
-6. A reviewer-response table separating completed rebuttals from jobs now in
+7. A reviewer-response table separating completed rebuttals from jobs now in
    the queue. Do not describe missing experiments as completed results.
 
 ## Defensible current claim
@@ -125,5 +136,6 @@ Complete retention is not a safe empirical upper bound for a fixed-read
 generative memory. Structured bounded memories outperform it across all tested
 GeoCov budgets in two memory systems, and candidate-set composition changes
 the fidelity of evidence chosen by an unchanged retriever. The fixed-history
-and GT-cleaning interventions determine whether this can be strengthened into
-a causal candidate-competition and corruption-propagation claim.
+intervention does not support a cardinality-only explanation. The remaining GT-cleaning
+replay determines whether selected-memory corruption causally propagates into
+the next generated chunk.

@@ -50,16 +50,17 @@ slightly better aligned, but their generated content becomes substantially
 more corrupted. A common-source control holds all historical pixels fixed and
 changes only selected indices; geometric coverage chooses memories that are
 4.63 dB cleaner in PSNR and 0.151 higher in SSIM than unbounded selection,
-winning on all fifteen trajectories. These findings are consistent with
-\emph{candidate competition}: extra candidates create more opportunities for
-an imperfect retriever to select high-scoring but low-fidelity evidence. We
-formalize this hypothesis while explicitly separating it from the untested
-claim that candidate count alone causes the observed duration trend. A matched
-WorldMem study reproduces the advantage of structured bounded memory under a
-latent-memory interface. Across coverage, rarity, recency, generic coresets,
-and reliability signals, geometric coverage is the strongest tested retention
-intervention, while generated-image reliability is important in hindsight but
-poorly predictable online.
+winning on all fifteen trajectories. Crucially, a fixed-history nested-pool
+intervention does \emph{not} support cardinality-only poisoning: expanding a
+recent 32-frame core to the complete archive changes the selected identity in
+72.2\% of queries but changes its fidelity by only $+0.228$ dB PSNR and
+$+0.0011$ SSIM. The selection lever exposed by our controls is therefore archive
+composition, not candidate count alone. A matched WorldMem study reproduces
+the advantage of structured bounded memory under a latent-memory interface.
+Across coverage, rarity, recency, generic coresets, and reliability signals,
+geometric coverage is the strongest tested retention intervention, while
+generated-image reliability is important in hindsight but poorly predictable
+online.
 \end{abstract}
 
 \section{Introduction}
@@ -102,11 +103,13 @@ index is faithful. The selected view becomes slightly better aligned as the
 archive grows, while selected generated content becomes worse. Thus the
 failure is not direct attention dilution over archive tokens, nor primarily a
 camera-disjoint retrieval. Together with a common-source control, this shows
-that archive curation changes exposure to corrupted historical evidence. A
-simple candidate-competition model explains how archive growth could produce
-that pattern; because pool size and autoregressive age co-vary in the current
-rollouts, we treat this as a mechanism hypothesis rather than a causally
-identified cardinality effect.
+that archive curation changes exposure to corrupted historical evidence. We
+then separate two explanations that the duration trend alone confounds. On a
+frozen rollout, randomly admitting older candidates changes retrieval identity
+but does not systematically lower selected-frame fidelity. By contrast,
+structured candidate sets choose much cleaner indices from the same source
+pixels. The observed advantage is therefore about what the bank preserves and
+suppresses, not an intrinsic penalty for having more candidates.
 
 We evaluate three retention principles rather than manufacturing a composite
 ``full model'': geometric coverage, rare-mode preservation, and observable
@@ -125,9 +128,9 @@ Our contributions are:
     \item We introduce a diagnostic decomposition of retention, selection,
     target-view mismatch, and stored-image corruption, then use a common-source
     control to isolate candidate-set selection from rollout pixel quality.
-    \item We formalize candidate competition under a finite read budget and
-    state precisely which empirical observations support it and which causal
-    intervention remains missing.
+    \item We use a fixed-history nested-pool intervention to falsify the
+    cardinality-only explanation, separating retrieval instability from a
+    systematic loss of selected-frame fidelity.
     \item We compare recency, rarity, geometric coverage, generic coresets,
     and reliability signals, including negative results that delimit what can
     currently be inferred and controlled online.
@@ -235,38 +238,25 @@ duration-dependent quality trend.
     \label{fig:problem}
 \end{figure*}
 
-\subsection{Candidate competition as a mechanism hypothesis}
+\subsection{Cardinality and composition are different hypotheses}
 
-Archive growth also changes the statistical decision faced by the retriever.
-Consider one useful historical candidate with retrieval score $S_c$ and $n$
-distractors with scores $S_1,\ldots,S_n$. The score need only be imperfectly
-aligned with downstream conditioning quality; a distractor may score highly
-because it matches camera geometry while containing corrupted generated
-content.
+Archive growth changes both the number and the composition of candidates seen
+by the retriever. These effects must not be conflated. A
+\emph{cardinality-only} account predicts that admitting additional historical
+items should systematically reduce selected-frame fidelity on a frozen
+rollout. A \emph{composition} account instead predicts that banks with the
+same budget can differ substantially according to which redundant or
+unreliable items they retain.
 
-\begin{proposition}[Candidate competition]
-Assume distractor scores are conditionally independent with CDF $F_d$. The
-probability that the useful candidate wins top-1 retrieval is
-\begin{equation}
- P_{\mathrm{win}}(n)=\mathbb{E}_{S_c}\left[F_d(S_c)^n\right],
- \label{eq:competition}
-\end{equation}
-and is non-increasing in $n$.
-\end{proposition}
-
-\noindent
-For every $s$, $0\leq F_d(s)\leq1$, hence
-$F_d(s)^{n+1}\leq F_d(s)^n$; expectation preserves the inequality. The result
-does not say that every added memory is harmful. It says that adding
-competing draws creates more opportunities for a high-scoring distractor to
-win when retrieval score and conditioning quality disagree. It also predicts
-that geometric match can improve while selected-content fidelity worsens,
-which is the pattern observed in Sec.~\ref{sec:mechanism}.
-Equation~\ref{eq:competition} is a minimal model rather than a fitted law for
-MemCam. Our rollout and common-source measurements test consequences
-consistent with the model, but they do not independently vary $n$ while
-freezing candidate identity and autoregressive age. We therefore do not use
-the proposition as proof of the empirical mechanism.
+We test the first account with nested candidate pools. For every fixed query,
+we compute one FOV-overlap score vector over the complete frozen history. Each
+pool contains the same recent 32-frame core; older frames are admitted in four
+nested random orders up to full history. Candidate pixels, poses, queries, and
+retrieval scores are identical across pool sizes. We test the second account
+with a common-source control in which each policy supplies only selected
+indices while all corresponding pixels are read from the same unbounded
+rollout. Together, these interventions distinguish ``more candidates'' from
+``different candidates.''
 
 \section{What Should a Fixed-Budget Memory Preserve?}
 \label{sec:principles}
@@ -541,7 +531,7 @@ it has lower selection gap than \RI on 12/15 trajectories ($p=0.035$) and
 beats unbounded on 13/15 ($p=0.0074$). Retaining potentially useful evidence
 and making retained evidence retrievable are different objectives.
 
-\subsection{What deteriorates as the archive grows?}
+\subsection{What deteriorates over rollout time?}
 \label{sec:mechanism}
 
 Across 4,200 audited unbounded queries and 1,050 sections, candidate count
@@ -572,9 +562,9 @@ $[-0.0511,-0.0171]$), while selected-memory corruption worsens by $+0.0873$
 (CI $[0.0236,0.1572]$). Effective mismatch worsens by $+0.0732$. The selected
 evidence therefore does not deteriorate because the retriever increasingly
 chooses camera-disjoint history. Instead, later selections are plausible views
-represented by more damaged generated content. This is the direction
-predicted by candidate competition when retrieval score and content fidelity
-disagree, but archive size and autoregressive age remain confounded.
+represented by more damaged generated content. This identifies the changing
+property of selected evidence, but not its cause: archive size, candidate
+composition, and autoregressive age all change together in these rollouts.
 
 \begin{figure*}[t]
     \centering
@@ -586,6 +576,38 @@ disagree, but archive size and autoregressive age remain confounded.
     cleaner indices.}
     \label{fig:mechanism}
 \end{figure*}
+
+\subsection{Cardinality alone does not explain the corruption trend}
+
+The fixed-history intervention removes that confounding. Table~\ref{tab:fixed-pool}
+expands the same recent B32 core with nested random subsets of older frames,
+while reusing exactly the same candidate pixels and FOV-overlap scores. The
+winner changes increasingly often, reaching 72.2\% under full history, but
+selected-frame fidelity does not decline monotonically. Full history is
+slightly higher than B32 by 0.228 dB PSNR and 0.0011 SSIM. Thus larger pools
+make the selector unstable in identity, but this experiment provides no
+evidence that cardinality alone makes the selected image less faithful.
+
+\begin{table}[t]
+\centering
+\caption{Fixed-history nested-pool intervention. Fidelity compares the
+selected generated frame with exact-index ground truth.}
+\label{tab:fixed-pool}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Pool & PSNR $\uparrow$ & SSIM $\uparrow$ & Winner change \\
+\midrule
+B32 & 11.275 & 0.3064 & 0.000 \\
+B64 & 11.348 & 0.3025 & 0.397 \\
+B128 & 11.322 & 0.3013 & 0.497 \\
+B256 & 11.310 & 0.3012 & 0.581 \\
+B512 & 11.330 & 0.3023 & 0.611 \\
+B1024 & 11.436 & 0.3068 & 0.661 \\
+All (3,797 mean) & 11.502 & 0.3075 & 0.722 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Common-source control}
 
@@ -619,12 +641,33 @@ FIFO & 11.487 & -0.216 & -0.0109 \\
 FIFO loses on all fifteen. Thus structured curation favors cleaner historical
 indices even when it receives no benefit from a cleaner prior rollout.
 
+The all-budget common-source sweep exposes a consistent tradeoff
+(Fig.~\ref{fig:retention-selection-budget}). Increasing the budget always
+reduces retention gap, because fewer useful options are deleted, but always
+increases selection gap, because the unchanged retriever uses the enlarged
+bank less effectively. GeoCov-B16 has the lowest total diagnostic gap
+($0.0754+0.0996=0.1750$); GeoCov-B128 remains better than unbounded
+($0.0281+0.1818=0.2100$ versus $0.2199$). The same directional tradeoff holds
+for RI from B16 through B64.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/retention_selection_tradeoff.pdf}
+    \caption{\textbf{Budget trades retention for retrievability.} Every budget
+    increase moves left but upward: the bank preserves more hindsight-useful
+    evidence while making the real retriever less effective among what
+    remains. Values use common unbounded source pixels on fourteen matched
+    trajectories. Lower-left is better.}
+    \label{fig:retention-selection-budget}
+\end{figure}
+
 This control identifies the effect of the \emph{policy-induced candidate set}
 on the frozen selector: source pixels no longer differ across policies. It does
 not identify candidate count by itself, because the bounded sets differ from
-the complete archive in both size and composition. A fixed-history nested-pool
-intervention is required to estimate the marginal effect of adding candidates
-while holding the rollout, query, and candidate ordering fixed.
+the complete archive in both size and composition. The preceding nested-pool
+intervention supplies that missing control and finds no cardinality-only
+fidelity penalty. Read together, the experiments attribute cleaner selections
+to structured candidate-set composition rather than small size by itself.
 
 On each policy's own rollout, selected-memory quality follows the same order:
 unbounded obtains 11.703 dB PSNR and 0.3089 SSIM, \RI obtains 13.396 and
@@ -731,9 +774,10 @@ redundancy ideas. Their value here is as a controlled intervention into
 generative memory. The paper's scientific contribution is the archive--context
 distinction, the retention/selection/corruption decomposition, and the
 common-source evidence that complete retention is not a safe quality upper
-bound. Candidate competition is a compact explanatory hypothesis, not the
-sole novelty claim. Renaming a SLAM-inspired score would not make its
-ingredients novel, so we state the lineage explicitly.
+bound. The fixed-history result further shows that this is a composition
+effect rather than a generic penalty from candidate cardinality. Renaming a
+SLAM-inspired score would not make its ingredients novel, so we state the
+lineage explicitly.
 
 \paragraph{Why does a geometric policy address a corruption diagnosis?}
 \Geo does not estimate image quality. It intervenes earlier in the chain:
@@ -741,10 +785,10 @@ complete retention contains dense populations of near-equivalent candidates,
 and redundancy culling changes which of those candidates can compete. The
 common-source control is the empirical bridge: with identical source pixels,
 \Geo's curated candidate sets lead the unchanged retriever to cleaner indices.
-The current evidence establishes this selection effect, not whether reduced
-cardinality or geometric composition is the dominant cause. We therefore
-describe geometric curation as a candidate-set intervention, not as a quality
-detector.
+The nested-pool control provides the complementary negative result: random
+candidate admission changes retrieval identity but does not reduce fidelity.
+The evidence therefore supports geometric composition as the operative
+selection intervention, not reduced cardinality or an online quality detector.
 
 \paragraph{Retention, retrievability, and reliability.}
 The experiments expose three distinct objectives. \RI best preserves rare
@@ -772,12 +816,14 @@ small samples. The policy constants were not selected on a disjoint
 development set, so the reported fifteen-trajectory comparison may reflect
 development-set adaptation.
 
-Pool size and autoregressive age co-vary, so the pool-growth association is not
-a controlled causal effect of candidate count. The common-source control fixes
-pixels but changes both candidate-set size and composition. A nested-pool
-intervention on one frozen history is required to isolate cardinality. FIFO is
-not a neutral capacity control; uniform reservoir memory is still needed to
-separate generic pool reduction from geometric curation. The hindsight DINO
+Pool size and autoregressive age co-vary in the rollout audit, so that
+association is not a controlled causal effect of candidate count. Our
+fixed-history nested-pool intervention isolates random admission around a
+recent B32 core and finds no cardinality-only fidelity penalty. It does not
+test every possible admission distribution or identify which individual
+candidate interactions matter. FIFO is not a neutral capacity control, but
+the nested-pool result and common-source structured selectors jointly separate
+generic pool reduction from candidate-set composition. The hindsight DINO
 reference is not a true useful-memory oracle.
 
 The common-source experiment shows that curation changes index quality under
@@ -801,10 +847,13 @@ largest measured selection gap. Structured 32-frame banks generate better
 control; WorldMem reproduces the broad bounded-memory advantage for a latent
 interface. Coverage, rarity, and reliability emerge as separate design axes:
 geometry is the strongest tested online signal, rarity preserves different
-modes, and reliability remains difficult to infer online. The missing
-fixed-history cardinality intervention prevents a causal claim about pool size
-alone, but the central empirical result remains: complete retention is not a
-safe upper bound for a fixed-read generative memory.
+modes, and reliability remains difficult to infer online. The cardinality-only
+explanation is directly tested on fixed history and unsupported:
+more candidates change who wins retrieval, but do not systematically reduce
+winner fidelity. The central empirical result is therefore narrower and more
+actionable: complete retention is not a safe quality upper bound, and
+structured composition rather than small capacity alone determines whether a
+fixed-read generative memory is useful.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

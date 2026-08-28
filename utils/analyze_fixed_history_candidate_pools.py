@@ -291,6 +291,15 @@ def bootstrap_interval(values, repeats=10000, seed=0):
     return float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))
 
 
+def exact_sign_test(wins, losses):
+    trials = int(wins) + int(losses)
+    if trials == 0:
+        return 1.0
+    tail = min(int(wins), int(losses))
+    probability = sum(math.comb(trials, k) for k in range(tail + 1)) / (2**trials)
+    return min(1.0, 2.0 * probability)
+
+
 def write_csv(path, rows):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -306,6 +315,22 @@ def write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def read_numeric_csv(path, text_fields=("pool", "reference_pool")):
+    rows = []
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        for source in csv.DictReader(handle):
+            row = {}
+            for field, value in source.items():
+                if field in text_fields:
+                    row[field] = value
+                elif value in (None, ""):
+                    row[field] = None
+                else:
+                    row[field] = float(value)
+            rows.append(row)
+    return rows
 
 
 def summarize_rows(rows, pool_sizes):
@@ -375,6 +400,54 @@ def summarize_rows(rows, pool_sizes):
     return query_rows, trajectory_rows, pool_rows
 
 
+def paired_pool_contrasts(trajectory_rows, reference_pool):
+    by_pool_and_trajectory = {
+        (row["pool"], int(row["row"])): row for row in trajectory_rows
+    }
+    pools = list(dict.fromkeys(row["pool"] for row in trajectory_rows))
+    metrics = ("intrinsic_psnr_db", "intrinsic_ssim")
+    contrasts = []
+    for pool in pools:
+        if pool == reference_pool:
+            continue
+        trajectory_ids = sorted(
+            row_idx
+            for candidate_pool, row_idx in by_pool_and_trajectory
+            if candidate_pool == pool
+            and (reference_pool, row_idx) in by_pool_and_trajectory
+        )
+        if not trajectory_ids:
+            continue
+        result = {
+            "pool": pool,
+            "reference_pool": reference_pool,
+            "trajectories": len(trajectory_ids),
+        }
+        for metric in metrics:
+            deltas = np.asarray(
+                [
+                    by_pool_and_trajectory[(pool, row_idx)][metric]
+                    - by_pool_and_trajectory[(reference_pool, row_idx)][metric]
+                    for row_idx in trajectory_ids
+                ],
+                dtype=np.float64,
+            )
+            low, high = bootstrap_interval(deltas, seed=2603)
+            tolerance = 1e-12
+            wins = int(np.sum(deltas > tolerance))
+            losses = int(np.sum(deltas < -tolerance))
+            ties = int(len(deltas) - wins - losses)
+            result[f"{metric}_delta_mean"] = float(np.mean(deltas))
+            result[f"{metric}_delta_ci_low"] = low
+            result[f"{metric}_delta_ci_high"] = high
+            result[f"{metric}_wins"] = wins
+            result[f"{metric}_losses"] = losses
+            result[f"{metric}_ties"] = ties
+            result[f"{metric}_sign_test_pvalue"] = exact_sign_test(wins, losses)
+        contrasts.append(result)
+    return contrasts
+
+
 def save_figure(pool_rows, output_dir):
     import os
 
@@ -416,11 +489,33 @@ def fmt(value, digits=4):
     return "NA" if value is None else f"{float(value):.{digits}f}"
 
 
-def write_report(path, pool_rows, args):
-    core = pool_rows[0]
+def write_report(path, pool_rows, contrast_rows, args):
     full = pool_rows[-1]
-    psnr_delta = full["intrinsic_psnr_db_mean"] - core["intrinsic_psnr_db_mean"]
-    ssim_delta = full["intrinsic_ssim_mean"] - core["intrinsic_ssim_mean"]
+    full_contrast = next(
+        row for row in contrast_rows if row["pool"] == full["pool"]
+    )
+    psnr_low = full_contrast["intrinsic_psnr_db_delta_ci_low"]
+    psnr_high = full_contrast["intrinsic_psnr_db_delta_ci_high"]
+    ssim_low = full_contrast["intrinsic_ssim_delta_ci_low"]
+    ssim_high = full_contrast["intrinsic_ssim_delta_ci_high"]
+    if psnr_high < 0.0 and ssim_high < 0.0:
+        decision = "SUPPORTS_CARDINALITY_HARM"
+        interpretation = (
+            "Admitting the frozen older candidates significantly lowers both "
+            "selected-frame fidelity measures relative to the shared B32 core."
+        )
+    elif psnr_low > 0.0 and ssim_low > 0.0:
+        decision = "CONTRADICTS_CARDINALITY_HARM"
+        interpretation = (
+            "Admitting the frozen older candidates significantly improves both "
+            "selected-frame fidelity measures relative to the shared B32 core."
+        )
+    else:
+        decision = "DOES_NOT_SUPPORT_CARDINALITY_HARM"
+        interpretation = (
+            "The paired trajectory intervals do not establish that admitting "
+            "the frozen older candidates lowers selected-frame fidelity."
+        )
     lines = [
         "# Fixed-History Candidate-Pool Intervention",
         "",
@@ -432,12 +527,14 @@ def write_report(path, pool_rows, args):
         "",
         "Every pool contains the same recent B32 core. Older frames are added in nested random order. Each query's FOV-overlap score vector is computed once over full history and reused at every pool size, so score noise cannot change between pools. The selected generated frame is compared with dataset ground truth at its own exact trajectory index. Higher PSNR/SSIM is better.",
         "",
-        f"- Trajectories: `{full['trajectories']}`.",
+        f"- Trajectories: `{int(full['trajectories'])}`.",
         f"- Nested expansion orders per query: `{args.nested_repeats}`.",
         f"- FOV samples per candidate: `{args.num_samples}`.",
         f"- Sections: `{args.sections}`; target offsets: `{args.target_offsets}`.",
         "",
         "## Result",
+        "",
+        f"Decision: **{decision}**.",
         "",
         "| pool | mean candidates | selected PSNR | 95% CI | selected SSIM | 95% CI | winner changed from B32 |",
         "| --- | ---: | ---: | --- | ---: | --- | ---: |",
@@ -454,11 +551,39 @@ def write_report(path, pool_rows, args):
     lines.extend(
         [
             "",
-            f"Full history minus B32: `{psnr_delta:+.3f}` dB PSNR and `{ssim_delta:+.4f}` SSIM. Negative values mean that admitting candidates selected less faithful stored images.",
+            "## Paired Difference From B32",
+            "",
+            "Deltas are computed within each trajectory before trajectory bootstrap. Positive means that admitting candidates selected cleaner stored images.",
+            "",
+            "| pool | trajectories | PSNR delta | 95% CI | wins/losses/ties | SSIM delta | 95% CI | wins/losses/ties |",
+            "| --- | ---: | ---: | --- | ---: | ---: | --- | ---: |",
+        ]
+    )
+    for row in contrast_rows:
+        lines.append(
+            f"| {row['pool']} | {row['trajectories']} | "
+            f"{row['intrinsic_psnr_db_delta_mean']:+.3f} | "
+            f"[{row['intrinsic_psnr_db_delta_ci_low']:+.3f}, {row['intrinsic_psnr_db_delta_ci_high']:+.3f}] | "
+            f"{row['intrinsic_psnr_db_wins']}/{row['intrinsic_psnr_db_losses']}/{row['intrinsic_psnr_db_ties']} | "
+            f"{row['intrinsic_ssim_delta_mean']:+.4f} | "
+            f"[{row['intrinsic_ssim_delta_ci_low']:+.4f}, {row['intrinsic_ssim_delta_ci_high']:+.4f}] | "
+            f"{row['intrinsic_ssim_wins']}/{row['intrinsic_ssim_losses']}/{row['intrinsic_ssim_ties']} |"
+        )
+    lines.extend(
+        [
+            "",
+            f"Full history minus B32: `{full_contrast['intrinsic_psnr_db_delta_mean']:+.3f}` dB PSNR "
+            f"(95% CI `[{full_contrast['intrinsic_psnr_db_delta_ci_low']:+.3f}, "
+            f"{full_contrast['intrinsic_psnr_db_delta_ci_high']:+.3f}]`) and "
+            f"`{full_contrast['intrinsic_ssim_delta_mean']:+.4f}` SSIM "
+            f"(95% CI `[{full_contrast['intrinsic_ssim_delta_ci_low']:+.4f}, "
+            f"{full_contrast['intrinsic_ssim_delta_ci_high']:+.4f}]`).",
             "",
             "## What This Establishes",
             "",
-            "This is a fixed-history candidate-admission intervention. A downward fidelity curve demonstrates that adding candidates can harm the frozen selector without autoregressive age, rollout quality, or Monte Carlo score noise changing between pool sizes. It does not establish downstream video causality; the separate GT-memory-cleaning replay tests whether corrupted selected content propagates into the next generated chunk.",
+            f"{interpretation} Selection identity may still be unstable as the pool grows, but identity changes alone are not evidence of lower fidelity.",
+            "",
+            "This is a fixed-history candidate-admission intervention around a shared recent-history B32 core. It isolates candidate admission from autoregressive age, rollout pixels, and Monte Carlo score noise. It does not compare Geometric Coverage against unbounded composition, and it does not establish downstream video causality.",
             "",
             "## Files",
             "",
@@ -466,6 +591,7 @@ def write_report(path, pool_rows, args):
             "- `tables/query_summary.csv`",
             "- `tables/trajectory_summary.csv`",
             "- `tables/pool_summary.csv`",
+            "- `tables/paired_vs_b32.csv`",
             "- `figures/fixed_history_pool_curve.png`",
         ]
     )
@@ -474,8 +600,8 @@ def write_report(path, pool_rows, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--root", type=Path)
     parser.add_argument("--run_name", default="baseline")
     parser.add_argument("--dataset_root", type=Path, default=None)
     parser.add_argument("--duration", type=int, default=180)
@@ -494,8 +620,31 @@ def main():
     parser.add_argument("--torch_threads", type=int, default=8)
     parser.add_argument("--decode_timeout_sec", type=int, default=600)
     parser.add_argument("--output_dir", type=Path, required=True)
+    parser.add_argument("--summarize_existing", action="store_true")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
+
+    if args.summarize_existing:
+        trajectory_path = args.output_dir / "tables" / "trajectory_summary.csv"
+        pool_path = args.output_dir / "tables" / "pool_summary.csv"
+        if not trajectory_path.is_file() or not pool_path.is_file():
+            raise FileNotFoundError(
+                "--summarize_existing requires trajectory_summary.csv and "
+                f"pool_summary.csv under {args.output_dir / 'tables'}"
+            )
+        trajectory_rows = read_numeric_csv(trajectory_path)
+        pool_rows = read_numeric_csv(pool_path)
+        contrast_rows = paired_pool_contrasts(
+            trajectory_rows, str(pool_rows[0]["pool"])
+        )
+        write_csv(args.output_dir / "tables" / "paired_vs_b32.csv", contrast_rows)
+        save_figure(pool_rows, args.output_dir / "figures")
+        write_report(args.output_dir / "report.md", pool_rows, contrast_rows, args)
+        print(f"Wrote: {args.output_dir / 'report.md'}", flush=True)
+        return
+
+    if args.manifest is None or args.root is None:
+        parser.error("--manifest and --root are required unless --summarize_existing")
 
     if args.nested_repeats < 1 or args.num_samples < 1:
         raise ValueError("nested repeats and FOV samples must be positive")
@@ -643,13 +792,15 @@ def main():
     query_rows, trajectory_rows, pool_rows = summarize_rows(
         selection_rows, pool_sizes
     )
+    contrast_rows = paired_pool_contrasts(trajectory_rows, pool_rows[0]["pool"])
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "tables" / "selection_rows.csv", selection_rows)
     write_csv(args.output_dir / "tables" / "query_summary.csv", query_rows)
     write_csv(args.output_dir / "tables" / "trajectory_summary.csv", trajectory_rows)
     write_csv(args.output_dir / "tables" / "pool_summary.csv", pool_rows)
+    write_csv(args.output_dir / "tables" / "paired_vs_b32.csv", contrast_rows)
     save_figure(pool_rows, args.output_dir / "figures")
-    write_report(args.output_dir / "report.md", pool_rows, args)
+    write_report(args.output_dir / "report.md", pool_rows, contrast_rows, args)
     print(f"Wrote: {args.output_dir / 'report.md'}", flush=True)
 
 

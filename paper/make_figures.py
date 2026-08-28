@@ -458,62 +458,98 @@ def plot_online_generation_loop():
 
 
 def plot_retention_selection_tradeoff():
-    points = {
-        "Unbounded": (0.0, 0.2267, COLORS["unbounded"]),
-        "RI-32": (0.0474, 0.1582, COLORS["ri"]),
-        "GeoCov-32": (0.0639, 0.1338, COLORS["geo"]),
+    families = {
+        "RI": {
+            "color": COLORS["ri"],
+            "points": [(16, 0.0571, 0.1381), (32, 0.0396, 0.1630), (64, 0.0324, 0.1753)],
+        },
+        "GeoCov": {
+            "color": COLORS["geo"],
+            "points": [
+                (16, 0.0754, 0.0996),
+                (32, 0.0430, 0.1467),
+                (64, 0.0346, 0.1620),
+                (128, 0.0281, 0.1818),
+            ],
+        },
     }
 
-    fig, ax = plt.subplots(figsize=(7.3, 4.6), constrained_layout=True)
-    for label, (retention, selection, color) in points.items():
+    fig, ax = plt.subplots(figsize=(7.3, 4.8), constrained_layout=True)
+    for family, spec in families.items():
+        points = spec["points"]
+        color = spec["color"]
+        x = [point[1] for point in points]
+        y = [point[2] for point in points]
+        ax.plot(x, y, color=color, linewidth=2.2, zorder=2)
         ax.scatter(
-            retention,
-            selection,
-            s=150,
+            x,
+            y,
+            s=135,
             color=color,
             edgecolor="white",
             linewidth=1.5,
             zorder=3,
+            label=family,
         )
-        offsets = {
-            "Unbounded": (7, -2),
-            "RI-32": (8, 8),
-            "GeoCov-32": (8, -14),
-        }
+        for budget, retention, selection in points:
+            ax.annotate(
+                f"B{budget}",
+                (retention, selection),
+                xytext=(6, -3),
+                textcoords="offset points",
+                fontsize=8.5,
+                weight="bold",
+                color=color,
+            )
         ax.annotate(
-            label,
-            (retention, selection),
-            xytext=offsets[label],
-            textcoords="offset points",
-            fontsize=10,
-            weight="bold",
-            color=color,
+            "",
+            xy=(x[-1], y[-1]),
+            xytext=(x[-2], y[-2]),
+            arrowprops={"arrowstyle": "->", "color": color, "linewidth": 2.2},
         )
 
-    ax.annotate(
-        "Ideal: preserve useful evidence\nand make it easy to retrieve",
-        xy=(0.005, 0.126),
-        xytext=(0.018, 0.185),
-        arrowprops={"arrowstyle": "->", "color": "#777777", "linewidth": 1.2},
-        fontsize=9,
-        color="#444444",
+    ax.scatter(
+        0.0,
+        0.2199,
+        s=155,
+        color=COLORS["unbounded"],
+        edgecolor="white",
+        linewidth=1.5,
+        zorder=3,
+        label="Unbounded",
     )
-    ax.set_xlim(-0.006, 0.082)
-    ax.set_ylim(0.12, 0.24)
+    ax.annotate(
+        "Unbounded",
+        (0.0, 0.2199),
+        xytext=(7, -3),
+        textcoords="offset points",
+        fontsize=9,
+        weight="bold",
+        color=COLORS["unbounded"],
+    )
+    ax.text(
+        0.067,
+        0.120,
+        "Increasing budget",
+        fontsize=9,
+        color="#555555",
+        ha="center",
+    )
+    ax.annotate(
+        "",
+        xy=(0.043, 0.168),
+        xytext=(0.064, 0.126),
+        arrowprops={"arrowstyle": "->", "color": "#777777", "linewidth": 1.4},
+    )
+    ax.set_xlim(-0.005, 0.083)
+    ax.set_ylim(0.086, 0.232)
     ax.set_xlabel("Deleted a useful option?  Retention gap (lower is better)")
     ax.set_ylabel("Picked poorly from what remained?  Selection gap (lower is better)")
-    ax.set_title("Retention and retrieval are different memory objectives", loc="left")
+    ax.set_title("More capacity trades retention for retrievability", loc="left")
     ax.grid(color="#DADCE0", linewidth=0.8)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.text(
-        0.002,
-        0.235,
-        "Unbounded keeps every frame, yet gives the retriever the least usable candidate set",
-        fontsize=8.5,
-        color="#555555",
-        va="top",
-    )
+    ax.legend(frameon=False, loc="lower left", ncol=3, fontsize=8.5)
     save(fig, "retention_selection_tradeoff")
 
 

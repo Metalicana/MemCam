@@ -68,6 +68,25 @@ class FixedHistoryCandidatePoolsTest(unittest.TestCase):
         self.assertEqual(scores.shape, (1,))
         self.assertGreater(scores[0], 0.99)
 
+    def test_paired_pool_contrasts_use_within_trajectory_differences(self):
+        rows = [
+            {"row": 0, "pool": "b32", "intrinsic_psnr_db": 10.0, "intrinsic_ssim": 0.30},
+            {"row": 1, "pool": "b32", "intrinsic_psnr_db": 20.0, "intrinsic_ssim": 0.40},
+            {"row": 0, "pool": "all", "intrinsic_psnr_db": 11.0, "intrinsic_ssim": 0.32},
+            {"row": 1, "pool": "all", "intrinsic_psnr_db": 19.0, "intrinsic_ssim": 0.41},
+        ]
+
+        contrasts = MODULE.paired_pool_contrasts(rows, "b32")
+
+        self.assertEqual(len(contrasts), 1)
+        self.assertAlmostEqual(contrasts[0]["intrinsic_psnr_db_delta_mean"], 0.0)
+        self.assertAlmostEqual(contrasts[0]["intrinsic_ssim_delta_mean"], 0.015)
+        self.assertEqual(contrasts[0]["intrinsic_psnr_db_wins"], 1)
+        self.assertEqual(contrasts[0]["intrinsic_psnr_db_losses"], 1)
+
+    def test_exact_sign_test(self):
+        self.assertAlmostEqual(MODULE.exact_sign_test(15, 0), 2 / (2**15))
+
 
 if __name__ == "__main__":
     unittest.main()
