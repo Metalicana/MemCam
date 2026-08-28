@@ -459,48 +459,60 @@ def plot_online_generation_loop():
 
 def plot_retention_selection_tradeoff():
     families = {
+        "FIFO": {
+            "color": COLORS["fifo"],
+            "points": [
+                (16, 0.1872, 0.0448),
+                (32, 0.1668, 0.0646),
+                (64, 0.1429, 0.0867),
+                (128, 0.1203, 0.1084),
+            ],
+        },
         "RI": {
             "color": COLORS["ri"],
-            "points": [(16, 0.0571, 0.1381), (32, 0.0396, 0.1630), (64, 0.0324, 0.1753)],
+            "points": [(16, 0.0583, 0.1339), (32, 0.0399, 0.1609), (64, 0.0317, 0.1748)],
         },
         "GeoCov": {
             "color": COLORS["geo"],
             "points": [
-                (16, 0.0754, 0.0996),
-                (32, 0.0430, 0.1467),
-                (64, 0.0346, 0.1620),
-                (128, 0.0281, 0.1818),
+                (16, 0.0669, 0.1037),
+                (32, 0.0426, 0.1470),
+                (64, 0.0366, 0.1596),
+                (128, 0.0298, 0.1783),
             ],
         },
     }
 
-    fig, ax = plt.subplots(figsize=(7.3, 4.8), constrained_layout=True)
-    for family, spec in families.items():
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.7), constrained_layout=True)
+
+    def draw_family(ax, family, annotate_budgets, label_offsets=None):
+        spec = families[family]
         points = spec["points"]
         color = spec["color"]
         x = [point[1] for point in points]
         y = [point[2] for point in points]
-        ax.plot(x, y, color=color, linewidth=2.2, zorder=2)
+        ax.plot(x, y, color=color, linewidth=2.2, zorder=2, label=family)
         ax.scatter(
             x,
             y,
-            s=135,
+            s=120,
             color=color,
             edgecolor="white",
-            linewidth=1.5,
+            linewidth=1.4,
             zorder=3,
-            label=family,
         )
-        for budget, retention, selection in points:
-            ax.annotate(
-                f"B{budget}",
-                (retention, selection),
-                xytext=(6, -3),
-                textcoords="offset points",
-                fontsize=8.5,
-                weight="bold",
-                color=color,
-            )
+        if annotate_budgets:
+            label_offsets = label_offsets or {}
+            for budget, retention, selection in points:
+                ax.annotate(
+                    f"B{budget}",
+                    (retention, selection),
+                    xytext=label_offsets.get((family, budget), (6, -3)),
+                    textcoords="offset points",
+                    fontsize=8.5,
+                    weight="bold",
+                    color=color,
+                )
         ax.annotate(
             "",
             xy=(x[-1], y[-1]),
@@ -508,48 +520,71 @@ def plot_retention_selection_tradeoff():
             arrowprops={"arrowstyle": "->", "color": color, "linewidth": 2.2},
         )
 
-    ax.scatter(
+    full_ax, zoom_ax = axes
+    for family in families:
+        draw_family(
+            full_ax,
+            family,
+            annotate_budgets=family == "FIFO",
+        )
+    full_ax.scatter(
         0.0,
-        0.2199,
-        s=155,
+        0.2188,
+        s=145,
         color=COLORS["unbounded"],
         edgecolor="white",
-        linewidth=1.5,
+        linewidth=1.4,
         zorder=3,
         label="Unbounded",
     )
-    ax.annotate(
+    full_ax.annotate(
         "Unbounded",
-        (0.0, 0.2199),
+        (0.0, 0.2188),
         xytext=(7, -3),
         textcoords="offset points",
         fontsize=9,
         weight="bold",
         color=COLORS["unbounded"],
     )
-    ax.text(
-        0.067,
-        0.120,
-        "Increasing budget",
-        fontsize=9,
+    full_ax.set_xlim(-0.008, 0.202)
+    full_ax.set_ylim(0.035, 0.232)
+    full_ax.set_title("(a) Full policy landscape", loc="left", pad=8)
+    full_ax.legend(frameon=False, loc="upper right", ncol=2, fontsize=8.5)
+
+    zoom_offsets = {
+        ("RI", 32): (8, 10),
+        ("RI", 64): (7, -17),
+        ("GeoCov", 64): (-43, -16),
+        ("GeoCov", 128): (-3, 12),
+    }
+    for family in ("RI", "GeoCov"):
+        draw_family(
+            zoom_ax,
+            family,
+            annotate_budgets=True,
+            label_offsets=zoom_offsets,
+        )
+    zoom_ax.set_xlim(0.026, 0.072)
+    zoom_ax.set_ylim(0.095, 0.187)
+    zoom_ax.set_title("(b) RI versus GeoCov", loc="left", pad=8)
+    zoom_ax.legend(frameon=False, loc="lower left", fontsize=8.5)
+    zoom_ax.text(
+        0.98,
+        0.96,
+        "At matched B:\nRI preserves more history\nGeoCov is easier to retrieve from",
+        transform=zoom_ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=8.5,
         color="#555555",
-        ha="center",
     )
-    ax.annotate(
-        "",
-        xy=(0.043, 0.168),
-        xytext=(0.064, 0.126),
-        arrowprops={"arrowstyle": "->", "color": "#777777", "linewidth": 1.4},
-    )
-    ax.set_xlim(-0.005, 0.083)
-    ax.set_ylim(0.086, 0.232)
-    ax.set_xlabel("Deleted a useful option?  Retention gap (lower is better)")
-    ax.set_ylabel("Picked poorly from what remained?  Selection gap (lower is better)")
-    ax.set_title("More capacity trades retention for retrievability", loc="left")
-    ax.grid(color="#DADCE0", linewidth=0.8)
-    ax.set_axisbelow(True)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.legend(frameon=False, loc="lower left", ncol=3, fontsize=8.5)
+
+    for ax in axes:
+        ax.set_xlabel("Retention gap (lower is better)")
+        ax.grid(color="#DADCE0", linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+    full_ax.set_ylabel("Selection gap (lower is better)")
     save(fig, "retention_selection_tradeoff")
 
 

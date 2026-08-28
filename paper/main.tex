@@ -646,20 +646,25 @@ The all-budget common-source sweep exposes a consistent tradeoff
 reduces retention gap, because fewer useful options are deleted, but always
 increases selection gap, because the unchanged retriever uses the enlarged
 bank less effectively. GeoCov-B16 has the lowest total diagnostic gap
-($0.0754+0.0996=0.1750$); GeoCov-B128 remains better than unbounded
-($0.0281+0.1818=0.2100$ versus $0.2199$). The same directional tradeoff holds
-for RI from B16 through B64.
+($0.0669+0.1037=0.1706$); GeoCov-B128 remains better than unbounded
+($0.0298+0.1783=0.2081$ versus $0.2188$). The same directional tradeoff holds
+for RI from B16 through B64. FIFO exposes the opposite extreme: its tiny recent
+bank is easy to search but deletes useful history. Increasing FIFO's budget
+trades retention and selection almost one-for-one, leaving total gap between
+0.2287 and 0.2320, worse than unbounded at every tested budget.
 
-\begin{figure}[t]
+\begin{figure*}[t]
     \centering
-    \includegraphics[width=\columnwidth]{figures/retention_selection_tradeoff.pdf}
+    \includegraphics[width=\textwidth]{figures/retention_selection_tradeoff.pdf}
     \caption{\textbf{Budget trades retention for retrievability.} Every budget
     increase moves left but upward: the bank preserves more hindsight-useful
     evidence while making the real retriever less effective among what
-    remains. Values use common unbounded source pixels on fourteen matched
-    trajectories. Lower-left is better.}
+    remains. The structured-policy zoom shows the second tradeoff: at each
+    matched budget RI has lower retention loss, whereas Geometric Coverage has
+    lower selection loss. Values use common unbounded source pixels on thirteen
+    matched trajectories. Lower-left is better.}
     \label{fig:retention-selection-budget}
-\end{figure}
+\end{figure*}
 
 This control identifies the effect of the \emph{policy-induced candidate set}
 on the frozen selector: source pixels no longer differ across policies. It does

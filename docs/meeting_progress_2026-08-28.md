@@ -48,11 +48,13 @@ are checked.
    same recent B32 core to full history changes the selected identity 72.2% of
    the time, but fidelity is slightly higher rather than lower (+0.228 dB
    PSNR, +0.0011 SSIM). Candidate count alone does not explain corruption.
-8. The common-source budget sweep is complete on fourteen matched
-   trajectories. Every RI and GeoCov budget increase reduces retention gap but
-   increases selection gap. GeoCov total diagnostic gap worsens from 0.1750
-   at B16 to 0.2100 at B128, while unbounded is 0.2199. More capacity preserves
-   options but makes the unchanged retriever less effective at using them.
+8. The common-source budget sweep is complete on thirteen fully matched
+   trajectories. Every FIFO, RI, and GeoCov budget increase reduces retention
+   gap but increases selection gap. GeoCov total diagnostic gap worsens from
+   0.1706 at B16 to 0.2081 at B128, while unbounded is 0.2188. FIFO stays
+   between 0.2287 and 0.2320 because its retention gain is canceled almost
+   one-for-one by selection loss. More capacity preserves options but makes
+   the unchanged retriever less effective at using them.
 
 ## New work completed since the review
 
