@@ -34,7 +34,12 @@ def context_row(selected_frame, candidate_count):
 class CommonSourceRetentionSelectionBudgetTest(unittest.TestCase):
     def test_describe_run_extracts_family_and_budget(self):
         self.assertEqual(MODULE.describe_run("baseline"), ("Unbounded", None))
+        self.assertEqual(MODULE.describe_run("fifo_b16"), ("FIFO", 16))
         self.assertEqual(MODULE.describe_run("ri_b64_dino_rgb"), ("RI", 64))
+        self.assertEqual(
+            MODULE.describe_run("kcenter_b128"),
+            ("K-center", 128),
+        )
         self.assertEqual(
             MODULE.describe_run("slam_b128_covisibility"),
             ("GeoCov", 128),
@@ -171,8 +176,12 @@ class CommonSourceRetentionSelectionBudgetTest(unittest.TestCase):
         rows = []
         for family, budget, retention, retrieval in (
             ("Unbounded", None, 0.0, 0.22),
+            ("FIFO", 16, 0.12, 0.19),
+            ("FIFO", 32, 0.10, 0.18),
             ("RI", 16, 0.08, 0.16),
             ("RI", 32, 0.05, 0.17),
+            ("K-center", 16, 0.10, 0.15),
+            ("K-center", 32, 0.07, 0.16),
             ("GeoCov", 16, 0.09, 0.14),
             ("GeoCov", 32, 0.06, 0.13),
         ):

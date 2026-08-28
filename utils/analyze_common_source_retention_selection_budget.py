@@ -32,6 +32,10 @@ from utils import analyze_retrieval_quality_decomposition as decomposition  # no
 
 DEFAULT_RUNS = (
     "baseline",
+    "fifo_b16",
+    "fifo_b32",
+    "fifo_b64",
+    "fifo_b128",
     "ri_b16_dino_rgb",
     "ri_b32_dino_rgb",
     "ri_b64_dino_rgb",
@@ -40,13 +44,21 @@ DEFAULT_RUNS = (
     "slam_b32_covisibility",
     "slam_b64_covisibility",
     "slam_b128_covisibility",
+    "kcenter_b16",
+    "kcenter_b32",
+    "kcenter_b64",
+    "kcenter_b128",
 )
 
 FAMILY_COLORS = {
     "Unbounded": "#4A4A4A",
+    "FIFO": "#C44E52",
     "RI": "#D18419",
     "GeoCov": "#23864D",
+    "K-center": "#6F5AA8",
 }
+
+FAMILY_ORDER = ("FIFO", "RI", "K-center", "GeoCov")
 
 
 def parse_list(value):
@@ -58,10 +70,14 @@ def describe_run(run_name):
         return "Unbounded", None
     match = re.search(r"_b(\d+)(?:_|$)", run_name)
     budget = int(match.group(1)) if match else None
+    if run_name.startswith("fifo_"):
+        return "FIFO", budget
     if run_name.startswith("ri_"):
         return "RI", budget
     if run_name.startswith("slam_"):
         return "GeoCov", budget
+    if run_name.startswith("kcenter_"):
+        return "K-center", budget
     return run_name.replace("_", " "), budget
 
 
@@ -360,7 +376,7 @@ def plot_tradeoff(summary_rows, output_path, title):
     for row in summary_rows:
         grouped[row["family"]].append(row)
 
-    for family in ("RI", "GeoCov"):
+    for family in FAMILY_ORDER:
         rows = sorted(
             [row for row in grouped.get(family, []) if row["budget"] is not None],
             key=lambda row: int(row["budget"]),
@@ -370,7 +386,15 @@ def plot_tradeoff(summary_rows, output_path, title):
         xs = [float(row["retention_gap"]) for row in rows]
         ys = [float(row["retrieval_gap"]) for row in rows]
         color = FAMILY_COLORS[family]
-        ax.plot(xs, ys, color=color, linewidth=2.0, alpha=0.75, zorder=2)
+        ax.plot(
+            xs,
+            ys,
+            color=color,
+            linewidth=2.0,
+            alpha=0.75,
+            zorder=2,
+            label=family,
+        )
         for position, row in enumerate(rows):
             x = float(row["retention_gap"])
             y = float(row["retrieval_gap"])
@@ -402,7 +426,7 @@ def plot_tradeoff(summary_rows, output_path, title):
             )
             offset_y = 8 if position % 2 == 0 else -15
             ax.annotate(
-                f"{family} B{int(row['budget'])}",
+                f"B{int(row['budget'])}",
                 (x, y),
                 xytext=(7, offset_y),
                 textcoords="offset points",
@@ -437,6 +461,7 @@ def plot_tradeoff(summary_rows, output_path, title):
             edgecolor="white",
             linewidth=1.0,
             zorder=5,
+            label="Unbounded",
         )
         ax.annotate(
             "Unbounded",
@@ -473,6 +498,7 @@ def plot_tradeoff(summary_rows, output_path, title):
     ax.grid(color="#DADCE0", linewidth=0.8)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, fontsize=8.5, ncol=3, loc="best")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=220, bbox_inches="tight", facecolor="white")
@@ -502,7 +528,13 @@ def format_summary_table(rows):
         "| policy | budget | trajectories | candidates | retention gap | 95% CI | selection gap | 95% CI |",
         "| --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
     ]
-    order = {"Unbounded": 0, "RI": 1, "GeoCov": 2}
+    order = {
+        "Unbounded": 0,
+        "FIFO": 1,
+        "RI": 2,
+        "K-center": 3,
+        "GeoCov": 4,
+    }
     for row in sorted(
         rows,
         key=lambda item: (
