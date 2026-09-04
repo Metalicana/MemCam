@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -8,6 +9,7 @@ from utils.analyze_anchor_chain_consistency import (
     build_pose_anchor_schedule,
     camera_intrinsics,
     correspondence_errors,
+    failure_severity_sweep,
     relative_camera_motion,
     transform_points,
 )
@@ -41,6 +43,43 @@ class AnchorChainConsistencyTests(unittest.TestCase):
         add_current_quality_aliases(rows)
         self.assertEqual(rows[0]["psnr_db"], 12.5)
         self.assertEqual(rows[0]["ssim"], 0.42)
+
+    def test_failure_severity_sweep_reports_all_tail_sizes(self):
+        rows = []
+        for row_id in range(4):
+            for frame in range(40):
+                quality = frame / 39.0
+                rows.append(
+                    {
+                        "run_name": "baseline",
+                        "row": row_id,
+                        "current_psnr_db": 8.0 + 12.0 * quality,
+                        "current_ssim": 0.2 + 0.7 * quality,
+                        "anchor_psnr_db": 20.0,
+                        "anchor_ssim": 0.9,
+                        **{field: quality for field in (
+                            "match_support",
+                            "descriptor_consistency",
+                            "geometric_inlier_fraction",
+                            "geometric_support",
+                            "anchor_chain_score",
+                        )},
+                    }
+                )
+        add_current_quality_aliases(rows)
+        args = SimpleNamespace(
+            bootstrap_repeats=20,
+            split_seed=17,
+            max_train_clean_false_reject=0.10,
+        )
+        summary = failure_severity_sweep(rows, {0, 1, 2}, {3}, args)
+        proposed = [
+            row for row in summary if row["estimator"] == "anchor_chain_score"
+        ]
+        self.assertEqual(
+            [row["bad_quantile"] for row in proposed], [0.05, 0.10, 0.20]
+        )
+        self.assertTrue(all(row["absolute_auc"] > 0.95 for row in proposed))
 
     def test_intrinsics_match_requested_fov(self):
         intrinsics = camera_intrinsics(640, 360, fov_half_h=45, fov_half_v=30)

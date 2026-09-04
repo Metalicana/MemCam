@@ -55,6 +55,8 @@ ESTIMATOR_FIELDS = (
     "anchor_chain_score",
 )
 
+SEVERITY_QUANTILES = (0.05, 0.10, 0.20)
+
 # Dataset c2w rotations use Unreal coordinates: X forward, Y right, Z up.
 # Image geometry uses OpenCV coordinates: x right, y down, z forward.
 UE_FROM_CV = np.asarray(
@@ -474,6 +476,55 @@ def summaries_for_transition(
     )
 
 
+def failure_severity_sweep(rows, train_rows, test_rows, args):
+    """Measure the same held-out gate against increasingly severe failures.
+
+    This is diagnostic only. The predeclared injection decision still uses
+    ``args.bad_quantile`` and is not selected from this sweep.
+    """
+    output = []
+    for bad_quantile in SEVERITY_QUANTILES:
+        labeled = copy.deepcopy(rows)
+        add_within_trajectory_labels(labeled, bad_quantile)
+        add_transition_labels(labeled, bad_quantile)
+        absolute = estimator_rows(
+            labeled,
+            ESTIMATOR_FIELDS,
+            train_rows,
+            test_rows,
+            args.bootstrap_repeats,
+            args.split_seed,
+            args.max_train_clean_false_reject,
+        )
+        transition = summaries_for_transition(
+            labeled, train_rows, test_rows, args
+        )
+        transition_by_name = {
+            row["estimator"]: row for row in transition
+        }
+        for row in absolute:
+            transition_row = transition_by_name.get(row["estimator"])
+            output.append(
+                {
+                    "bad_quantile": bad_quantile,
+                    "estimator": row["estimator"],
+                    "test_frames": row["test_frames"],
+                    "absolute_auc": row["test_quality_auc"],
+                    "transition_auc": (
+                        transition_row["test_quality_auc"]
+                        if transition_row is not None
+                        else None
+                    ),
+                    "gate_bad_precision": row["gate_test_bad_precision"],
+                    "gate_bad_recall": row["gate_test_bad_recall"],
+                    "gate_clean_reject": row[
+                        "gate_test_clean_false_reject_rate"
+                    ],
+                }
+            )
+    return sorted(output, key=lambda row: (row["bad_quantile"], row["estimator"]))
+
+
 def anchor_strata_auc(rows, test_rows, estimator):
     output = {}
     for label, low in (("low_fidelity_anchor", True), ("high_fidelity_anchor", False)):
@@ -576,6 +627,7 @@ def write_report(
     transition,
     by_run,
     strata,
+    severity_sweep,
     decision,
     args,
     train_rows,
@@ -585,6 +637,11 @@ def write_report(
 ):
     absolute_by_name = {row["estimator"]: row for row in absolute}
     transition_by_name = {row["estimator"]: row for row in transition}
+    severity_proposed = [
+        row
+        for row in severity_sweep
+        if row["estimator"] == "anchor_chain_score"
+    ]
     coverage = total_evaluable / total_scheduled if total_scheduled else 0.0
     lines = [
         "# Verified Anchor-Chain Calibration",
@@ -635,6 +692,26 @@ def write_report(
             f"- Low-fidelity anchors: AUC `{fmt(strata['low_fidelity_anchor']['quality_auc'])}` over `{strata['low_fidelity_anchor']['samples']}` held-out links.",
             f"- High-fidelity anchors: AUC `{fmt(strata['high_fidelity_anchor']['quality_auc'])}` over `{strata['high_fidelity_anchor']['samples']}` held-out links.",
             "",
+            "## Failure-Severity Sweep",
+            "",
+            "This diagnostic asks whether anchor consistency detects only the most catastrophic failures even if it is weak over the broad bottom-20% label. It does not change the predeclared injection decision.",
+            "",
+            "| bad-frame tail | absolute AUC | transition AUC | gate precision | gate recall | clean reject |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in severity_proposed:
+        lines.append(
+            f"| bottom {100 * row['bad_quantile']:.0f}% | "
+            f"{fmt(row['absolute_auc'])} | "
+            f"{fmt(row['transition_auc'])} | "
+            f"{fmt(row['gate_bad_precision'])} | "
+            f"{fmt(row['gate_bad_recall'])} | "
+            f"{fmt(row['gate_clean_reject'])} |"
+        )
+    lines.extend(
+        [
+            "",
             "## Injection Decision",
             "",
             f"**{decision['decision']}**",
@@ -649,6 +726,7 @@ def write_report(
             "- `estimator_summary_absolute.csv`",
             "- `estimator_summary_transition.csv`",
             "- `estimator_by_run.csv`",
+            "- `estimator_severity_sweep.csv`",
             "- `decision.json`",
             "- `anchor_chain_validation.png`",
         ]
@@ -867,6 +945,9 @@ def main():
         args.max_train_clean_false_reject,
     )
     transition = summaries_for_transition(pair_rows, train_rows, test_rows, args)
+    severity_sweep = failure_severity_sweep(
+        pair_rows, train_rows, test_rows, args
+    )
     by_run = estimator_run_rows(pair_rows, absolute, test_rows)
     proposed = summary_by_name(absolute, "anchor_chain_score")
     transition_proposed = summary_by_name(transition, "anchor_chain_score")
@@ -883,6 +964,7 @@ def main():
     write_csv(args.output_dir / "estimator_summary_absolute.csv", absolute)
     write_csv(args.output_dir / "estimator_summary_transition.csv", transition)
     write_csv(args.output_dir / "estimator_by_run.csv", by_run)
+    write_csv(args.output_dir / "estimator_severity_sweep.csv", severity_sweep)
     (args.output_dir / "decision.json").write_text(
         json.dumps(decision, indent=2), encoding="utf-8"
     )
@@ -893,6 +975,7 @@ def main():
         transition,
         by_run,
         strata,
+        severity_sweep,
         decision,
         args,
         train_rows,
