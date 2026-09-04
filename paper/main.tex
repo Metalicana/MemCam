@@ -555,8 +555,8 @@ available diagnostic candidate remains approximately flat.
     \label{fig:pool}
 \end{figure}
 
-The left panel of Fig.~\ref{fig:mechanism} resolves an important ambiguity in
-the observed duration trend.
+Panel (b) of Fig.~\ref{fig:mechanism} resolves an important ambiguity in the
+observed duration trend.
 Selected view mismatch improves by $-0.0335$ (CI
 $[-0.0511,-0.0171]$), while selected-memory corruption worsens by $+0.0873$
 (CI $[0.0236,0.1572]$). Effective mismatch worsens by $+0.0732$. The selected
@@ -569,11 +569,17 @@ composition, and autoregressive age all change together in these rollouts.
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/mechanism_evidence.pdf}
-    \caption{\textbf{Mechanism evidence.} Left: view alignment improves late
-    in the unbounded rollout, but selected generated content becomes more
-    corrupted. Center and right: in the common-source control every selector
-    reads pixels from the same unbounded video; \RI and \Geo still choose
-    cleaner indices.}
+    \caption{\textbf{Why complete retention can fail.} (a) The frame selected
+    by the real retriever becomes worse relative to the hindsight-best frame
+    already present in the archive; their vertical difference is the selection
+    gap. Archive size and rollout age co-vary, so this is not a
+    cardinality-only causal effect. (b) Exact-index ground truth separates the
+    selected historical index from the pixels stored at that index: the clean
+    view becomes better aligned with the target, while its generated image
+    becomes more corrupted. (c--d) In the common-source control, every
+    selector reads pixels from the same unbounded rollout; \RI and \Geo still
+    select cleaner indices than the unbounded selector, while FIFO selects
+    worse ones. Error bars are trajectory-bootstrap 95\% intervals.}
     \label{fig:mechanism}
 \end{figure*}
 

@@ -250,47 +250,210 @@ def plot_pool_growth():
 
 
 def plot_mechanism():
-    fig = plt.figure(figsize=(9.2, 3.45), constrained_layout=True)
-    grid = fig.add_gridspec(1, 3, width_ratios=[1.25, 1, 1])
-
-    ax = fig.add_subplot(grid[0, 0])
-    names = ["View\nmismatch", "Memory\ncorruption", "Effective\nmismatch"]
-    values = np.array([-0.033506, 0.087348, 0.073157])
-    ci_low = np.array([-0.051064, 0.023562, 0.016469])
-    ci_high = np.array([-0.017066, 0.157153, 0.129560])
-    errors = np.vstack([values - ci_low, ci_high - values])
-    x = np.arange(3)
-    ax.bar(
-        x,
-        values,
-        yerr=errors,
-        capsize=4,
-        color=[COLORS["view"], COLORS["corruption"], COLORS["effective"]],
-        edgecolor="white",
-        width=0.68,
+    fig, axes = plt.subplots(2, 2, figsize=(10.4, 6.8))
+    fig.subplots_adjust(
+        left=0.095,
+        right=0.975,
+        bottom=0.105,
+        top=0.90,
+        hspace=0.48,
+        wspace=0.34,
     )
-    ax.axhline(0, color="#333333", linewidth=0.8)
-    ax.set_xticks(x, names)
-    ax.set_ylabel("Late minus early (DINO distance)")
-    ax.set_title("What deteriorates over time?", loc="left")
+    fig.suptitle(
+        "Mechanism evidence: useful history remains, but selection quality deteriorates",
+        fontsize=14,
+        fontweight="bold",
+        y=0.975,
+    )
+
+    # Pool size and autoregressive age co-vary, so this is an observational
+    # rollout trend rather than a cardinality-only causal effect.
+    ax = axes[0, 0]
+    candidate_midpoints = np.array([377, 1023, 1707, 2372, 3018, 3683, 4367, 5013])
+    selected_mismatch = np.array([0.4497, 0.5149, 0.5249, 0.5517, 0.5672, 0.5926, 0.5476, 0.5653])
+    best_available_mismatch = np.array([0.3075, 0.3242, 0.2907, 0.3079, 0.3056, 0.3367, 0.3091, 0.3239])
+    ax.plot(
+        candidate_midpoints,
+        selected_mismatch,
+        color=COLORS["effective"],
+        marker="o",
+        linewidth=2.3,
+        markersize=5.5,
+    )
+    ax.plot(
+        candidate_midpoints,
+        best_available_mismatch,
+        color="#555555",
+        marker="s",
+        linewidth=2.0,
+        markersize=4.8,
+    )
+    ax.fill_between(
+        candidate_midpoints,
+        best_available_mismatch,
+        selected_mismatch,
+        color=COLORS["effective"],
+        alpha=0.12,
+    )
+    ax.set_xlabel("Candidates in unbounded archive")
+    ax.set_ylabel("Effective DINO mismatch")
+    ax.set_xlim(250, 5575)
+    ax.set_ylim(0.265, 0.62)
+    ax.set_title("(a) Selected degrades; available stays stable", loc="left")
+    ax.text(
+        0.04,
+        0.92,
+        "Gap increases on 13/15 trajectories",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8.5,
+        color="#444444",
+    )
+    ax.annotate(
+        "selected",
+        (candidate_midpoints[-1], selected_mismatch[-1]),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        fontsize=8.5,
+        color=COLORS["effective"],
+        fontweight="bold",
+    )
+    ax.annotate(
+        "best available",
+        (candidate_midpoints[-1], best_available_mismatch[-1]),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        fontsize=8.5,
+        color="#555555",
+        fontweight="bold",
+    )
+    gap_x = candidate_midpoints[-2]
+    ax.annotate(
+        "",
+        xy=(gap_x, selected_mismatch[-2]),
+        xytext=(gap_x, best_available_mismatch[-2]),
+        arrowprops={"arrowstyle": "<->", "color": COLORS["effective"], "linewidth": 1.2},
+    )
+    ax.text(
+        gap_x - 90,
+        0.5 * (selected_mismatch[-2] + best_available_mismatch[-2]),
+        "selection\ngap",
+        ha="right",
+        va="center",
+        fontsize=7.8,
+        color=COLORS["effective"],
+    )
     ax.grid(axis="y", color="#DADCE0", linewidth=0.7)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 
-    labels = ["Unbounded", "FIFO", "RI", "GeoCov"]
-    colors = [COLORS["unbounded"], COLORS["fifo"], COLORS["ri"], COLORS["geo"]]
-    for panel, values, ylabel, title, ylim in [
-        (grid[0, 1], [11.703, 11.487, 13.478, 16.332], "PSNR (dB)", "Same-video selected PSNR", (10, 17.3)),
-        (grid[0, 2], [0.3089, 0.2980, 0.3761, 0.4601], "SSIM", "Same-video selected SSIM", (0.25, 0.49)),
+    ax = axes[0, 1]
+    names = ["View alignment", "Stored-image damage", "Actual target mismatch"]
+    values = np.array([-0.033506, 0.087348, 0.073157])
+    ci_low = np.array([-0.051064, 0.023562, 0.016469])
+    ci_high = np.array([-0.017066, 0.157153, 0.129560])
+    errors = np.vstack([values - ci_low, ci_high - values])
+    y = np.arange(3)[::-1]
+    for position, value, error_low, error_high, color in zip(
+        y,
+        values,
+        errors[0],
+        errors[1],
+        [COLORS["view"], COLORS["corruption"], COLORS["effective"]],
+    ):
+        ax.errorbar(
+            value,
+            position,
+            xerr=np.array([[error_low], [error_high]]),
+            fmt="o",
+            markersize=8,
+            color=color,
+            ecolor=color,
+            elinewidth=2,
+            capsize=4,
+            markeredgecolor="white",
+            markeredgewidth=0.9,
+        )
+        ax.text(
+            value,
+            position + (-0.20 if position == 2 else 0.20),
+            f"{value:+.3f}",
+            ha="center",
+            va="center",
+            fontsize=8.2,
+            fontweight="bold",
+            color=color,
+        )
+    ax.axvline(0, color="#333333", linewidth=0.9)
+    ax.set_yticks(y, names)
+    ax.set_xlim(-0.073, 0.177)
+    ax.set_xlabel("Late minus early DINO distance")
+    ax.set_title("(b) Damage grows, despite better alignment", loc="left")
+    ax.grid(axis="x", color="#DADCE0", linewidth=0.7)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    labels = ["GeoCov", "RI", "FIFO"]
+    colors = [COLORS["geo"], COLORS["ri"], COLORS["fifo"]]
+    for ax, values, ci_low, ci_high, xlabel, title, xlim, value_format in [
+        (
+            axes[1, 0],
+            np.array([4.629, 1.775, -0.216]),
+            np.array([3.521, 1.005, -0.299]),
+            np.array([5.874, 2.683, -0.141]),
+            "Paired $\\Delta$PSNR vs. unbounded (dB)",
+            "(c) Common pixels, cleaner selected indices",
+            (-0.8, 6.45),
+            "+.1f",
+        ),
+        (
+            axes[1, 1],
+            np.array([0.1512, 0.0672, -0.0109]),
+            np.array([0.1100, 0.0456, -0.0150]),
+            np.array([0.1929, 0.0926, -0.0072]),
+            "Paired $\\Delta$SSIM vs. unbounded",
+            "(d) The same result holds in SSIM",
+            (-0.035, 0.215),
+            "+.3f",
+        ),
     ]:
-        ax = fig.add_subplot(panel)
-        x = np.arange(4)
-        ax.bar(x, values, color=colors, edgecolor="white", width=0.7)
-        ax.set_xticks(x, labels, rotation=24, ha="right")
-        ax.set_ylim(*ylim)
-        ax.set_ylabel(ylabel)
+        errors = np.vstack([values - ci_low, ci_high - values])
+        y = np.arange(3)[::-1]
+        for position, value, error_low, error_high, color in zip(
+            y, values, errors[0], errors[1], colors
+        ):
+            ax.errorbar(
+                value,
+                position,
+                xerr=np.array([[error_low], [error_high]]),
+                fmt="o",
+                markersize=9,
+                color=color,
+                ecolor=color,
+                elinewidth=2.2,
+                capsize=4,
+                markeredgecolor="white",
+                markeredgewidth=1,
+            )
+            ax.text(
+                value + error_high + 0.018 * (xlim[1] - xlim[0]),
+                position,
+                format(value, value_format),
+                ha="left",
+                va="center",
+                fontsize=8.5,
+                fontweight="bold",
+                color=color,
+            )
+        ax.axvline(0, color="#333333", linewidth=0.9)
+        ax.set_yticks(y, labels)
+        ax.set_xlim(*xlim)
+        ax.set_xlabel(xlabel)
         ax.set_title(title, loc="left")
-        ax.grid(axis="y", color="#DADCE0", linewidth=0.7)
+        ax.grid(axis="x", color="#DADCE0", linewidth=0.7)
         ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
     save(fig, "mechanism_evidence")
