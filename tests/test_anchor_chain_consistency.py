@@ -4,6 +4,7 @@ import numpy as np
 
 from utils.analyze_anchor_chain_consistency import (
     UE_FROM_CV,
+    add_current_quality_aliases,
     build_pose_anchor_schedule,
     camera_intrinsics,
     correspondence_errors,
@@ -28,6 +29,19 @@ def yaw_c2w(degrees, translation=None):
 
 
 class AnchorChainConsistencyTests(unittest.TestCase):
+    def test_current_quality_aliases_support_shared_estimator_schema(self):
+        rows = [
+            {
+                "current_psnr_db": 12.5,
+                "current_ssim": 0.42,
+                "anchor_psnr_db": 20.0,
+                "anchor_ssim": 0.8,
+            }
+        ]
+        add_current_quality_aliases(rows)
+        self.assertEqual(rows[0]["psnr_db"], 12.5)
+        self.assertEqual(rows[0]["ssim"], 0.42)
+
     def test_intrinsics_match_requested_fov(self):
         intrinsics = camera_intrinsics(640, 360, fov_half_h=45, fov_half_v=30)
         self.assertAlmostEqual(intrinsics[0, 0], 320.0)

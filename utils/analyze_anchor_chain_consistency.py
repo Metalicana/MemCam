@@ -432,6 +432,13 @@ def add_transition_labels(rows, bad_quantile):
             row["gt_bad_transition"] = bool(value <= cutoff)
 
 
+def add_current_quality_aliases(rows):
+    """Expose current-frame fidelity under the shared estimator schema."""
+    for row in rows:
+        row["psnr_db"] = float(row["current_psnr_db"])
+        row["ssim"] = float(row["current_ssim"])
+
+
 def add_anchor_fidelity_labels(rows):
     grouped = defaultdict(list)
     for row in rows:
@@ -845,6 +852,7 @@ def main():
 
     if not pair_rows:
         raise RuntimeError("No pose-evaluable anchor links were produced")
+    add_current_quality_aliases(pair_rows)
     add_within_trajectory_labels(pair_rows, args.bad_quantile)
     add_transition_labels(pair_rows, args.bad_quantile)
     add_anchor_fidelity_labels(pair_rows)
