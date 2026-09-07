@@ -2,103 +2,125 @@
 
 Working title:
 
-> **The Archive Is Not the Context: Diagnosing and Curating Memory for
-> Long-Horizon Video Generation**
-
-The manuscript is now written as a diagnostic and controlled-intervention
-paper. It does not claim a quality gate, Geometric-RI blend, or QGRC full
-method. Geometric Coverage is the strongest tested retention intervention and
-is explicitly described as an adaptation of SLAM-style keyframe redundancy.
+> **GeoCov: Geometry-Aware Fixed-Budget Memory for Long-Horizon Video
+> Generation**
 
 ## Paper spine
 
-1. The archive grows, but the generator reads a fixed-size context.
-2. Candidate competition is a formal mechanism hypothesis for why complete
-   retention can be harmful; current rollout evidence does not isolate pool
-   cardinality from autoregressive age.
-3. Retention quality and retrievability are different objectives.
-4. Unbounded MemCam increasingly selects corrupted generated content even as
-   selected camera views become slightly better aligned.
-5. A common-source control shows that structured curation selects cleaner
-   indices under identical historical pixels.
-6. Geometric coverage is the strongest tested online criterion; rarity is
-   complementary but weaker, and reliability is poorly observable at write
-   time.
-7. Matched WorldMem results reproduce the broad advantage of structured
-   bounded memory under a latent-memory interface.
+1. A useful video memory must preserve earlier views and supply them when the
+   camera returns. Retention and retrieval are separate requirements.
+2. History retrieval and selective context construction address these
+   requirements differently. Complete retention leaves selection unresolved;
+   tested recency and appearance rules lose useful history or leave retained
+   evidence unused. Figure 1 shows these complementary failures.
+3. The design principle is view coverage and substitutability: retain views
+   with little support, and remove observations with geometric and visual
+   substitutes. GeoCov implements this with a fixed archive budget.
+4. Matched MemCam and WorldMem results test the principle in two systems;
+   the generator and retriever are unchanged within each comparison.
+5. Shared-pixel and fixed-history controls support the role of candidate
+   composition. Random pool expansion does not establish candidate-count harm.
 
-## Supported headline results
+## Literature grounding
+
+- History retrieval: [Context-as-Memory](https://arxiv.org/html/2506.03141v1),
+  Section 3.3, and [MemCam](https://arxiv.org/html/2603.26193v1), Section 3.2,
+  retrieve camera-relevant frames from historical sequences.
+- Selective context construction: [FramePack](https://arxiv.org/abs/2504.12626)
+  compresses context according to frame importance, including time and feature
+  similarity. [MemFlow](https://arxiv.org/html/2512.14699v1), Section 3.2,
+  combines semantic retrieval with a first-frame prototype of the prior chunk.
+- These are design tendencies, not mutually exclusive system classes. A
+  compact conditioning context does not imply a bounded persistent archive.
+- FIFO and RI demonstrate the failure modes inside our system; they are not
+  reproductions of FramePack or MemFlow. Do not attribute the measured gaps to
+  those external systems.
+- The temporal corruption analysis supports a concern about reusing generated
+  errors. It does not establish a causal snowballing effect from archive growth.
+
+## Comparison protocol
+
+- Complete retention, GeoCov, and RI contain the initial conditioning frame.
+- GeoCov and RI explicitly reserve that frame; complete retention keeps it by
+  construction. FIFO and K-center do not reserve it.
+- All bounded MemCam policies temporarily protect the latest section endpoint
+  during an update, and protected items count toward the stated budget.
+- The main text reports the initial-frame sensitivity analysis rather than
+  presenting the common-source gain as an undifferentiated mechanism result.
+
+## Headline results
 
 Matched MemCam, 180 seconds, 15 trajectories:
 
 | Policy | Stored frames | LPIPS | FVD |
 | --- | ---: | ---: | ---: |
-| Unbounded | 5,397 | 0.5980 | 734.2 |
+| Complete retention | 5,397 | 0.5980 | 734.2 |
 | FIFO-32 | 32 | 0.6514 | 677.3 |
 | RI-32 | 32 | 0.5939 | 550.4 |
-| Geometric Coverage-32 | 32 | **0.5876** | **476.6** |
-
-Common-source control relative to Unbounded:
-
-- RI selects indices with `+1.775 dB` PSNR and `+0.0672` SSIM.
-- Geometric Coverage selects indices with `+4.629 dB` PSNR and `+0.1512`
-  SSIM, winning both metrics on 15/15 trajectories.
+| GeoCov-32 | 32 | **0.5876** | **476.6** |
 
 Matched WorldMem, first 15 videos, 60 seconds, B32:
 
 | Policy | LPIPS | FVD |
 | --- | ---: | ---: |
-| Unbounded | 0.652 | 3077.6 |
+| Complete retention | 0.652 | 3077.6 |
 | FIFO-32 | 0.689 | 3554.9 |
 | Latent-RI-32 | 0.546 | 1160.4 |
 | Geometric Coverage-32 | **0.534** | **1116.9** |
 
-## Explicitly unsupported claims
+Common-source control relative to complete retention:
 
-- Candidate-pool growth alone causally produces the observed degradation.
-- Archive growth directly dilutes MemCam denoiser attention.
-- Corrupted selected memories fully explain downstream FVD.
-- Generic IQA or pose-conditioned consistency provides a deployable gate.
-- Geometric Coverage is a novel SLAM algorithm or globally optimal coverage
-  objective.
-- One concrete RGB-frame policy transfers unchanged to every representation.
-- CUT3R camera scores are valid under the current evaluator.
+- RI: `+1.775 dB` PSNR and `+0.0672` SSIM.
+- GeoCov: `+4.629 dB` PSNR and `+0.1512` SSIM, positive on 15/15
+  trajectories.
 
-## Remaining high-value experiments
+Fixed-history full pool relative to the shared B32 core:
 
-1. Run a fixed-history nested candidate-pool intervention at
-   `B=16,32,64,128,256,512,...,all`, holding pixels, query, poses, and
-   retriever fixed. This is the decisive test of candidate competition.
-2. Add uniform reservoir/random-B as the neutral capacity control.
-3. Report paired trajectory bootstrap intervals and win counts for LPIPS,
-   video-level bootstrap sensitivity for FVD, and uncertainty for VBench.
-4. Freeze policy constants on a development split and evaluate on untouched
-   trajectories, or clearly preserve the current exploratory-study label.
-5. Complete the multi-case ground-truth content-cleaning replay.
-6. Run privileged `Oracle-clean`, `Oracle-future`, and `Oracle-both` policies
-   at B32 to measure headroom over Geometric Coverage.
-7. Finish the locked WorldMem metric matrix, especially standard VBench.
-8. Add a true SLAM keyframe-culling implementation if a reviewer-facing
-   baseline can be matched without changing the retriever.
+- Retrieval identity changes on `72.2%` of queries.
+- PSNR changes by `+0.228 dB`, 95% CI `[-0.109, +0.664]`.
+- SSIM changes by `+0.0011`, 95% CI `[-0.0117, +0.0188]`.
+- Decision: `DOES_NOT_SUPPORT_CARDINALITY_HARM`.
 
-These are future additions, not manuscript placeholders. The current paper
-contains no fabricated result macros or empty metric tables.
+## Unsupported claims
 
-## Figures
+- Candidate count alone degrades selected-memory fidelity.
+- Archive growth directly dilutes denoiser attention.
+- GeoCov detects corrupted images online.
+- Cleaner selected memories fully cause the downstream FVD improvement.
+- GeoCov is a novel SLAM algorithm or universally optimal policy.
+- CUT3R and VBench-Long are complete and valid.
+- End-to-end latency and peak-memory gains have already been measured.
 
-Regenerate all manuscript figures with:
+## Follow-up evidence
+
+These are opportunities to strengthen the existing contribution. The current
+writing priority is the design argument above, not expanding the method.
+
+1. Run GeoCov without initial-frame reservation and FIFO with the same
+   reservation.
+2. Add a uniform reservoir/random-B32 closed-loop capacity baseline.
+3. Audit the older unbounded budget-sweep artifact against the headline run.
+4. Add uncertainty for headline LPIPS, FVD, and VBench comparisons.
+5. Measure end-to-end latency and peak memory for complete retention and
+   GeoCov under matched hardware and video lengths.
+6. Evaluate frozen constants on untouched trajectories.
+7. Finish the matched WorldMem VBench/VBench-Long matrix.
+8. Repair CUT3R ground-truth sanity before reporting camera metrics.
+9. Run the multi-trajectory exact-index content-replacement replay if making a
+   causal propagation claim.
+
+## Figures and build
+
+Regenerate the scripted analytical figures with:
 
 ```bash
 python paper/make_figures.py
 ```
 
-Generated artifacts are stored under `paper/figures/` in both PDF and PNG
-formats. `model_architecture` now depicts the actual fixed-budget Geometric
-Coverage controller.
+The qualitative common-source and eviction figures are stored directly in
+`paper/figures/` from their corresponding analysis outputs.
 
-## Build
-
-The manuscript uses standard LaTeX plus `natbib`:
+Build with:
 
 ```bash
 cd paper
@@ -108,6 +130,6 @@ pdflatex main.tex
 pdflatex main.tex
 ```
 
-The local development machine used for the latest rewrite did not have a
-LaTeX engine installed, so the final PDF must be compiled on a machine with a
-TeX distribution or in Overleaf.
+The current layout was compiled with Tectonic 0.17.0 and visually checked in
+`main.pdf`. The main paper uses two columns; the appendix uses full-width
+tables, with large qualitative figures grouped after the quantitative sections.
