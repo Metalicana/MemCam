@@ -24,6 +24,19 @@ def finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def valid_bench_score(dimension, value):
+    return finite(value) or (dimension == "dynamic_degree" and isinstance(value, bool))
+
+
+def bench_details(value):
+    # Long's three-part return is (aggregate, clip scores, original-video
+    # aggregates). Counting clip scores would inflate full-video coverage.
+    if not isinstance(value, list) or len(value) not in (2, 3):
+        return None
+    details = value[2] if len(value) == 3 else value[1]
+    return details if isinstance(details, list) else None
+
+
 def read_json(path, warnings):
     try:
         return json.loads(path.read_text())
@@ -57,12 +70,13 @@ def video_key(value):
     return path.parent.name, path.name
 
 
-def inventory(root, duration=None):
+def inventory(root, duration=None, video_root=None):
     warnings = []
     groups = {}
     index = {}
-    candidates = set(root.rglob("*_custom.mp4"))
-    for status_path in root.rglob("run_status.jsonl"):
+    candidates = set(video_root.glob("*/*_custom.mp4") if video_root else root.rglob("*_custom.mp4"))
+    status_paths = video_root.glob("*/run_status.jsonl") if video_root else root.rglob("run_status.jsonl")
+    for status_path in status_paths:
         for row in read_rows(status_path, warnings):
             name = Path(str(row.get("output", ""))).name
             if VIDEO_NAME.search(name):
@@ -148,17 +162,22 @@ def inventory(root, duration=None):
                     "metric_config": summary.get("metric_config", {}),
                 })
 
+    bench_files = {"vbench": 0, "vbench_long": 0}
     for path in sorted(root.rglob("*_eval_results.json")):
         family = "vbench_long" if "long" in str(path.parent).lower() else "vbench"
+        bench_files[family] += 1
         payload = read_json(path, warnings)
         if not isinstance(payload, dict):
             continue
         unmatched = 0
         for dim in DIMENSIONS:
             value = payload.get(dim)
-            if not isinstance(value, list) or len(value) != 2 or not isinstance(value[1], list):
+            details = bench_details(value)
+            if details is None:
+                if value is not None:
+                    warnings.append(f"{path}: unsupported {dim} result format")
                 continue
-            for detail in value[1]:
+            for detail in details:
                 if not isinstance(detail, dict):
                     continue
                 group = lookup(detail.get("video_path"))
@@ -167,7 +186,7 @@ def inventory(root, duration=None):
                     unmatched += 1
                     continue
                 name = Path(str(detail.get("video_path"))).name
-                if name in group["present"] and finite(score):
+                if name in group["present"] and valid_bench_score(dim, score):
                     group[family][dim].add(name)
                     group["sources"].add(str(path))
         if unmatched:
@@ -186,19 +205,24 @@ def inventory(root, duration=None):
         for key in ("present", "logged_done", "lpips", "sources"):
             group[key] = sorted(group[key])
         report.append(group)
-    return {"runs": report, "warnings": warnings}
+    return {"runs": report, "warnings": warnings, "bench_files_scanned": bench_files}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.home() / "memcam_results")
     parser.add_argument("--duration", type=int, help="Full source-video duration, e.g. 60 or 180")
+    parser.add_argument("--video-root", type=Path,
+                        help="Only direct run directories here, excluding nested replays; metrics still scanned under --root")
+    parser.add_argument("--details", action="store_true", help="Show counts for each VBench dimension")
     parser.add_argument("--expected", type=int, help="Expected videos per run/duration (optional)")
     parser.add_argument("--json", type=Path, help="Write detailed coverage and missing-video lists")
     args = parser.parse_args()
     if not args.root.is_dir():
         parser.error(f"Results root does not exist: {args.root}")
-    report = inventory(args.root, args.duration)
+    if args.video_root is not None and not args.video_root.is_dir():
+        parser.error(f"Video root does not exist: {args.video_root}")
+    report = inventory(args.root, args.duration, args.video_root)
     print(f"{'RUN':42} {'SEC':>4} {'FILES':>7} {'DONE*':>6} {'LPIPS':>6} {'FVD N**':>8} {'VB6':>5} {'VBL6':>5}")
     for group in report["runs"]:
         n = len(group["present"])
@@ -207,9 +231,15 @@ def main():
         print(f"{group['run']:42} {group['duration']:4} {files:>7} {len(group['logged_done']):6} "
               f"{len(group['lpips']):6} {fvd:>8} {len(group['vbench_complete']):5} {len(group['vbench_long_complete']):5}")
         print(f"  {group['directory']}")
+        if args.details:
+            for family in ("vbench", "vbench_long"):
+                print(f"  {family}: " + ", ".join(
+                    f"{dim}={len(group[family][dim])}" for dim in DIMENSIONS))
     print("\nDONE*: nonempty files with a completion log; not decoded/integrity-checked.")
     print("LPIPS: full-duration, completed rows only. FVD N**: group sizes, not per-video FVD.")
-    print("VB6/VBL6: original videos with finite scores in ALL six dimensions (union of result files).")
+    print("VB6/VBL6: original videos with valid scores in ALL six dimensions (including boolean dynamic_degree).")
+    print("Coverage is a union of result files. Three-part Long outputs use video aggregates, not clip counts.")
+    print("Result files scanned: " + str(report["bench_files_scanned"]))
     print("Inventory only: verify configs/provenance before skipping jobs; split-clip names are not counted as originals.")
     if not report["runs"]:
         print("No matching videos or generation logs found under this root.")

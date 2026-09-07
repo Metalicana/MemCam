@@ -13,6 +13,36 @@ SPEC.loader.exec_module(audit)
 
 
 class CoverageTests(unittest.TestCase):
+    def test_boolean_dynamic_and_long_video_aggregates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video_root = root / "context_180s"
+            run = video_root / "baseline"
+            run.mkdir(parents=True)
+            video = run / "room_180s_custom.mp4"
+            video.write_bytes(b"fixture")
+            replay = video_root / "replays" / "control"
+            replay.mkdir(parents=True)
+            (replay / video.name).write_bytes(b"fixture")
+            for family in ("vbench", "vbench_long"):
+                output = root / (family + "_results") / run.name
+                output.mkdir(parents=True)
+                payload = {}
+                for dim in audit.DIMENSIONS:
+                    score = False if dim == "dynamic_degree" else .8
+                    detail = {"video_path": str(video), "video_results": score}
+                    payload[dim] = [.8, [detail]]
+                    if family == "vbench_long" and dim != "subject_consistency":
+                        payload[dim] = [.8, [{"video_path": "clip.mp4", "video_results": .8}], [detail]]
+                (output / "fixture_eval_results.json").write_text(json.dumps(payload))
+            report = audit.inventory(root, 180, video_root)
+            self.assertEqual(len(report["runs"]), 1)
+            self.assertEqual(report["runs"][0]["vbench_complete"], [video.name])
+            self.assertEqual(report["runs"][0]["vbench_long_complete"], [video.name])
+            self.assertEqual(report["bench_files_scanned"], {"vbench": 1, "vbench_long": 1})
+            self.assertFalse(audit.valid_bench_score("imaging_quality", False))
+            self.assertFalse(audit.valid_bench_score("dynamic_degree", None))
+
     def test_partial_results_prefixes_and_split_clips(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
