@@ -136,6 +136,8 @@ def main():
         "manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
         "source_bytes": video.stat().st_size, "source_mtime_ns": video.stat().st_mtime_ns,
         "checkpoint": str(args.checkpoint), "vbench_root": str(args.vbench_root),
+        "long_grouping_adapter_sha256": hashlib.sha256(
+            (REPO / "utils/run_vbench_long.py").read_bytes()).hexdigest(),
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "dry_run": args.dry_run,
     }
@@ -166,7 +168,8 @@ def main():
         "vbench-long": [
             (conda("vbench", "python", "-c", cuda_check), REPO),
             (conda("vbench", "python", "-c", long_import_check()), args.vbench_root),
-            (conda("vbench", "python", "vbench2_beta_long/eval_long.py",
+            (conda("vbench", "python", REPO / "utils/run_vbench_long.py",
+                   "--vbench-root", args.vbench_root.resolve(),
                    "--videos_path", staged, "--dimension", *DIMENSIONS,
                    "--mode", "long_custom_input", "--dev_flag", "--output_path", long_out), args.vbench_root),
         ],
