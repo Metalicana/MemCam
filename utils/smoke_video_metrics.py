@@ -19,6 +19,25 @@ from audit_metric_coverage import DIMENSIONS, bench_details, finite, valid_bench
 REPO = Path(__file__).resolve().parents[1]
 
 
+def long_import_check():
+    modules = ["moviepy.editor", "av", "dreamsim"] + [
+        f"vbench2_beta_long.{dimension}" for dimension in DIMENSIONS
+    ]
+    # Import all dimensions before preprocessing, collecting independent failures.
+    return f"""import importlib
+errors = []
+for name in {modules!r}:
+    try:
+        importlib.import_module(name)
+        print('IMPORT OK:', name, flush=True)
+    except Exception as exc:
+        errors.append(name)
+        print('IMPORT FAILED:', name, type(exc).__name__, str(exc), flush=True)
+if errors:
+    raise SystemExit('VBench-Long dependency preflight failed: ' + ', '.join(errors))
+"""
+
+
 def load(path):
     return json.loads(path.read_text())
 
@@ -145,7 +164,8 @@ def main():
 
     stages = {
         "vbench-long": [
-            (conda("vbench", "python", "-c", cuda_check + "; from moviepy.editor import VideoFileClip"), REPO),
+            (conda("vbench", "python", "-c", cuda_check), REPO),
+            (conda("vbench", "python", "-c", long_import_check()), args.vbench_root),
             (conda("vbench", "python", "vbench2_beta_long/eval_long.py",
                    "--videos_path", staged, "--dimension", *DIMENSIONS,
                    "--mode", "long_custom_input", "--dev_flag", "--output_path", long_out), args.vbench_root),

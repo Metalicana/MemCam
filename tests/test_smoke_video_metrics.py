@@ -1,9 +1,12 @@
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 UTILS = Path(__file__).resolve().parents[1] / "utils"
@@ -13,6 +16,24 @@ sys.path.pop(0)
 
 
 class SmokeTests(unittest.TestCase):
+    def test_import_preflight_collects_failures_before_exit(self):
+        def import_module(name):
+            if name in ("av", "dreamsim"):
+                raise ModuleNotFoundError(name)
+
+        output = io.StringIO()
+        with patch("importlib.import_module", side_effect=import_module) as importer:
+            with redirect_stdout(output), self.assertRaises(SystemExit):
+                exec(smoke.long_import_check(), {})
+        self.assertEqual(importer.call_count, 3 + len(smoke.DIMENSIONS))
+        self.assertIn("IMPORT FAILED: av", output.getvalue())
+        self.assertIn("IMPORT FAILED: dreamsim", output.getvalue())
+        self.assertIn("IMPORT OK: vbench2_beta_long.imaging_quality", output.getvalue())
+
+    def test_import_preflight_success(self):
+        with patch("importlib.import_module"), redirect_stdout(io.StringIO()):
+            exec(smoke.long_import_check(), {})
+
     def test_original_cohort_and_dry_run(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
