@@ -159,7 +159,7 @@ def render_episode(case, item, args, directory):
         ax.axvline(start, color=RED, linestyle="--", linewidth=1)
         for reuse in sorted({int(r["section_idx"]) for r in case["reuses"]}):
             ax.axvline((reuse * SECTION + 1) / item["fps"], color="#666666", linestyle=":", linewidth=1)
-    axes[0].set_title("Dashed: section receives corrupted memory. Dotted: degraded section's frames retrieved again.", fontsize=10)
+    axes[0].set_title("Dashed: section receives displayed memory. Dotted: low-fidelity frames from that section retrieved again.", fontsize=10)
     for row, (images, label, color) in enumerate(((gt, "Ground truth", "#333333"),
                                                 (base, "Unbounded", RED), (geo, args.policy_label, GREEN))):
         for col, frame in enumerate(frames):
@@ -188,8 +188,13 @@ def render_episode(case, item, args, directory):
             f"FOV overlap {case['event']['selected_overlap']:.3f}\nMemory PSNR {case['memory']['psnr_db']:.2f} dB\n\n"
             f"Output drop: {case['immediate_drop_db']:.2f} dB\nLater drop: {case['persistent_drop_db']:.2f} dB\n"
             f"Later reuse slots: {len(case['reuses'])}", va="top", fontsize=10, linespacing=1.5)
-    fig.suptitle(f"Video degradation following a corrupted-memory read | {item['scene']}", fontsize=16)
-    fig.supxlabel("Selected observational example, not causal proof. Exact-index GT; section means at "
+    inspection = getattr(args, "inspection", False)
+    heading = "Inspection candidate: memory read and subsequent output" if inspection else "Video degradation following a corrupted-memory read"
+    failed = [name for name, passed in case["criteria"].items() if not passed]
+    suffix = f"\nOriginal filters: {len(failed)} failed; see inspection.csv" if inspection else ""
+    fig.suptitle(f"{heading} | {item['scene']}{suffix}", fontsize=14)
+    notice = "Unconfirmed inspection candidate. " if inspection else "Selected observational example, not causal proof. "
+    fig.supxlabel(notice + "Exact-index GT; section means at "
                   f"{args.score_width}px width. Images chosen near median frame PSNR in each window.", fontsize=9)
     fig.savefig(directory.with_suffix(".png"), dpi=160)
     fig.savefig(directory.with_suffix(".pdf"))
@@ -228,6 +233,60 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+def inspect_cached(cache, output, top):
+    """Render ranked candidates without changing thresholds or recomputing metrics."""
+    report = json.loads((cache / "search.json").read_text())
+    args = argparse.Namespace(**report["parameters"])
+    for key in ("root", "manifest", "dataset_root"):
+        value = getattr(args, key)
+        setattr(args, key, Path(value) if value is not None else None)
+    args.inspection = True
+    items = {item["_row"]: remap_gt_dir(item, args.dataset_root)
+             for item in load_manifest(args.manifest, args.duration)}
+    curves = {}
+    with (cache / "section_quality.csv").open(newline="") as handle:
+        for row in csv.DictReader(handle):
+            row = {k: int(v) if k in ("row", "section") else float(v) for k, v in row.items()}
+            curves.setdefault(row["row"], []).append(row)
+    # Baseline-only ranking; GeoCov advantage is neither a gate nor a tie-break.
+    ranked = sorted(report["candidates"], key=lambda c: (
+        -min(c["immediate_drop_db"], c["persistent_drop_db"]), c["row"], c["section"]))
+    selected, seen = [], set()
+    for case in ranked:
+        if case["row"] in seen:
+            continue
+        selected.append(case)
+        seen.add(case["row"])
+        if len(selected) >= top:
+            break
+    rows = []
+    for index, case in enumerate(selected, 1):
+        stem = f"inspection_{index:02d}"
+        failed = [name for name, passed in case["criteria"].items() if not passed]
+        rows.append({"figure": stem + ".png", "row": case["row"], "scene": case["scene"],
+                     "section": case["section"], "original_qualified": case["qualified"],
+                     "immediate_drop_db": case["immediate_drop_db"],
+                     "persistent_drop_db": case["persistent_drop_db"],
+                     "reuse_slots": len(case["reuses"]), "failed_criteria": ",".join(failed)})
+        print(f"Rendering {stem}: {case['scene']}; failed checks: {','.join(failed) or 'none'}", flush=True)
+        render_episode(dict(case, curve=sorted(curves[case["row"]], key=lambda r: r["section"])),
+                       items[case["row"]], args, output / stem)
+    write_csv(output / "inspection.csv", rows)
+    (output / "inspection.json").write_text(json.dumps({
+        "source_search": str((cache / "search.json").resolve()),
+        "original_parameters": report["parameters"], "selected": selected,
+        "ranking": "min(immediate_drop_db, persistent_drop_db), descending; one per trajectory; no policy-advantage filter",
+    }, indent=2) + "\n")
+    (output / "README.txt").write_text(
+        "Inspection candidates, NOT newly qualified snowball examples. Original thresholds and decisions are unchanged.\n"
+        "Ranked by the smaller of immediate and persistent baseline PSNR drops, at most one per trajectory.\n"
+        "No GeoCov advantage is required. The candidate pool still inherits the original age/overlap/window restrictions.\n"
+        "Scores and frame choices are reused from the cached search; only illustration frames are decoded again.\n"
+        "See inspection.csv for failed checks. Check whether the SAME visible error recurs in memory and output.\n"
+        "Whole-frame PSNR/SSIM cannot distinguish rendering defects from incorrect scene content or establish causality.\n")
+    print(f"Output: {output}; {len(selected)} inspection figures; no metric recomputation", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=REPO / "testbeds/context_memory/manifest.jsonl")
@@ -239,6 +298,8 @@ def main():
     parser.add_argument("--policy-run", default="slam_b32_covisibility")
     parser.add_argument("--policy-label", default="GeoCov-32")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--inspect-from", type=Path,
+                        help="Render unconfirmed candidates from an existing search directory without rescoring")
     parser.add_argument("--top", type=int, default=5)
     parser.add_argument("--frame-stride", type=int, default=15)
     parser.add_argument("--score-width", type=int, default=256)
@@ -261,6 +322,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if any(args.output.iterdir()):
         parser.error("Use an empty output directory to avoid mixing searches")
+    if args.inspect_from is not None:
+        inspect_cached(args.inspect_from, args.output, args.top)
+        return
     row_filter = parse_int_ranges(args.rows)
     items = [remap_gt_dir(item, args.dataset_root) for item in load_manifest(args.manifest, args.duration)
              if row_filter is None or item["_row"] in row_filter]

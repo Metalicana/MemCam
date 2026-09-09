@@ -111,6 +111,24 @@ class SnowballTests(unittest.TestCase):
             self.assertTrue((output / "quality_over_time.csv").is_file())
             pixels = np.asarray(Image.open(output / "episode_01.png"))
             self.assertGreater(pixels.std(), 10)
+            # Inspection must work even when no candidate passed the original gates.
+            report["selected"] = []
+            for case in report["candidates"]:
+                case["qualified"] = False
+                case["criteria"]["policy_advantage"] = False
+            cached = json.dumps(report)
+            (output / "search.json").write_text(cached)
+            shutil.rmtree(traces)
+            inspected = root / "inspection"
+            result = subprocess.run([sys.executable, str(SPEC.origin), "--inspect-from", str(output),
+                                     "--output", str(inspected), "--top", "1"],
+                                    capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((inspected / "inspection_01.pdf").is_file())
+            self.assertIn("policy_advantage", (inspected / "inspection.csv").read_text())
+            inspection = json.loads((inspected / "inspection.json").read_text())
+            self.assertFalse(inspection["selected"][0]["qualified"])
+            self.assertEqual((output / "search.json").read_text(), cached)
 
 
 if __name__ == "__main__":
