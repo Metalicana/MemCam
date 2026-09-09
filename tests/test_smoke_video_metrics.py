@@ -16,6 +16,12 @@ sys.path.pop(0)
 
 
 class SmokeTests(unittest.TestCase):
+    def test_cuda_probe_allocates_and_synchronizes(self):
+        code = smoke.cuda_check_code()
+        compile(code, "cuda_probe", "exec")
+        self.assertIn("torch.ones(1, device='cuda')", code)
+        self.assertIn("torch.cuda.synchronize()", code)
+
     def test_import_preflight_collects_failures_before_exit(self):
         def import_module(name):
             if name in ("av", "dreamsim"):

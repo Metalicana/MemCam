@@ -12,7 +12,8 @@
 
 # Four primary policies x two independent evaluators. One GPU at a time.
 # Even task IDs: VBench-Long. Odd task IDs: CUT3R (provisional, not calibrated).
-# Fresh outputs only; no generation or package installation.
+# Fresh outputs by default; RESUME=1 resumes the latest matching suite.
+# Never resume while the original task is still running.
 set -euo pipefail
 
 module load cuda
@@ -41,7 +42,13 @@ EVALUATOR="${EVALUATORS[$((TASK % 2))]}"
 cd "$MEMCAM_ROOT"
 
 echo "Run=$RUN evaluator=$EVALUATOR node=${SLURMD_NODENAME:-unknown}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi
+EXTRA_ARGS=()
+if [[ "${RESUME:-0}" == "1" ]]; then
+    EXTRA_ARGS+=(--resume-latest)
+fi
 python utils/run_matched_video_metrics.py \
     --run "$RUN" --only "$EVALUATOR" \
     --manifest "$MANIFEST" --results-root "$RESULTS_ROOT" \
-    --output-root "$OUTPUT_ROOT" --vbench-root "$VBENCH_ROOT"
+    --output-root "$OUTPUT_ROOT" --vbench-root "$VBENCH_ROOT" "${EXTRA_ARGS[@]}"

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import unittest
 UTILS = Path(__file__).resolve().parents[1] / "utils"
 sys.path.insert(0, str(UTILS))
 import collect_matched_video_metrics as collector
+from run_matched_video_metrics import archive_row, latest_suite, resume_plan
 sys.path.pop(0)
 
 
@@ -107,6 +109,53 @@ class CollectorTests(unittest.TestCase):
                     and r["evaluator"] == "vbench-long")
         self.assertFalse(fifo["complete"])
         self.assertIn("Cohort differs", fifo["issues"][0])
+
+    def test_resume_keeps_seven_and_preserves_failed_artifacts(self):
+        work = self.suite("baseline", "vbench-long")
+        root = self.root / "videos"
+        (root / "baseline").mkdir(parents=True)
+        digest = hashlib.sha256((UTILS / "run_vbench_long.py").read_bytes()).hexdigest()
+        for i in range(15):
+            folder = work / f"row_{i:03d}/smoke_example"
+            spec = json.loads((folder / "spec.json").read_text())
+            video = root / "baseline" / Path(spec["source_video"]).name
+            video.write_bytes(b"fixture")
+            spec.update(source_video=str(video), source_bytes=video.stat().st_size,
+                        source_mtime_ns=video.stat().st_mtime_ns, long_grouping_adapter_sha256=digest)
+            save(folder / "spec.json", spec)
+            if i >= 7:
+                save(folder / "status.json", {"vbench-long": {"status": "failed"}})
+        path = work / "suite_status.json"
+        data = json.loads(path.read_text())
+        data["results"] = data["results"][:7]
+        save(path, data)
+        manifest = work / "manifest.jsonl"
+        self.assertEqual(resume_plan(work, manifest, root, "baseline", "vbench-long", list(range(15))),
+                         set(range(7)))
+        before = path.read_bytes()
+        subprocess.run([sys.executable, str(UTILS / "run_matched_video_metrics.py"),
+                        "--resume-suite", str(work), "--run", "baseline", "--only", "vbench-long",
+                        "--manifest", str(manifest), "--results-root", str(root),
+                        "--output-root", str(self.root), "--dry-run"],
+                       check=True, capture_output=True)
+        self.assertEqual(path.read_bytes(), before)
+        failed = work / "row_007/smoke_example/status.json"
+        failed_bytes = failed.read_bytes()
+        archive_row(work, 7)
+        self.assertFalse((work / "row_007").exists())
+        archived = next((work / "failed_attempts").glob("row_007_*/smoke_example/status.json"))
+        self.assertEqual(archived.read_bytes(), failed_bytes)
+        (root / "baseline/seed0_scene0_60s_custom.mp4").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "source file changed"):
+            resume_plan(work, manifest, root, "baseline", "vbench-long", list(range(15)))
+
+    def test_resume_latest_ignores_dry_run(self):
+        work = self.suite("baseline", "vbench-long")
+        dry = self.suite("baseline", "vbench-long", "dry")
+        status = json.loads((dry / "suite_status.json").read_text())
+        status["dry_run"] = True
+        save(dry / "suite_status.json", status)
+        self.assertEqual(latest_suite(self.root, "baseline", "vbench-long"), work.resolve())
 
 
 if __name__ == "__main__":

@@ -19,6 +19,14 @@ from audit_metric_coverage import DIMENSIONS, bench_details, finite, valid_bench
 REPO = Path(__file__).resolve().parents[1]
 
 
+def cuda_check_code():
+    return (
+        "import torch; assert torch.cuda.is_available(); "
+        "x = torch.ones(1, device='cuda'); x.mul_(2); torch.cuda.synchronize(); "
+        "assert x.item() == 2; print('GPU allocation/kernel OK:', torch.cuda.get_device_name(0))"
+    )
+
+
 def long_import_check():
     modules = ["moviepy.editor", "av", "dreamsim"] + [
         f"vbench2_beta_long.{dimension}" for dimension in DIMENSIONS
@@ -160,7 +168,7 @@ def main():
     long_out = work / "vbench_long_results"
     recon = work / "cut3r_reconstruction"
     scores = work / "cut3r_metrics"
-    cuda_check = "import torch; assert torch.cuda.is_available(); print('GPU:', torch.cuda.get_device_name(0))"
+    cuda_check = cuda_check_code()
     def conda(env, *command):
         return ["conda", "run", "--no-capture-output", "-n", env, *command]
 
