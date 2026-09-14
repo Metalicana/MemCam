@@ -1,0 +1,344 @@
+% Standalone section draft for insertion into the ICLR manuscript.
+% Requires booktabs and natbib. Citation keys are in paper/references.bib.
+% This file does not modify or automatically enter main.tex.
+% Sources: current manuscript; docs/worldmem_final_evaluation_handoff.md;
+% VMem transfer audit dated 2026-09-06 supplied by the user;
+% matched-cohort VBench diagnosis dated 2026-09-14; fresh GeoCov VBench run.
+% MemCam 60s GeoCov LPIPS/FVD below are previously recorded values.
+% Final source-file/config provenance for that pair still requires checking.
+% No 30-video stored VBench aggregates are used here.
+% Add the VBench++ reference before submission; Long citation is TBD below.
+
+\providecommand{\Geo}{\textsc{GeoCov}}
+\providecommand{\RI}{\textsc{RI}}
+\providecommand{\TBD}{\textbf{TBD}}
+
+\section{Experiments}
+\label{sec:experimental-results}
+
+Our experiments ask whether a small, maintained archive can replace growing
+history without sacrificing the evidence needed for camera-controlled video
+generation. We evaluate three aspects of this design: video quality at a fixed
+memory budget, transfer across memory representations and retrieval mechanisms,
+and the tradeoff between retained history and the evidence actually retrieved.
+MemCam and WorldMem provide the main quantitative comparisons. A VMem-based
+transfer experiment tests whether archive curation also complements
+surfel-indexed retrieval.
+
+\subsection{Experimental Setup}
+\label{sec:exp-protocol}
+
+\paragraph{MemCam.}
+We use the public MemCam implementation with the Wan2.1 1.3B backbone
+\citep{memcam,wan}. The primary suite contains fifteen matched 60-second
+trajectories from the Context-as-Memory dataset \citep{contextasmemory}.
+All policies share the input images, prompts, camera trajectories, generation
+seeds, model checkpoint, and 50-step denoising schedule. Generation proceeds
+in sections of 76 target frames. We evaluate $B\in\{16,32,64,128\}$, with
+$B=32$ fixed for the main policy comparison. A separate fifteen-trajectory
+180-second experiment tests longer rollouts; its scores are not pooled with
+the 60-second suite. The controller changes the persistent archive update,
+while leaving the generator and FOV-based retriever unchanged.
+
+\paragraph{WorldMem.}
+We evaluate fifteen matched 60-second videos using WorldMem's latent-memory
+interface \citep{worldmem}. All policies are evaluated on the same first
+fifteen batch identities, including when an output directory contains additional
+videos. We compare complete retention and the same five bounded policy families
+at budgets of 16, 32, 64, and 128 items. The geometric controller is adapted to
+WorldMem's memory representation, rather than applying the decoded-RGB MemCam
+implementation unchanged. The checkpoint, dataset split, frame rate,
+resolution, denoising configuration, exact latent-item definition, and visual
+descriptor used by this adaptation are \TBD. Comparisons are made within
+WorldMem, not between absolute metric values from different generators.
+
+\paragraph{VMem transfer.}
+The transfer protocol uses a VMem-based generator with surfel-indexed view
+retrieval \citep{vmem}. It pairs unbounded memory with adapted \Geo-32 on
+five input images, each with three camera programs: two angular sweeps
+($-45^\circ$ to $45^\circ$ and $-90^\circ$ to $90^\circ$) and an out-and-back
+translation. This gives fifteen paired cases, not fifteen independent scenes.
+Each case uses 195 actions and produces 781 frames at 13 fps, approximately
+60 seconds, at $576\times576$ resolution. The two arms share the seed,
+checkpoint, four reference and four target slots, 50 denoising steps, and
+400 reconstruction iterations. Confirmed completed pairs: \TBD/15.
+
+VMem supplies CLIP image embeddings, with a latent fallback, in place of
+MemCam's DINO descriptors; the geometric-policy coefficients remain unchanged.
+Both arms use the same audited VMem fork, including its shared retrieval and
+fallback modifications. In the budgeted arm, eviction also removes references
+from the surfel index, deletes surfels with no remaining references, and changes
+the frames available for later reconstruction. This is therefore an end-to-end
+memory-controller transfer, not a retrieval-only intervention. Here $B$ bounds
+eligible views; it does not bound all output buffers, all historical state,
+or the number of surfels.
+
+\paragraph{Comparison policies.}
+Complete retention keeps all historical items. FIFO prioritizes recency;
+K-center prioritizes descriptor coverage; Marginal Coverage Eviction (MCE)
+uses a marginal coverage objective; and rarity--irreplaceability (\RI)
+prioritizes rare appearance groups without close substitutes. \Geo instead
+scores redundancy jointly in camera-pose and appearance space. The main
+MemCam and WorldMem comparison fixes the bounded policies at $B=32$; the budget
+sweep separates the effect of policy choice from capacity. The VMem transfer
+uses only the paired unbounded and \Geo-32 arms.
+\Geo protects the initial conditioning frame and current section endpoint;
+the baseline-by-baseline protection configuration and budget accounting for
+MemCam and WorldMem are \TBD. In the audited VMem adaptation, both protected
+views count toward $B$.
+
+\paragraph{Metrics and matching.}
+LPIPS \citep{lpips} measures fidelity against trajectory-indexed ground truth.
+The LPIPS network and spatial preprocessing are \TBD. FVD \citep{fvd} uses
+16-frame clips, four clips per video, frame stride four, and 224-pixel inputs,
+with the same I3D detector within each comparison. The exact clip-start rule
+and detector/configuration identifiers are \TBD. We report FVD as a
+distribution-level statistic, not an average of per-video FVD scores.
+
+We additionally report six reference-free VBench dimensions \citep{vbench}:
+subject consistency, background consistency, motion smoothness, dynamic degree,
+aesthetic quality, and imaging quality. VBench-Long is evaluated separately
+using its custom-video protocol and final dimension scores (benchmark citation:
+\TBD). Each policy is evaluated on the same original fifteen videos, without
+the extra seeds present in some generation directories. Per-video scores are
+averaged with equal video weight. We report the dimensions separately rather
+than constructing a new overall quality score. These appearance-based scores
+complement, rather than replace, trajectory-conditioned fidelity evaluation.
+
+CUT3R-based camera evaluation \citep{cut3r} is conditional on passing a
+ground-truth camera sanity check. Validated rotation and translation results
+are currently \TBD; provisional outputs from the unresolved calibration are
+not treated as camera-accuracy evidence. The VMem demo protocol has no dense
+ground-truth novel-view video, so it does not support the same GT-based
+LPIPS/FVD comparison as the main suites.
+
+\paragraph{Resource evaluation.}
+We distinguish the number of retained items from archive bytes, total host
+memory, peak GPU memory, and retrieval latency. Timing measurements must use
+matched hardware and generation settings, CUDA synchronization where relevant,
+and a stated warm-up policy. The device, timing protocol, and measured results
+are \TBD. End-to-end timing includes descriptor extraction and archive updates;
+retrieval-only timing is reported separately.
+
+\subsection{Video Quality at a Fixed Budget}
+\label{sec:exp-quality}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Primary 60-second evaluation on fifteen matched videos per system.
+All bounded rows use $B=32$. Lower is better. \TBD\ denotes an unfilled
+result, not a zero or a failed run. Absolute scores are compared only within
+each system.}
+\label{tab:exp-quality-60}
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{2}{c}{MemCam} & \multicolumn{2}{c}{WorldMem} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Policy & LPIPS & FVD & LPIPS & FVD \\
+\midrule
+Complete retention & \TBD & \TBD & 0.652 & 3077.6 \\
+FIFO & \TBD & \TBD & 0.689 & 3554.9 \\
+\RI / Latent-\RI & \TBD & \TBD & 0.546 & 1160.4 \\
+K-center & \TBD & \TBD & 0.559 & \TBD \\
+MCE & \TBD & \TBD & 0.575 & \TBD \\
+\Geo & 0.5850 & 690.5 & 0.534 & 1116.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:exp-quality-60} compares retention policies under a common
+budget. In WorldMem, \Geo-32 lowers LPIPS from 0.652 to 0.534 and FVD from
+3077.6 to 1116.9 relative to complete retention. FIFO-32 worsens both metrics,
+while Latent-\RI improves both. Among the reported B32 policies, \Geo has
+the lowest LPIPS, and the lowest FVD among policies with available FVD values.
+The result supports structured archive composition rather than recency alone.
+The corresponding complete MemCam 60-second comparison is \TBD.
+
+\paragraph{Extension to 180 seconds.}
+The longer MemCam experiment tests whether the bounded archive remains useful
+as the rollout grows. Table~\ref{tab:exp-quality-180} shows that \Geo-32
+retains 32 rather than 5,397 frames while lowering FVD from 734.2 to 476.6
+(35.1\%) and LPIPS from 0.5980 to 0.5876. FIFO improves FVD but worsens
+trajectory-indexed LPIPS. Thus, a lower distributional video score alone does
+not establish better reconstruction of the commanded scene.
+
+\begin{table}[t]
+\centering
+\small
+\caption{MemCam duration extension: fifteen matched 180-second videos.
+Lower LPIPS and FVD are better.}
+\label{tab:exp-quality-180}
+\begin{tabular}{lrrr}
+\toprule
+Policy & Retained frames & LPIPS & FVD \\
+\midrule
+Complete retention & 5,397 & 0.5980 & 734.2 \\
+FIFO-32 & 32 & 0.6514 & 677.3 \\
+\RI-32 & 32 & 0.5939 & 550.4 \\
+\Geo-32 & 32 & \textbf{0.5876} & \textbf{476.6} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Perceptual Quality and Temporal Consistency}
+\label{sec:exp-vbench}
+
+\begin{table}[t]
+\centering
+\small
+\caption{MemCam, fifteen matched 60-second videos. Scores are multiplied by
+100; higher is better according to each metric. Standard VBench and
+VBench-Long are separate evaluators. RI's incomplete Long cohort is not
+reported as a fifteen-video mean.}
+\label{tab:exp-vbench}
+\begin{tabular}{lrrrrrr}
+\toprule
+Policy & Subject & Background & Motion & Dynamic & Aesthetic & Imaging \\
+\midrule
+\multicolumn{7}{l}{\emph{Standard VBench}} \\
+Complete retention & 80.53 & 90.17 & 99.27 & 100.00 & 45.42 & 49.25 \\
+FIFO-32 & 77.01 & 89.51 & 99.28 & 100.00 & 45.35 & 50.78 \\
+\RI-32 & 81.28 & 89.80 & 99.19 & 100.00 & 45.99 & 50.16 \\
+\Geo-32 & 81.78 & 90.47 & 99.21 & 100.00 & 46.14 & 50.54 \\
+\midrule
+\multicolumn{7}{l}{\emph{VBench-Long}} \\
+Complete retention & 95.26 & 95.52 & 99.28 & 93.12 & 43.45 & 47.63 \\
+FIFO-32 & 95.47 & 95.58 & 99.30 & 91.18 & 43.49 & 48.95 \\
+\RI-32 & \TBD & \TBD & \TBD & \TBD & \TBD & \TBD \\
+\Geo-32 & 94.70 & 95.36 & 99.23 & 97.42 & 44.13 & 48.81 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On standard VBench, \Geo-32 has the highest subject consistency, background
+consistency, and aesthetic quality among the four displayed policies
+(Table~\ref{tab:exp-vbench}). Its imaging quality improves over complete
+retention but is slightly below FIFO; motion smoothness is also slightly
+lower than FIFO. Dynamic degree is saturated for all four policies.
+The fresh GeoCov-only evaluation reproduces the previously matched standard
+scores closely; the table uses the fresh GeoCov values and the matched
+historical values for the other policies.
+
+VBench-Long exposes a different tradeoff. \Geo has higher dynamic degree and
+aesthetic quality than complete retention and FIFO, but lower subject and
+background consistency. Its imaging quality exceeds complete retention but
+not FIFO. These results do not support uniform superiority across temporal
+consistency metrics. In the paired diagnostic, the subject-consistency
+disadvantage relative to FIFO is concentrated in the within-clip component;
+the positive raw cross-clip background difference is attenuated by the
+benchmark's score mapping before fusion. This decomposition explains how the
+reported ranking is formed, but does not replace the final benchmark scores
+or establish a causal explanation for the videos' behavior.
+
+The corresponding WorldMem VBench and VBench-Long results are \TBD.
+Complete matched RI VBench-Long coverage remains \TBD/15; the supplied
+evaluation currently contains seven completed videos.
+
+\subsection{Transfer to Surfel-Indexed Memory}
+\label{sec:exp-vmem}
+
+VMem tests a complementary setting: the reader already uses spatial indexing
+and geometric reference selection. The comparison asks whether maintaining
+the eligible archive adds value on top of that reader, rather than replacing
+it. Table~\ref{tab:exp-vmem} reserves the matched reference-free evaluation.
+The measured quality effect, per-case variation, and completed-pair count are
+\TBD. No positive transfer claim is inferred from the availability of the
+implementation alone.
+
+\begin{table}[t]
+\centering
+\small
+\caption{VMem transfer protocol: fifteen planned paired 60-second cases
+across five input images. Results require completed-pair and configuration
+verification. Scores are on the same $\times100$ scale as
+Table~\ref{tab:exp-vbench}.}
+\label{tab:exp-vmem}
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{2}{c}{VBench} & \multicolumn{2}{c}{VBench-Long} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Dimension & Unbounded & \Geo-32 & Unbounded & \Geo-32 \\
+\midrule
+Subject consistency & \TBD & \TBD & \TBD & \TBD \\
+Background consistency & \TBD & \TBD & \TBD & \TBD \\
+Motion smoothness & \TBD & \TBD & \TBD & \TBD \\
+Dynamic degree & \TBD & \TBD & \TBD & \TBD \\
+Aesthetic quality & \TBD & \TBD & \TBD & \TBD \\
+Imaging quality & \TBD & \TBD & \TBD & \TBD \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Budget Sensitivity and Resource Scaling}
+\label{sec:exp-budget}
+
+The budget sweep tests whether the B32 result depends on a single capacity
+choice. In WorldMem, \Geo's 60-second LPIPS is 0.525, 0.534, 0.545, and
+0.577 at B16, B32, B64, and B128, respectively, compared with 0.652 for
+complete retention. In the MemCam 180-second extension, the corresponding
+LPIPS values are 0.5876, 0.5876, 0.5865, and 0.5913, and FVD values are
+446.1, 476.6, 493.9, and 515.5. The primary MemCam 60-second budget curve
+is \TBD. These within-policy observations show that additional retained
+history does not necessarily improve final quality; they do not establish
+a universal optimal budget or an intrinsic penalty for candidate count.
+
+For MemCam's exact retriever, an archive receiving $s$ items per chunk stores
+$O(Ts)$ items after $T$ chunks and requires $O(T^2s)$ cumulative candidate
+comparisons for a fixed number of queries per chunk. A bounded archive uses
+$O(B)$ persistent items and $O(TB)$ cumulative comparisons. The graph update
+cost is $O((B+s)^2)$ per chunk in the direct implementation. These are
+archive and candidate-scoring bounds, not constant-total-memory or measured
+end-to-end speed claims. Approximate indexing may accelerate a growing
+archive without bounding its storage.
+
+Measured archive bytes, retrieval latency, update overhead, host memory,
+and peak GPU memory are \TBD\ for the matched duration sweep. WorldMem's
+representation-specific measurements are \TBD. For VMem, report eligible-view
+count and surfel count separately: the current adapter bounds the former,
+while the latter and additional retained process state may still grow.
+
+\subsection{What Makes the Retained Archive Useful?}
+\label{sec:exp-mechanism}
+
+The memory diagnostics separate retaining an informative observation from
+actually retrieving it. On thirteen common-source trajectories at B32,
+complete retention has zero retention gap but a selection gap of 0.2188.
+\Geo incurs a retention gap of 0.0426 while reducing the selection gap to
+0.1470. \RI retains slightly better hindsight evidence (0.0399 retention
+gap), but leaves more of its quality unused by the retriever (0.1609
+selection gap). The diagnostics therefore measure different consequences
+of archive design rather than treating retention capacity as retrieval quality.
+
+A separate common-source analysis fixes candidate pixels to one rollout and
+compares selected images against ground truth at their own historical indices.
+Across fifteen trajectories, \Geo's selected-frame PSNR exceeds complete
+retention by 4.629 dB and SSIM by 0.1512. This measures the fidelity of selected
+historical content, not whether its view exactly matches the current query.
+Both archives contain the initial conditioning image. Excluding disagreements
+where \Geo selects that image leaves a 1.060 dB PSNR advantage and 0.0449
+SSIM advantage. Restricting further to selections with FOV overlap at least
+0.80 in both policies gives differences of 0.103 dB and 0.0098, with both
+confidence intervals crossing zero. Thus, the large aggregate effect is not
+evidence that \Geo generally detects cleaner generated images at matched views.
+
+Finally, randomly expanding a fixed recent-history B32 pool to full history
+changes the retrieval winner on 72.2\% of queries, but does not significantly
+reduce selected-frame fidelity. The full-history minus B32 differences are
+0.228 dB PSNR (95\% CI $[-0.109,0.664]$) and 0.0011 SSIM
+(95\% CI $[-0.0117,0.0188]$). This intervention does not support
+candidate-count-only degradation in the tested setting. Together, the
+controls motivate archive composition as a design variable without claiming
+that archive growth alone causes a snowballing loss of quality.
+
+\paragraph{Scope of the evidence.}
+Policy development used the MemCam suite; it is not an untouched test set.
+LPIPS and FVD results above are point estimates, with matched uncertainty
+\TBD. Existing paired VBench diagnostic intervals bootstrap trajectories
+and are exploratory, without multiple-comparison adjustment. For VMem,
+uncertainty should account for the five shared scene inputs rather than
+treating all fifteen camera cases as independent scenes. The supported
+conclusion is that structured bounded retention can improve the reported
+generation and fidelity metrics, while temporal-consistency tradeoffs,
+validated camera accuracy, and measured system-level savings remain
+separate empirical questions.

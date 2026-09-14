@@ -1,0 +1,22 @@
+{
+  "description": "Preview from user-provided matched-cohort reports, not recomputed metrics. Scores are equal-video means on a 0-1 scale, rounded to six decimals in the reports.",
+  "cohort": {"videos": 15, "duration_seconds": 60, "bounded_budget": 32},
+  "sources": {
+    "VBench": "User attachment 2963167f-4298-4729-9bf4-b78774508a6a/pasted-text.txt: Cohort effect on standard VBench, Matched mean column; diagnosis dated 2026-09-14.",
+    "VBench-Long": "User attachment dd1e025d-ca58-4eae-ade2-7f5b8275cb07/pasted-text.txt: VBench-Long table from collect_matched_video_metrics.py; final fused scores, not internal branches."
+  },
+  "excluded": "RI-32 has only 7/15 completed VBench-Long videos in the supplied reports and is excluded from both panels.",
+  "dimensions": ["subject_consistency", "background_consistency", "motion_smoothness", "dynamic_degree", "aesthetic_quality", "imaging_quality"],
+  "scores": {
+    "VBench": {
+      "unbounded": [0.805288, 0.901710, 0.992711, 1.000000, 0.454224, 0.492519],
+      "fifo": [0.770139, 0.895066, 0.992803, 1.000000, 0.453479, 0.507843],
+      "geo": [0.817803, 0.904790, 0.992135, 1.000000, 0.461361, 0.505419]
+    },
+    "VBench-Long": {
+      "unbounded": [0.952609, 0.955235, 0.992846, 0.931183, 0.434490, 0.476268],
+      "fifo": [0.954659, 0.955839, 0.992957, 0.911828, 0.434901, 0.489451],
+      "geo": [0.947013, 0.953636, 0.992279, 0.974194, 0.441332, 0.488053]
+    }
+  }
+}

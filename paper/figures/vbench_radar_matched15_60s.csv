@@ -1,0 +1,7 @@
+benchmark,policy,n,subject_consistency,background_consistency,motion_smoothness,dynamic_degree,aesthetic_quality,imaging_quality
+VBench,Unbounded,15,80.5288,90.1710,99.2711,100.0000,45.4224,49.2519
+VBench,FIFO-32,15,77.0139,89.5066,99.2803,100.0000,45.3479,50.7843
+VBench,GeoCov-32,15,81.7803,90.4790,99.2135,100.0000,46.1361,50.5419
+VBench-Long,Unbounded,15,95.2609,95.5235,99.2846,93.1183,43.4490,47.6268
+VBench-Long,FIFO-32,15,95.4659,95.5839,99.2957,91.1828,43.4901,48.9451
+VBench-Long,GeoCov-32,15,94.7013,95.3636,99.2279,97.4194,44.1332,48.8053
