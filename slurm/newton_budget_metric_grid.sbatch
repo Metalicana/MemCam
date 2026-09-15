@@ -11,13 +11,24 @@
 #SBATCH --array=0-83%2
 
 set -euo pipefail
-MEMCAM_PYTHON="${CONDA_PREFIX:?Activate memcam before calling sbatch}/bin/python"
-if [[ "${CONDA_DEFAULT_ENV:-}" != "memcam" || ! -x "$MEMCAM_PYTHON" ]]; then
-    echo "Activate the memcam Conda environment before submission." >&2
+MEMCAM_ENV_PATH="${MEMCAM_ENV_PATH:-$HOME/.conda/envs/memcam}"
+MEMCAM_PYTHON="$MEMCAM_ENV_PATH/bin/python"
+if [[ ! -x "$MEMCAM_PYTHON" ]]; then
+    echo "No Python at $MEMCAM_PYTHON; set MEMCAM_ENV_PATH to the memcam environment directory." >&2
     exit 1
 fi
 module load cuda
 module load ffmpeg
+# Evaluator subprocesses use conda run, not interactive shell activation.
+if ! type -P conda >/dev/null; then
+    module load anaconda
+fi
+if ! type -P conda >/dev/null; then
+    echo "No conda executable on PATH after loading anaconda." >&2
+    exit 1
+fi
+export PATH="$MEMCAM_ENV_PATH/bin:$PATH"
+echo "Launcher Python: $MEMCAM_PYTHON"
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/memcam_mpl_${SLURM_JOB_ID}"

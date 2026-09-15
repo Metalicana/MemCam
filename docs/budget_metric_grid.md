@@ -17,6 +17,24 @@ It covers **MemCam only**, not separate WorldMem or VMem repositories.
 
 ## Submit From Newton
 
+For direct submission, from `$HOME/MemCam`:
+
+```bash
+sbatch --export=ALL slurm/newton_budget_metric_grid.sbatch
+```
+
+This path prepares one shared plan automatically inside the array, under
+`$HOME/memcam_results/budget_metrics_60s_<array-job-id>`. It uses
+`$HOME/.conda/envs/memcam/bin/python` directly (override with `MEMCAM_ENV_PATH`),
+without relying on inherited `CONDA_PREFIX` or running `conda activate`.
+It loads the anaconda module only if a Conda executable is not on PATH;
+metric subprocesses still use `conda run` for their respective environments.
+The known cohort audit is reused if present. This direct path submits all
+84 slots, with completed quality tasks validating and exiting early, and
+does not submit an automatic collector. Run `report --plan ...` afterward.
+
+### Optional Python Submission
+
 After transferring the updated code to `$HOME/MemCam`, activate `memcam` and run:
 
 ```bash
