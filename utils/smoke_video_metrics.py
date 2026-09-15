@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from audit_metric_coverage import DIMENSIONS, bench_details, finite, valid_bench_score
+from metric_environment import metric_command
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -21,8 +22,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 def cuda_check_code():
     return (
-        "import torch; assert torch.cuda.is_available(); "
-        "x = torch.ones(1, device='cuda'); x.mul_(2); torch.cuda.synchronize(); "
+        "import sys; print('Preflight Python:', sys.executable, flush=True); "
+        "print('Importing torch', flush=True); import torch; "
+        "print('Checking CUDA availability', flush=True); assert torch.cuda.is_available(); "
+        "print('Allocating CUDA tensor', flush=True); x = torch.ones(1, device='cuda'); "
+        "print('Executing CUDA kernel', flush=True); x.mul_(2); torch.cuda.synchronize(); "
         "assert x.item() == 2; print('GPU allocation/kernel OK:', torch.cuda.get_device_name(0))"
     )
 
@@ -170,7 +174,7 @@ def main():
     scores = work / "cut3r_metrics"
     cuda_check = cuda_check_code()
     def conda(env, *command):
-        return ["conda", "run", "--no-capture-output", "-n", env, *command]
+        return metric_command(env, *command)
 
     stages = {
         "vbench-long": [

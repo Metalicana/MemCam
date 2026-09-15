@@ -11,7 +11,7 @@
 #SBATCH --array=0-83%2
 
 set -euo pipefail
-MEMCAM_ENV_PATH="${MEMCAM_ENV_PATH:-$HOME/.conda/envs/memcam}"
+export MEMCAM_ENV_PATH="${MEMCAM_ENV_PATH:-$HOME/.conda/envs/memcam}"
 MEMCAM_PYTHON="$MEMCAM_ENV_PATH/bin/python"
 if [[ ! -x "$MEMCAM_PYTHON" ]]; then
     echo "No Python at $MEMCAM_PYTHON; set MEMCAM_ENV_PATH to the memcam environment directory." >&2
@@ -19,14 +19,6 @@ if [[ ! -x "$MEMCAM_PYTHON" ]]; then
 fi
 module load cuda
 module load ffmpeg
-# Evaluator subprocesses use conda run, not interactive shell activation.
-if ! type -P conda >/dev/null; then
-    module load anaconda
-fi
-if ! type -P conda >/dev/null; then
-    echo "No conda executable on PATH after loading anaconda." >&2
-    exit 1
-fi
 export PATH="$MEMCAM_ENV_PATH/bin:$PATH"
 echo "Launcher Python: $MEMCAM_PYTHON"
 export PYTHONUNBUFFERED=1

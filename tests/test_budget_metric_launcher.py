@@ -56,13 +56,12 @@ class BudgetLauncherTests(unittest.TestCase):
             self.assertIn("set MEMCAM_ENV_PATH", result.stderr)
             self.assertFalse((root / "calls").exists())
 
-    def test_missing_conda_executable_fails_before_evaluation(self):
+    def test_no_conda_executable_required(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = self.run_launcher(root, conda_available=False)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("No conda executable", result.stderr)
-            self.assertFalse((root / "calls").exists())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((root / "calls").exists())
 
 
 if __name__ == "__main__":

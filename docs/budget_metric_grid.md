@@ -27,8 +27,12 @@ This path prepares one shared plan automatically inside the array, under
 `$HOME/memcam_results/budget_metrics_60s_<array-job-id>`. It uses
 `$HOME/.conda/envs/memcam/bin/python` directly (override with `MEMCAM_ENV_PATH`),
 without relying on inherited `CONDA_PREFIX` or running `conda activate`.
-It loads the anaconda module only if a Conda executable is not on PATH;
-metric subprocesses still use `conda run` for their respective environments.
+Metric subprocesses also launch their environment's Python directly; no
+`conda run`, anaconda module, or shell activation is used by this batch script.
+VBench defaults to `$HOME/.conda/envs/vbench` (override `VBENCH_ENV_PATH`).
+Subprocesses prepend the target environment's `bin` to PATH and clear
+PYTHONHOME/PYTHONPATH; activation hooks are not sourced. CUDA preflight logs
+separate Python startup, Torch import, availability, allocation, and kernel steps.
 The known cohort audit is reused if present. This direct path submits all
 84 slots, with completed quality tasks validating and exiting early, and
 does not submit an automatic collector. Run `report --plan ...` afterward.

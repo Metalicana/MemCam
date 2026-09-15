@@ -21,6 +21,7 @@ import tempfile
 from audit_matched_metric_cohorts import RUNS, identity
 from audit_metric_coverage import DIMENSIONS, bench_details, finite, valid_bench_score
 from collect_matched_video_metrics import read_video
+from metric_environment import metric_command
 from run_matched_video_metrics import latest_suite, matched_rows, resume_plan
 from smoke_video_metrics import REPO, cuda_check_code, select_video
 
@@ -233,7 +234,7 @@ def verify_lengths(plan, task, work):
 
 
 def conda(env, *command):
-    return ["conda", "run", "--no-capture-output", "-n", env, *map(str, command)]
+    return metric_command(env, *command)
 
 
 def freeze_environment(plan, env):

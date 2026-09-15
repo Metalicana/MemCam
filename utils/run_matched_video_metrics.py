@@ -15,6 +15,7 @@ import tempfile
 import uuid
 
 from collect_matched_video_metrics import read_video
+from metric_environment import metric_command
 from smoke_video_metrics import REPO, cuda_check_code, load, select_video
 
 
@@ -121,10 +122,8 @@ def main():
                "dry_run": args.dry_run, "cut3r_calibrated": False, "results": []}
     if not args.dry_run:
         env = "vbench" if args.only == "vbench-long" else "memcam"
-        subprocess.run(["conda", "run", "--no-capture-output", "-n", env,
-                        "python", "-c", cuda_check_code()], check=True, timeout=90)
-        freeze = subprocess.check_output(["conda", "run", "--no-capture-output", "-n", env,
-                                          "python", "-m", "pip", "freeze"], text=True)
+        subprocess.run(metric_command(env, "python", "-c", cuda_check_code()), check=True, timeout=90)
+        freeze = subprocess.check_output(metric_command(env, "python", "-m", "pip", "freeze"), text=True)
         if resuming and sorted((work / "pip_freeze.txt").read_text().splitlines()) != sorted(freeze.splitlines()):
             raise ValueError("Evaluator environment changed; use a fresh suite rather than mixing versions")
         if not resuming:

@@ -156,6 +156,7 @@ class GridTests(unittest.TestCase):
                 grid.save(output / "test_eval_results.json", payload)
 
             with patch.object(grid, "verify_lengths"), patch.object(grid, "freeze_environment", return_value="freeze"), \
+                 patch.object(grid, "metric_command", side_effect=lambda env, *command: list(map(str, command))), \
                  patch.object(grid.subprocess, "run"), patch.object(grid, "run_logged", side_effect=evaluate):
                 grid.run_task(plan_path, 1)
             status = grid.load(grid.task_dir(plan, plan["tasks"][1]) / "status.json")
