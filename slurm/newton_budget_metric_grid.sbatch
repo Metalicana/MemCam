@@ -4,7 +4,7 @@
 #SBATCH --error=budget_metrics_%A_%a.err
 #SBATCH --partition=normal
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
-#SBATCH --exclude=evc33,evc40,evc44
+#SBATCH --exclude=evc33,evc40,evc43,evc44
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00

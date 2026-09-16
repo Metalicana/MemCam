@@ -122,7 +122,7 @@ def main():
                "dry_run": args.dry_run, "cut3r_calibrated": False, "results": []}
     if not args.dry_run:
         env = "vbench" if args.only == "vbench-long" else "memcam"
-        subprocess.run(metric_command(env, "python", "-c", cuda_check_code()), check=True, timeout=90)
+        subprocess.run(metric_command(env, "python", "-c", cuda_check_code()), check=True)
         freeze = subprocess.check_output(metric_command(env, "python", "-m", "pip", "freeze"), text=True)
         if resuming and sorted((work / "pip_freeze.txt").read_text().splitlines()) != sorted(freeze.splitlines()):
             raise ValueError("Evaluator environment changed; use a fresh suite rather than mixing versions")

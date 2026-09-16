@@ -366,7 +366,7 @@ def run_task(plan_path, task_id):
             if needs_gpu:
                 verify_lengths(plan, task, work)
                 env = "vbench" if evaluator in ("vbench", "vbench-long") else "memcam"
-                subprocess.run(conda(env, "python", "-c", cuda_check_code()), check=True, timeout=90)
+                subprocess.run(conda(env, "python", "-c", cuda_check_code()), check=True)
                 freeze = freeze_environment(plan, env)
                 (work / "pip_freeze.txt").write_text(freeze)
             if evaluator == "quality":
