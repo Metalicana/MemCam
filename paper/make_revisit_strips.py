@@ -52,8 +52,9 @@ def visit_groups(poses, fps, args):
             visits.append(best)
         if len(visits) < args.min_visits:
             continue
-        # Collapse alternative anchors finding the same temporal visit episodes.
-        key = tuple(int(i // max(1, round(fps * args.min_gap_sec))) for i in visits)
+        # Only deduplicate identical frames. Coarse time bins can discard a
+        # better-aligned anchor before ground-truth agreement is checked.
+        key = tuple(visits)
         if key in seen:
             continue
         seen.add(key)
@@ -96,6 +97,70 @@ def verify_gt(item, frames, threshold):
     pairs = [{"a": a, "b": b, "ssim": frame_metrics(pixels[a], pixels[b])["ssim"]}
              for n, a in enumerate(frames) for b in frames[n + 1:]]
     return min(pair["ssim"] for pair in pairs) >= threshold, pairs, images
+
+
+def diagnose(args, items):
+    """Audit view availability without decoding generated videos or tuning on scores."""
+    from make_memory_strips import strip
+    profiles = [("strict", args.position_m, args.rotation_deg),
+                ("nearby", max(.5, args.position_m), max(10., args.rotation_deg)),
+                ("wider", max(1., args.position_m), max(15., args.rotation_deg))]
+    records, errors = [], []
+    for row, item in items.items():
+        try:
+            poses = load_poses(item, args.dataset_root)
+            parts = []
+            for name, position, rotation in profiles:
+                options = argparse.Namespace(**vars(args))
+                options.position_m, options.rotation_deg = position, rotation
+                options.min_visits = 2
+                groups = visit_groups(poses, float(item["fps"]), options)
+                result = {"row": row, "scene": item["scene"], "profile": name,
+                          "position_m": position, "rotation_deg": rotation,
+                          "pose_groups": len(groups),
+                          "max_visits": max((len(g["all_pose_visits"]) for g in groups), default=0),
+                          "gt_checks": []}
+                summaries = []
+                for category, pool in (("2visits", [g for g in groups if len(g["frames"]) == 2]),
+                                       ("3plus", [g for g in groups if len(g["frames"]) >= 3])):
+                    best, best_images = None, None
+                    checked = []
+                    # Spread checks across the pose-only ordering rather than
+                    # inspecting only nearly identical top-ranked anchors.
+                    indexes = np.linspace(0, len(pool) - 1, min(len(pool), args.diagnostic_gt_checks), dtype=int)
+                    for index in indexes:
+                        group = pool[index]
+                        good, pairs, images = verify_gt(item, group["frames"], args.min_gt_ssim)
+                        record = dict(group, gt_pairs=pairs, min_gt_ssim=min(p["ssim"] for p in pairs),
+                                      gt_passed=good)
+                        checked.append(record)
+                        if best is None or record["min_gt_ssim"] > best["min_gt_ssim"]:
+                            best, best_images = record, images
+                    result["gt_checks"].append({"category": category, "available_groups": len(pool),
+                        "checked_groups": len(checked), "passed_among_checked": sum(c["gt_passed"] for c in checked),
+                        "best": best, "checked": checked})
+                    if best:
+                        frames = best["frames"]
+                        stem = args.output / f"inspection_row{row}_{name}_{category}_gt"
+                        strip([best_images[i] for i in frames],
+                              [f"GT | {i / item['fps']:.1f}s" for i in frames], stem)
+                        stem.with_suffix(".json").write_text(json.dumps({
+                            "row": row, "profile": name, "position_m": position, "rotation_deg": rotation,
+                            "candidate": best, "status": "GT-only inspection; not a confirmed same-view figure",
+                        }, indent=2) + "\n")
+                    summaries.append(f"{category}={best['min_gt_ssim']:.3f}" if best else f"{category}=none")
+                parts.append(f"{name}: max_visits={result['max_visits']}, best_checked_GT " + ", ".join(summaries))
+                records.append(result)
+            print(f"row {row} {item['scene']}\n  " + "\n  ".join(parts), flush=True)
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append({"row": row, "error": str(exc)})
+            print(errors[-1], flush=True)
+    (args.output / "diagnostics.json").write_text(json.dumps({
+        "parameters": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+        "records": records, "errors": errors,
+        "note": "No generated pixels used. Strict retains the requested pose tolerance; nearby/wider are separately labeled sensitivity checks, not automatic relaxations. GT checks sample each visit-count category; a failed sample does not prove no suitable group exists. Previews are GT-only for checking whether the same place/view is visible."
+    }, indent=2) + "\n")
+    print(f"Diagnostics and GT-only previews: {args.output}")
 
 
 def render(case, images, ground_truth, output):
@@ -166,10 +231,12 @@ def main():
     parser.add_argument("--min-gt-ssim", type=float, default=.9)
     parser.add_argument("--pose-stride", type=int, default=15)
     parser.add_argument("--decode-timeout", type=int, default=600)
+    parser.add_argument("--diagnose", action="store_true", help="Audit 2+ returns and GT agreement; no generated video decoding")
+    parser.add_argument("--diagnostic-gt-checks", type=int, default=12, help="Max GT groups per visit-count category and pose profile")
     args = parser.parse_args()
     if (args.min_visits < 2 or args.max_visits < args.min_visits or args.top < 1 or args.pose_stride < 1
             or min(args.position_m, args.rotation_deg, args.min_gap_sec, args.min_away_sec, args.decode_timeout) <= 0
-            or not 0 <= args.min_gt_ssim <= 1):
+            or args.diagnostic_gt_checks < 1 or not 0 <= args.min_gt_ssim <= 1):
         parser.error("Invalid thresholds or counts")
     args.output.mkdir(parents=True, exist_ok=True)
     if any(args.output.iterdir()):
@@ -178,6 +245,11 @@ def main():
     candidates, coverage, gt_cache = [], [], {}
     items = {i["_row"]: remap_gt_dir(i, args.dataset_root) for i in load_manifest(args.manifest, args.duration)
              if selected_rows is None or i["_row"] in selected_rows}
+    if not items:
+        parser.error("No matching trajectories")
+    if args.diagnose:
+        diagnose(args, items)
+        return
     for row, item in items.items():
         try:
             groups = visit_groups(load_poses(item, args.dataset_root), float(item["fps"]), args)

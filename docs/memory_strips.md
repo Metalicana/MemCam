@@ -37,6 +37,26 @@ select the longer 180-second rollouts. Do not call these causal snowball proofs:
 they demonstrate how generated content behaves on repeated requested views.
 The first repeated location can already be wrong relative to GT.
 
+If the search returns no figures, audit availability before changing thresholds:
+
+```bash
+python paper/make_revisit_strips.py --diagnose --pose-stride 5 \
+  --output "$HOME/memcam_results/revisit_diagnostics_$(date +%Y%m%d_%H%M%S)"
+```
+
+This counts separate returns including two-visit pairs, and samples GT agreement
+for pairs versus groups of three or more. It reports the original pose tolerance
+and explicitly separate 0.5m/10deg and 1m/15deg sensitivity profiles. Each profile
+still requires a sustained departure beyond twice its own pose tolerance.
+Profiles need not have monotonically increasing visit counts because a wider
+tolerance can merge continuous visits. Up to 12 groups per category/profile
+are checked, spread across pose-ranked candidates; best checked SSIM is not an
+exhaustive maximum. GT-only previews show why candidates pass or fail. No
+generated MP4 is decoded, no policy-quality filtering is performed, and rejected
+groups are not promoted to same-view examples. Alternative anchors are now
+deduplicated only when their selected frame lists are identical, not merely
+when visits fall into the same coarse time bins.
+
 ## Retrieval
 
 ```bash

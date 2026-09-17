@@ -1,9 +1,13 @@
 import argparse
+from contextlib import redirect_stdout
 import importlib.util
+import io
+import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -63,6 +67,31 @@ class RevisitStripTests(unittest.TestCase):
             Image.new("RGB", (96, 64), "black").save(root / "0100.png")
             good, _, _ = revisit.verify_gt(item, [1, 50, 100], .9)
             self.assertFalse(good)
+
+    def test_diagnostics_separates_pairs_from_three_visit_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.options()
+            args.output, args.dataset_root = root, None
+            args.min_gt_ssim, args.diagnostic_gt_checks = .9, 12
+            groups = [{"anchor": 1, "frames": frames, "all_pose_visits": frames}
+                      for frames in ([1, 50], [1, 50, 100])]
+            def verify(item, frames, threshold):
+                score = .95 if len(frames) == 2 else .85
+                return score >= threshold, [{"ssim": score}], {i: Image.new("RGB", (48, 32)) for i in frames}
+            with patch.object(revisit, "load_poses", return_value=None), \
+                 patch.object(revisit, "visit_groups", return_value=groups), \
+                 patch.object(revisit, "verify_gt", side_effect=verify), redirect_stdout(io.StringIO()):
+                revisit.diagnose(args, {0: {"scene": "fixture", "fps": 10}})
+            report = json.loads((root / "diagnostics.json").read_text())
+            self.assertEqual(len(report["records"]), 3)
+            strict = report["records"][0]
+            self.assertEqual(strict["position_m"], .25)
+            self.assertEqual(strict["max_visits"], 3)
+            self.assertEqual(strict["gt_checks"][0]["passed_among_checked"], 1)
+            self.assertEqual(strict["gt_checks"][1]["passed_among_checked"], 0)
+            self.assertTrue((root / "inspection_row0_strict_3plus_gt.png").exists())
+            self.assertNotIn("selected", report)
 
 
 if __name__ == "__main__":
