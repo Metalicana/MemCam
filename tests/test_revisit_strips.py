@@ -20,6 +20,64 @@ SPEC.loader.exec_module(revisit)
 
 
 class RevisitStripTests(unittest.TestCase):
+    def preview_report(self):
+        return {"records": [{
+            "row": 3, "scene": "fixture", "profile": "strict",
+            "position_m": .25, "rotation_deg": 5,
+            "gt_checks": [
+                {"category": "2visits", "best": {"frames": [1, 50], "gt_passed": False}},
+                {"category": "3plus", "best": {"frames": [1, 50, 100], "gt_passed": False}},
+            ],
+        }]}
+
+    def test_cached_previews_preserve_indices_without_ssim_gate(self):
+        report = self.preview_report()
+        items = {3: {"scene": "fixture", "fps": 10, "num_frames": 140}}
+        cases = revisit.preview_candidates(report, items, "strict", "auto")
+        self.assertEqual(cases[0]["frames"], [1, 50, 100])
+        self.assertFalse(cases[0]["gt_passed"])
+        self.assertEqual(revisit.preview_candidates(report, items, "strict", "2visits")[0]["frames"], [1, 50])
+        self.assertEqual(revisit.preview_candidates(report, items, "nearby", "auto"), [])
+        report["records"][0]["gt_checks"][1]["best"] = None
+        self.assertEqual(revisit.preview_candidates(report, items, "strict", "auto")[0]["frames"], [1, 50])
+        items[3]["scene"] = "wrong scene"
+        with self.assertRaises(ValueError):
+            revisit.preview_candidates(report, items, "strict", "auto")
+        items[3]["scene"] = "fixture"
+        items[3]["num_frames"] = 50
+        with self.assertRaises(ValueError):
+            revisit.preview_candidates(report, items, "strict", "auto")
+
+    def test_cached_cli_renders_failed_gt_preview_without_pose_search(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = self.preview_report()
+            report["parameters"] = {"root": str(root), "duration": 60, "ours_run": "custom_policy"}
+            (root / "diagnostics.json").write_text(json.dumps(report))
+            item = {"_row": 3, "scene": "fixture", "fps": 10, "num_frames": 140,
+                    "output_prefix": "fixture_", "gt_frames_dir": str(root), "start_frame": 0}
+            images = {i: Image.new("RGB", (96, 64), color) for i, color in
+                      ((1, "white"), (50, "black"), (100, "red"))}
+            for i, img in images.items():
+                img.save(root / f"{i:04d}.png")
+            output = root / "rendered"
+            argv = ["make_revisit_strips.py", "--from-diagnostics", str(root), "--output", str(output)]
+            with patch.object(sys, "argv", argv), \
+                 patch.object(revisit, "load_manifest", return_value=[item]), \
+                 patch.object(revisit, "remap_gt_dir", side_effect=lambda i, _: i), \
+                 patch.object(revisit, "load_poses", side_effect=AssertionError("Must not repeat pose search")), \
+                 patch.object(revisit, "load_video_frames_single_pass", return_value=images) as decode, \
+                 redirect_stdout(io.StringIO()):
+                revisit.main()
+            self.assertEqual(decode.call_count, 2)
+            self.assertEqual(decode.call_args.args[1], [1, 50, 100])
+            self.assertEqual(decode.call_args.args[0].parent.name, "custom_policy")
+            saved = json.loads((output / "revisit_search.json").read_text())
+            self.assertEqual(len(saved["selected"]), 1)
+            self.assertFalse(saved["selected"][0]["gt_passed"])
+            for suffix in (".png", ".pdf", "_ours_bare.png", "_unbounded_bare.png", "_fidelity.pdf"):
+                self.assertTrue((output / ("revisit_01_row3" + suffix)).exists(), suffix)
+
     def options(self):
         return argparse.Namespace(pose_stride=1, position_m=.25, rotation_deg=5.,
                                   min_gap_sec=3., min_away_sec=1., min_visits=3, max_visits=4)

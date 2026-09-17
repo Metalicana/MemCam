@@ -57,6 +57,25 @@ groups are not promoted to same-view examples. Alternative anchors are now
 deduplicated only when their selected frame lists are identical, not merely
 when visits fall into the same coarse time bins.
 
+To render the saved GT previews for visual comparison without applying the
+GT-SSIM gate again:
+
+```bash
+python paper/make_revisit_strips.py \
+  --from-diagnostics "$HOME/memcam_results/revisit_diagnostics_20260917_105624" \
+  --profile strict --top 15 \
+  --output "$HOME/memcam_results/revisit_figures_$(date +%Y%m%d_%H%M%S)"
+```
+
+This decodes the exact preview indices, with no new pose search. By default it
+uses the saved three-or-more-visit preview when available, otherwise the saved
+two-visit preview. Use `--visit-category 2visits` or `3plus` to choose explicitly,
+and `--rows 28,53,68` to restrict trajectories. Manifest, video root, duration,
+and policy folder are inherited from the diagnostic report unless overridden.
+GT agreement scores and bypassed-gate provenance remain in the JSON; the
+separate GT strip supports visual inspection. These are inspection candidates,
+not automatically verified identical views or evidence of causal snowballing.
+
 ## Retrieval
 
 ```bash

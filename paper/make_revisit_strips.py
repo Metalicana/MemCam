@@ -163,6 +163,32 @@ def diagnose(args, items):
     print(f"Diagnostics and GT-only previews: {args.output}")
 
 
+def preview_candidates(report, items, profile, category):
+    """Use exact exported preview frames without resampling or applying an SSIM gate."""
+    output = []
+    for record in report["records"]:
+        row = int(record["row"])
+        if record["profile"] != profile or row not in items:
+            continue
+        item = items[row]
+        if record["scene"] != item["scene"]:
+            raise ValueError(f"Diagnostic scene does not match manifest row {row}")
+        options = {entry["category"]: entry.get("best") for entry in record["gt_checks"]}
+        best = (options.get("3plus") or options.get("2visits")) if category == "auto" else options.get(category)
+        if best is None:
+            continue
+        frames = [int(i) for i in best["frames"]]
+        if len(frames) < 2 or frames != sorted(set(frames)) or not all(0 < i < int(item["num_frames"]) for i in frames):
+            raise ValueError(f"Invalid diagnostic frame indices for row {row}: {frames}")
+        output.append(dict(best, row=row, scene=item["scene"], fps=float(item["fps"]),
+                           frames=frames, profile=profile, position_m=record["position_m"],
+                           rotation_deg=record["rotation_deg"],
+                           span_sec=(frames[-1] - frames[0]) / float(item["fps"]),
+                           view_selection="Exact diagnostic preview; SSIM gate bypassed explicitly",
+                           source_manifest_item=item))
+    return output
+
+
 def render(case, images, ground_truth, output):
     import matplotlib
     matplotlib.use("Agg")
@@ -214,12 +240,12 @@ def render(case, images, ground_truth, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=REPO / "testbeds/context_memory/manifest.jsonl")
-    parser.add_argument("--root", type=Path, default=Path.home() / "memcam_results/context_memory_60s")
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--root", type=Path)
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--ours-run", default="slam_b32_covisibility")
-    parser.add_argument("--duration", type=int, default=60)
+    parser.add_argument("--ours-run")
+    parser.add_argument("--duration", type=int)
     parser.add_argument("--rows")
     parser.add_argument("--top", type=int, default=5)
     parser.add_argument("--min-visits", type=int, default=3)
@@ -233,7 +259,25 @@ def main():
     parser.add_argument("--decode-timeout", type=int, default=600)
     parser.add_argument("--diagnose", action="store_true", help="Audit 2+ returns and GT agreement; no generated video decoding")
     parser.add_argument("--diagnostic-gt-checks", type=int, default=12, help="Max GT groups per visit-count category and pose profile")
+    parser.add_argument("--from-diagnostics", type=Path, help="Render exact saved preview frames; no SSIM gate or new pose search")
+    parser.add_argument("--profile", choices=("strict", "nearby", "wider"), default="strict")
+    parser.add_argument("--visit-category", choices=("auto", "2visits", "3plus"), default="auto",
+                        help="For cached previews: auto uses 3+ visits where available, otherwise the two-visit preview")
     args = parser.parse_args()
+    if args.diagnose and args.from_diagnostics:
+        parser.error("Choose --diagnose or --from-diagnostics, not both")
+    cached = None
+    if args.from_diagnostics:
+        if args.from_diagnostics.is_dir():
+            args.from_diagnostics = args.from_diagnostics / "diagnostics.json"
+        cached = json.loads(args.from_diagnostics.read_text())
+    previous = cached.get("parameters", {}) if cached else {}
+    args.manifest = args.manifest or Path(previous.get("manifest") or REPO / "testbeds/context_memory/manifest.jsonl")
+    args.root = args.root or Path(previous.get("root") or Path.home() / "memcam_results/context_memory_60s")
+    args.duration = args.duration if args.duration is not None else int(previous.get("duration") or 60)
+    args.ours_run = args.ours_run or previous.get("ours_run") or "slam_b32_covisibility"
+    if args.dataset_root is None and previous.get("dataset_root"):
+        args.dataset_root = Path(previous["dataset_root"])
     if (args.min_visits < 2 or args.max_visits < args.min_visits or args.top < 1 or args.pose_stride < 1
             or min(args.position_m, args.rotation_deg, args.min_gap_sec, args.min_away_sec, args.decode_timeout) <= 0
             or args.diagnostic_gt_checks < 1 or not 0 <= args.min_gt_ssim <= 1):
@@ -250,7 +294,15 @@ def main():
     if args.diagnose:
         diagnose(args, items)
         return
-    for row, item in items.items():
+    if cached:
+        candidates = preview_candidates(cached, items, args.profile, args.visit_category)
+        for case in candidates:
+            # Scores remain available for inspection, but are not an acceptance gate.
+            _, pairs, gt = verify_gt(items[case["row"]], case["frames"], args.min_gt_ssim)
+            case["current_gt_pairs"] = pairs
+            gt_cache[case["row"]] = gt
+            print(f"row {case['row']}: using saved {case['profile']} preview frames {case['frames']}", flush=True)
+    for row, item in ([] if cached else items.items()):
         try:
             groups = visit_groups(load_poses(item, args.dataset_root), float(item["fps"]), args)
             accepted = None
@@ -285,11 +337,13 @@ def main():
             selected.append(case)
         except (OSError, ValueError, RuntimeError) as exc:
             coverage.append({"row": case["row"], "status": "render error", "error": str(exc)})
+            print(coverage[-1], flush=True)
     (args.output / "revisit_search.json").write_text(json.dumps({
         "parameters": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
         "coverage": coverage, "selected": selected,
-        "selection": "Pose/GT only, one group per trajectory; prioritize visit count then temporal span. No policy-quality filter.",
-        "note": "Separate returns require a sustained departure beyond twice the pose tolerance. Same requested view, not proof the generated camera followed it. A single GT reference represents pairwise-GT-verified visits; exact-index GT is used for scores. This shows revisit behavior, not causal memory propagation."
+        "selection": ("Exact diagnostic preview frames, without the SSIM gate; prioritize visit count then temporal span. No policy-quality filter."
+                      if cached else "Pose/GT only, one group per trajectory; prioritize visit count then temporal span. No policy-quality filter."),
+        "note": "Separate returns require a sustained departure beyond twice the pose tolerance. Same requested view, not proof the generated camera followed it. A single GT reference is displayed; each visit's exact-index GT is used for scores and exported separately for inspection. Cached-preview mode does not require the original GT-SSIM threshold to pass. This shows revisit behavior, not causal memory propagation."
     }, indent=2) + "\n")
     print(f"{len(selected)} same-view revisit figures saved to {args.output}")
     if not selected:
