@@ -96,8 +96,10 @@ itself bound the archive from which that context is drawn.
 Full retention makes storage grow with generated history, while selective
 construction can make it grow with explored space. Suppressing repeated views
 of one room does not limit the number of distinct rooms that an archive may
-eventually represent. Exhaustive retrieval also becomes more expensive as
-the archive expands, although spatial indices can mitigate lookup cost.
+eventually represent. With exhaustive retrieval, the system therefore does
+progressively more lookup work even though the number of context slots supplied
+to the generator remains fixed (Table~\ref{tab:lookup-scaling}). Spatial indices
+can mitigate lookup cost.
 There is a separate quality concern: these observations are generated, not
 ground-truth measurements. A geometrically relevant memory may contain scene
 errors that are then supplied as conditioning for later generation. In our
@@ -105,6 +107,8 @@ complete-retention rollouts, selected historical indices become more
 view-aligned over time while the generated content at those indices becomes
 more corrupted (Fig.~\ref{fig:mechanism}). Retaining every observation is
 therefore neither a storage solution nor a guarantee of useful conditioning.
+
+\input{lookup_scaling_table}
 
 We study a complementary question: \emph{which historical views should remain
 available when persistent memory cannot grow?} A rule for admitting an

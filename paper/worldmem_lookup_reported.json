@@ -1,0 +1,16 @@
+{
+  "system": "WorldMem",
+  "duration_sec": 60,
+  "videos": 15,
+  "run": "worldmem_memquality_unbounded_60s_n15_seed101",
+  "source": "/data/ab575577/worldmem/outputs/memory_quality_60s/metrics/retrieval_deterioration_unbounded_60s/tables/query_decomposition.csv",
+  "evidence": "User-supplied build_worldmem_lookup_work_table.py output; raw CSV and aggregation code not independently audited here.",
+  "initial_history": "Reported candidate counts start at 600; initial-history origin requires confirmation.",
+  "aggregation": "Reported window means; exact weighting not independently verified.",
+  "windows": [
+    {"start_sec": 0, "end_sec": 15, "candidate_mean": 674.5, "candidate_min": 600, "candidate_max": 749, "retrieved_per_query": 8},
+    {"start_sec": 15, "end_sec": 30, "candidate_mean": 824.5, "candidate_min": 750, "candidate_max": 899, "retrieved_per_query": 8},
+    {"start_sec": 30, "end_sec": 45, "candidate_mean": 974.5, "candidate_min": 900, "candidate_max": 1049, "retrieved_per_query": 8},
+    {"start_sec": 45, "end_sec": 60, "candidate_mean": 1124.5, "candidate_min": 1050, "candidate_max": 1199, "retrieved_per_query": 8}
+  ]
+}
