@@ -98,8 +98,11 @@ construction can make it grow with explored space. Suppressing repeated views
 of one room does not limit the number of distinct rooms that an archive may
 eventually represent. With exhaustive retrieval, the system therefore does
 progressively more lookup work even though the number of context slots supplied
-to the generator remains fixed (Table~\ref{tab:lookup-scaling}). Spatial indices
-can mitigate lookup cost.
+to the generator remains fixed (Table~\ref{tab:lookup-work}). Between the first
+and final rollout quarters, the mean eligible candidate count grows
+6.98-fold in the 180-second MemCam diagnostic and 1.67-fold in the reported
+60-second WorldMem diagnostic. These counts describe retrieval workload,
+not measured latency; spatial indices can mitigate lookup cost.
 There is a separate quality concern: these observations are generated, not
 ground-truth measurements. A geometrically relevant memory may contain scene
 errors that are then supplied as conditioning for later generation. In our
@@ -108,7 +111,7 @@ view-aligned over time while the generated content at those indices becomes
 more corrupted (Fig.~\ref{fig:mechanism}). Retaining every observation is
 therefore neither a storage solution nor a guarantee of useful conditioning.
 
-\input{lookup_scaling_table}
+\input{unified_lookup_20260917_132111/lookup_work}
 
 We study a complementary question: \emph{which historical views should remain
 available when persistent memory cannot grow?} A rule for admitting an
@@ -154,7 +157,8 @@ policy comparisons, not reproductions of external spatial-memory systems.
     retention has no deletion loss but the largest selection gap; FIFO loses
     useful history. At matched budgets, \RI has lower retention gap than
     \Geo, while \Geo has lower selection gap. Values use common-source pixels
-    on thirteen trajectories; lower-left is better.}
+    on thirteen trajectories; lower-left is better. Formal definitions are
+    given in Sec.~\ref{sec:gaps}.}
     \label{fig:retention-selection}
 \end{figure*}
 
@@ -416,32 +420,67 @@ we treat $B$ as a system parameter rather than claim a universal optimum.
 \subsection{Testing coverage and retrieval}
 \label{sec:gaps}
 
-For target $q$, let $d(i,q)$ be the DINO distance between generated memory $i$
-and exact-index target ground truth. Let $\mathcal{H}$ be complete history,
-$M$ a policy archive, $i_M^*=\arg\min_{i\in M}d(i,q)$ the hindsight-best
-retained item, and $i_R$ the item chosen by the real retriever. We define
+For a target-frame query $q$, let $\mathcal{H}_q$ contain all historical
+indices eligible for retrieval before the current chunk is generated, and
+let $M_{p,q}\subseteq\mathcal{H}_q$ be the eligible indices retained by
+policy $p$. Future frames and the local continuation frames excluded by the
+reader belong to neither set. Let $i_{p,q}\in M_{p,q}$ be the index actually
+selected by the unchanged FOV retriever.
+
+To compare banks without changing the pixels used to score them, every
+historical index $i$ is represented by the image $\hat{x}^{\mathrm{src}}_i$
+from one common complete-retention rollout. Each policy contributes its
+logged bank and selected index, not its own generated pixels. With
+L2-normalized DINOv2-Base features $\phi$, define
+\begin{equation}
+ d(i,q)=1-\phi(\hat{x}^{\mathrm{src}}_i)^\top\phi(x_q^{\GT}),
+\end{equation}
+where $x_q^{\GT}$ is ground truth at the target's exact trajectory index.
+This distance measures target appearance mismatch, not perceptual image
+quality alone or a memory's true downstream conditioning utility.
+
+For each query, compare three distances: the best available in complete
+eligible history, $a_q=\min_{i\in\mathcal{H}_q}d(i,q)$; the best retained,
+$b_{p,q}=\min_{i\in M_{p,q}}d(i,q)$; and the actually selected distance,
+$c_{p,q}=d(i_{p,q},q)$. Since $a_q\leq b_{p,q}\leq c_{p,q}$,
 \begin{align}
- \Delta_{\mathrm{ret}} &= d(i_M^*,q)-\min_{i\in\mathcal{H}}d(i,q), \\
- \Delta_{\mathrm{sel}} &= d(i_R,q)-d(i_M^*,q).
+ \Delta_{\mathrm{ret}}(p,q) &= b_{p,q}-a_q, \\
+ \Delta_{\mathrm{sel}}(p,q) &= c_{p,q}-b_{p,q}.
  \label{eq:gaps}
 \end{align}
-Retention gap measures quality lost by deletion. Selection gap measures
-quality present in the archive but unused by the retriever. Both require
-ground truth and are diagnostics, not runtime objectives.
+The \emph{retention gap} is the extra mismatch incurred because the best
+remaining item is worse than the best item in complete eligible history.
+It is zero if the bank retains an equally good item. The \emph{selection
+gap} is the extra mismatch incurred because the actual retriever does not
+choose the best retained item. Their sum is the selected item's shortfall
+from the common-history oracle:
+\begin{equation}
+ \Delta_{\mathrm{ret}}+\Delta_{\mathrm{sel}}=c_{p,q}-a_q.
+\end{equation}
+A singleton bank has zero selection gap regardless of how poor its only
+item is; neither component should be interpreted in isolation. Both gaps
+use ground truth only for offline diagnosis, not at generation time.
+
+We average the gaps over shared sampled queries within each trajectory and
+then weight trajectories equally. The budgets and policies in this comparison
+use the same thirteen-trajectory subset. Common-source scoring controls the
+evaluated pixels, but the logged banks still reflect each policy's own
+generation history; this is not a controlled intervention on downstream
+video quality.
 
 \begin{table}[!htbp]
 \centering
 \caption{Common-source gaps at B32 on thirteen trajectories. Lower is better.}
 \label{tab:gaps}
 \small
-\begin{tabular}{lrr}
+\begin{tabular}{lrrr}
 \toprule
-Policy & Retention gap & Selection gap \\
+Policy & Retention & Selection & Total \\
 \midrule
-Complete retention & 0.0000 & 0.2188 \\
-FIFO & 0.1668 & \textbf{0.0646} \\
-\RI & \textbf{0.0399} & 0.1609 \\
-\Geo & 0.0426 & 0.1470 \\
+Complete retention & 0.0000 & 0.2188 & 0.2188 \\
+FIFO & 0.1668 & \textbf{0.0646} & 0.2314 \\
+\RI & \textbf{0.0399} & 0.1609 & 0.2008 \\
+\Geo & 0.0426 & 0.1470 & \textbf{0.1896} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -451,7 +490,9 @@ selection gap (Table~\ref{tab:gaps}). FIFO creates an easy selection problem by
 discarding distant history, at the cost of the largest retention gap. \RI and
 \Geo preserve substantially more useful history while reducing the selection
 gap relative to complete retention. At B32, \Geo gives up 0.0027 retention gap
-relative to \RI and gains 0.0139 selection gap.
+relative to \RI and gains 0.0139 selection gap. Its total gap is 0.1896,
+compared with 0.2008 for \RI and 0.2314 for FIFO; FIFO's small selection
+gap alone would give a misleading picture of its selected evidence.
 
 Every measured increase from B16 to B128 lowers retention gap and raises
 selection gap (Fig.~\ref{fig:retention-selection}). For \Geo, their sum is

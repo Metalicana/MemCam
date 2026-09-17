@@ -114,25 +114,68 @@ def table_rows(summaries):
     return result
 
 
-def latex(rows):
-    lines = [r"\begin{table}[t]", r"\centering", r"\small",
-             r"\caption{Eligible archive size at sampled unbounded retrieval queries. Windows partition each system's own rollout; horizons and query definitions differ. Means and observed ranges are shown; growth is relative to the first window within each system. These are candidate counts, not measured latency. WorldMem values are reported summaries pending source audit.}",
-             r"\label{tab:lookup-work}", r"\begin{tabular}{llrrr}", r"\toprule",
-             r"System & Window (s) & Eligible/query & Read/query & Growth \\", r"\midrule"]
-    previous = None
+def attach_latency(rows, path, memcam):
+    provenance = json.loads(path.with_name("provenance.json").read_text())
+    if (provenance.get("status") != "complete" or provenance.get("system") != "MemCam"
+            or provenance.get("benchmark") != "isolated_cpu_retrieval_replay"
+            or provenance.get("summary_sha256") != hashlib.sha256(path.read_bytes()).hexdigest()):
+        raise ValueError("Need a completed MemCam replay with a matching summary hash")
+    expected = {(int(i[0]), i[1], int(i[2])) for i in memcam["trajectories"]}
+    actual = {(int(i["row"]), i["scene"], int(i["dataset_start_frame"])) for i in provenance["cohort"]}
+    if actual != expected or provenance["parameters"]["baseline_run"] != memcam["run"]:
+        raise ValueError("Latency and count cohorts/runs differ")
+    if provenance["parameters"]["ours_run"] != "slam_b32_covisibility":
+        raise ValueError("Latency Ours run must be slam_b32_covisibility")
+    with path.open(newline="") as handle:
+        timing_rows = list(csv.DictReader(handle))
+    indexed = {}
+    for r in timing_rows:
+        key = (r["system"], float(r["start_sec"]), float(r["end_sec"]))
+        if key in indexed or r["system"] != "MemCam" or int(r["duration_sec"]) != memcam["duration_sec"]:
+            raise ValueError("Duplicate or incompatible latency window")
+        for policy in ("unbounded", "ours"):
+            value = float(r[f"{policy}_query_ms"])
+            if not math.isfinite(value) or value <= 0 or int(r[f"{policy}_videos"]) != memcam["videos"]:
+                raise ValueError("Invalid timing or latency cohort size")
+        indexed[key] = r
+    matched = 0
     for row in rows:
-        system = row["system"]
-        if system != previous and previous is not None:
+        if row["system"] != "MemCam":
+            continue
+        timing = indexed[(row["system"], row["start_sec"], row["end_sec"])]
+        row.update({f"{p}_query_ms": float(timing[f"{p}_query_ms"]) for p in ("unbounded", "ours")})
+        matched += 1
+    if matched != len(indexed):
+        raise ValueError("Unmatched latency windows")
+    return provenance
+
+
+def latex(rows):
+    lines = [r"\begin{table*}[t]", r"\centering", r"\small",
+             r"\caption{\textbf{Ours bounds the candidate bank while preserving the retrieval interface.} Unbounded counts are observed window means; Ours ($B=32$) shows the enforced candidate-count upper bound, not a measured mean. Numeric query times are measured by isolated retrieval replay; unmeasured cells remain TBD.}",
+             r"\label{tab:lookup-work}", r"\begin{tabular}{llrrrr}", r"\toprule",
+             r"& & \multicolumn{2}{c}{Frames considered per query} & \multicolumn{2}{c}{Mean query time (ms)} \\",
+             r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+             r"System & Generated time (s) & Unbounded (mean) & Ours ($B=32$) & Unbounded & Ours ($B=32$) \\", r"\midrule"]
+    groups = defaultdict(list)
+    for row in rows:
+        groups[(row["system"], row["duration_sec"])].append(row)
+    for index, ((system, duration), windows) in enumerate(groups.items()):
+        windows = sorted(windows, key=lambda r: r["start_sec"])
+        first, last = windows[0], windows[-1]
+        if len({r["retrieved_per_query"] for r in windows}) != 1:
+            raise ValueError("The fixed-context caption requires constant retrieved counts")
+        if index:
             lines.append(r"\midrule")
-        label = system if system != previous else ""
-        lines.append(f"{label} & {row['start_sec']:g}--{row['end_sec']:g} & "
-                     f"{row['candidate_mean']:,.1f} ({row['candidate_min']:,.0f}--{row['candidate_max']:,.0f}) & "
-                     f"{row['retrieved_per_query']} & {row['growth']:.2f}" + r"$\times$ \\")
-        previous = system
+        for row in (first, last):
+            times = [f"{row[f'{p}_query_ms']:.2f}" if f"{p}_query_ms" in row else "TBD"
+                     for p in ("unbounded", "ours")]
+            lines.append(f"{system} & {row['start_sec']:g}--{row['end_sec']:g} & "
+                         f"{row['candidate_mean']:,.1f} & " + r"$\leq 32$ & " + " & ".join(times) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}", r"\par\smallskip",
               r"\begin{minipage}{\linewidth}\footnotesize",
-              r"MemCam selects one memory per target-frame query to populate 76 context slots per chunk; repeated indices are allowed. WorldMem selects eight memories per read and starts with 600 context frames, then generates 600 more at 10 FPS. WorldMem windows measure generated time after this initial history. MemCam means weight trajectories equally; WorldMem reports means over 150 consecutive queries per window. Cohort sizes are recorded in the accompanying CSV. Absolute counts are not a cross-system speed comparison.",
-              r"\end{minipage}", r"\end{table}"]
+              r"Both policies select one frame per query in MemCam (76 context slots per chunk), and eight in WorldMem. Query time covers candidate scoring and selection, excluding encoding, denoising, and bank updates; comparisons require matched hardware and retrieval settings. WorldMem starts with 600 context frames; its duration excludes this initial history. WorldMem counts are reported summaries pending raw-source audit.",
+              r"\end{minipage}", r"\end{table*}"]
     return "\n".join(lines) + "\n"
 
 
@@ -144,12 +187,14 @@ def main():
     parser.add_argument("--fps", type=float, default=30)
     parser.add_argument("--expected-videos", type=int, default=15)
     parser.add_argument("--worldmem-summary", type=Path, default=Path(__file__).with_name("worldmem_lookup_reported.json"))
+    parser.add_argument("--latency-summary", type=Path, help="Completed MemCam replay latency_summary.csv with sibling provenance.json")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     memcam = memcam_counts(args.input, args.run, args.duration, args.fps, args.expected_videos)
     worldmem = json.loads(args.worldmem_summary.read_text())
     summaries = [memcam, worldmem]
     rows = table_rows(summaries)
+    timing_provenance = attach_latency(rows, args.latency_summary, memcam) if args.latency_summary else None
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("Use an empty output directory")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -161,7 +206,13 @@ def main():
     (args.output / "lookup_work.tex").write_text(latex(rows))
     provenance = {"systems": summaries, "input_sha256": hashlib.sha256(args.input.read_bytes()).hexdigest(),
                   "worldmem_summary_sha256": hashlib.sha256(args.worldmem_summary.read_bytes()).hexdigest(),
-                  "limits": "No wall-clock timings, memory-byte measurements or FOV-operation estimates. WorldMem summary is user-reported, not raw-data verified. MemCam completeness checks cover matching CSV rows, not source-video or trace hashes."}
+                  "ours_table_column": {"budget": 32, "candidate_upper_bound": 32,
+                                        "evidence": "Enforced budget bound, not an observed policy mean; no Ours query logs loaded."},
+                  "query_latency": {"status": "MemCam replay complete; WorldMem pending" if timing_provenance else "pending", "unit": "ms/query",
+                                    "replay_provenance": timing_provenance,
+                                    "scope": "Candidate scoring and selection; excludes encoding, denoising and bank updates.",
+                                    "requirement": "Matched hardware and retrieval settings within each system; no conversion from candidate counts."},
+                  "limits": "No generation latency, memory-byte measurements or FOV-operation estimates. Query timings, if supplied, are isolated replays. WorldMem summary is user-reported, not raw-data verified. MemCam count checks cover matching CSV rows, not source-video or trace hashes."}
     (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     print("SYSTEM    WINDOW(s)    ELIGIBLE/QUERY (RANGE)    READ/QUERY  GROWTH")
     for r in rows:

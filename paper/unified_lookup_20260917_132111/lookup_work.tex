@@ -1,0 +1,23 @@
+\begin{table*}[t]
+\centering
+\small
+\caption{\textbf{Ours bounds the candidate bank while preserving the retrieval interface.} Unbounded counts are observed window means; Ours ($B=32$) shows the enforced candidate-count upper bound, not a measured mean. Numeric query times are measured by isolated retrieval replay; unmeasured cells remain TBD.}
+\label{tab:lookup-work}
+\begin{tabular}{llrrrr}
+\toprule
+& & \multicolumn{2}{c}{Frames considered per query} & \multicolumn{2}{c}{Mean query time (ms)} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+System & Generated time (s) & Unbounded (mean) & Ours ($B=32$) & Unbounded & Ours ($B=32$) \\
+\midrule
+MemCam & 0--45 & 671.9 & $\leq 32$ & TBD & TBD \\
+MemCam & 135--180 & 4,689.5 & $\leq 32$ & TBD & TBD \\
+\midrule
+WorldMem & 0--15 & 674.5 & $\leq 32$ & TBD & TBD \\
+WorldMem & 45--60 & 1,124.5 & $\leq 32$ & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Both policies select one frame per query in MemCam (76 context slots per chunk), and eight in WorldMem. Query time covers candidate scoring and selection, excluding encoding, denoising, and bank updates; comparisons require matched hardware and retrieval settings. WorldMem starts with 600 context frames; its duration excludes this initial history. WorldMem counts are reported summaries pending raw-source audit.
+\end{minipage}
+\end{table*}

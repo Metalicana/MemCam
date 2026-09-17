@@ -1,0 +1,215 @@
+{
+  "systems": [
+    {
+      "system": "MemCam",
+      "duration_sec": 180,
+      "videos": 15,
+      "run": "baseline",
+      "source": "/lustre/fs1/home/ab575577/memcam_results/context_180s/unbounded_failure_decomposition_180s/tables/query_decomposition.csv",
+      "windows": [
+        {
+          "start_sec": 0.0,
+          "end_sec": 45.0,
+          "candidate_mean": 671.9253731343283,
+          "candidate_min": 73,
+          "candidate_max": 1289,
+          "retrieved_per_query": 1,
+          "sampled_queries": 1005
+        },
+        {
+          "start_sec": 45.0,
+          "end_sec": 90.0,
+          "candidate_mean": 1992,
+          "candidate_min": 1289,
+          "candidate_max": 2657,
+          "retrieved_per_query": 1,
+          "sampled_queries": 1080
+        },
+        {
+          "start_sec": 90.0,
+          "end_sec": 135.0,
+          "candidate_mean": 3350.6338028169016,
+          "candidate_min": 2657,
+          "candidate_max": 4025,
+          "retrieved_per_query": 1,
+          "sampled_queries": 1065
+        },
+        {
+          "start_sec": 135.0,
+          "end_sec": 180.0,
+          "candidate_mean": 4689.457142857143,
+          "candidate_min": 4025,
+          "candidate_max": 5317,
+          "retrieved_per_query": 1,
+          "sampled_queries": 1050
+        }
+      ],
+      "aggregation": "Query mean per trajectory/window, then equal-weight trajectory mean; ranges over sampled queries.",
+      "evidence": "Reconstructed eligible counts at sampled logged reads; checked against logged counts where present.",
+      "queries": 4200,
+      "queries_with_logged_count": 4200,
+      "trajectories": [
+        [
+          "0",
+          "AncientTempleEnv_5",
+          "684",
+          "180",
+          ""
+        ],
+        [
+          "1",
+          "AnimeCitySuburbs_5",
+          "304",
+          "180",
+          ""
+        ],
+        [
+          "10",
+          "FeudalJapan_0",
+          "1900",
+          "180",
+          ""
+        ],
+        [
+          "11",
+          "FeudalJapan_2",
+          "1444",
+          "180",
+          ""
+        ],
+        [
+          "12",
+          "FeudalJapan_3",
+          "2128",
+          "180",
+          ""
+        ],
+        [
+          "13",
+          "IslandMap_2",
+          "304",
+          "180",
+          ""
+        ],
+        [
+          "14",
+          "Warehouse_0",
+          "684",
+          "180",
+          ""
+        ],
+        [
+          "2",
+          "ChemicalPlantEnv_5",
+          "1824",
+          "180",
+          ""
+        ],
+        [
+          "3",
+          "ClothingStore_1",
+          "228",
+          "180",
+          ""
+        ],
+        [
+          "4",
+          "ClothingStore_6",
+          "1444",
+          "180",
+          ""
+        ],
+        [
+          "5",
+          "ContainerYard_3",
+          "1900",
+          "180",
+          ""
+        ],
+        [
+          "6",
+          "ContainerYard_7",
+          "608",
+          "180",
+          ""
+        ],
+        [
+          "7",
+          "ContainerYard_9",
+          "2204",
+          "180",
+          ""
+        ],
+        [
+          "8",
+          "DragonRise_1",
+          "1292",
+          "180",
+          ""
+        ],
+        [
+          "9",
+          "DragonRise_9",
+          "1672",
+          "180",
+          ""
+        ]
+      ],
+      "fps": 30,
+      "query_definition": "One historical selection per target-frame query; 76 context slots per chunk, not 76 unique frames.",
+      "sampling": "Uses all matching rows in the supplied diagnostic CSV, not all rollout reads."
+    },
+    {
+      "system": "WorldMem",
+      "duration_sec": 60,
+      "videos": 15,
+      "run": "worldmem_memquality_unbounded_60s_n15_seed101",
+      "source": "/data/ab575577/worldmem/outputs/memory_quality_60s/metrics/retrieval_deterioration_unbounded_60s/tables/query_decomposition.csv",
+      "evidence": "User-supplied build_worldmem_lookup_work_table.py output; raw CSV and aggregation code not independently audited here.",
+      "initial_history": "User-confirmed protocol: 600 context frames precede the generated rollout; each generated frame adds one eligible memory for subsequent queries.",
+      "initial_context_frames": 600,
+      "generated_frames": 600,
+      "fps": 10,
+      "time_origin": "Start of the 600 newly generated frames, excluding the initial context history.",
+      "aggregation": "Reported arithmetic means over 150 consecutive generated-frame queries per window; eligible count at generated index k is 600 + k, for k=0..599.",
+      "fov_work_proxy": "User reports 10,000 spatial samples per query. Candidate count times 10,000 is a logical candidate-point workload proxy, not latency or FLOPs; it excludes other operations and eight greedy selection passes. Not included in the unified count table.",
+      "windows": [
+        {
+          "start_sec": 0,
+          "end_sec": 15,
+          "candidate_mean": 674.5,
+          "candidate_min": 600,
+          "candidate_max": 749,
+          "retrieved_per_query": 8
+        },
+        {
+          "start_sec": 15,
+          "end_sec": 30,
+          "candidate_mean": 824.5,
+          "candidate_min": 750,
+          "candidate_max": 899,
+          "retrieved_per_query": 8
+        },
+        {
+          "start_sec": 30,
+          "end_sec": 45,
+          "candidate_mean": 974.5,
+          "candidate_min": 900,
+          "candidate_max": 1049,
+          "retrieved_per_query": 8
+        },
+        {
+          "start_sec": 45,
+          "end_sec": 60,
+          "candidate_mean": 1124.5,
+          "candidate_min": 1050,
+          "candidate_max": 1199,
+          "retrieved_per_query": 8
+        }
+      ]
+    }
+  ],
+  "input_sha256": "b2ea56f9c07991ade2974f9ee1394bf88cf70079d27fb97a60286deed2f75578",
+  "worldmem_summary_sha256": "e00cb5df4511504ddecb8ddf12a4ebaea0fa1d196c94e55b15ee0c06fc36bacc",
+  "limits": "No wall-clock timings, memory-byte measurements or FOV-operation estimates. WorldMem summary is user-reported, not raw-data verified. MemCam completeness checks cover matching CSV rows, not source-video or trace hashes."
+}
