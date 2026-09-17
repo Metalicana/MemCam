@@ -4,6 +4,39 @@ CPU-only export, separate from the frozen metric-grid code. No new GPU job.
 The existing five-column paper figure is left intact until real replacements
 have been inspected. New figure labels call GeoCov **Ours**.
 
+## Same Spot on Repeated Visits
+
+This is the appropriate figure for inspecting how a place changes on successive
+returns, as opposed to searching for a memory read followed by a quality drop:
+
+```bash
+python paper/make_revisit_strips.py \
+  --output "$HOME/memcam_results/revisit_strips_$(date +%Y%m%d_%H%M%S)"
+```
+
+Each figure has one GT reference at left and two rows (Unbounded, Ours), with
+columns for three or four distinct visits. Visits are matched using absolute
+camera position (0.25 m) and full orientation (5 degrees) relative to ONE anchor,
+not transitive pose clusters. The camera must have left beyond twice that
+tolerance for at least a second, and selected visits must be at least three
+seconds apart. The supplied frame zero is excluded from generated-image visits.
+All selected GT pairs must have SSIM >=0.9 at width 256, and the pose JSON's
+frame keys must agree with the manifest's GT indexing. This last check fails
+explicitly rather than silently shifting the GT reference.
+
+Selection is based only on poses, GT agreement, visit count, and elapsed time;
+it does not require Unbounded to degrade or Ours to win. One group per trajectory
+is considered for the five exported figures. The main figure contains no metric
+overlays or repeated GT tiles. A separate GT strip allows alignment inspection;
+separate PSNR/SSIM plots compare each generated frame to its own exact-index GT.
+Bare Unbounded/Ours strips and frame/provenance JSON are also saved.
+
+No qualifying repeated view produces no fallback figure. `--min-visits 2`
+explicitly requests pairs instead; `--duration`, `--manifest`, and `--root` can
+select the longer 180-second rollouts. Do not call these causal snowball proofs:
+they demonstrate how generated content behaves on repeated requested views.
+The first repeated location can already be wrong relative to GT.
+
 ## Retrieval
 
 ```bash
