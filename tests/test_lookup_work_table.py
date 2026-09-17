@@ -88,9 +88,20 @@ class LookupWorkTests(unittest.TestCase):
             self.assertIn("135--180", tex)
             self.assertIn("45--60", tex)
             self.assertIn("not measured latency", tex)
+            self.assertIn("starts with 600 context frames", tex)
+            self.assertNotIn("initial-history protocol requires confirmation", tex)
             provenance = json.loads((output / "provenance.json").read_text())
             self.assertEqual(provenance["systems"][0]["queries"], 10)
             self.assertIn("not independently audited", provenance["systems"][1]["evidence"])
+            worldmem = provenance["systems"][1]
+            self.assertEqual(worldmem["initial_context_frames"], 600)
+            self.assertEqual(worldmem["generated_frames"], worldmem["duration_sec"] * worldmem["fps"])
+            for window in worldmem["windows"]:
+                first = 600 + window["start_sec"] * worldmem["fps"]
+                last = 600 + window["end_sec"] * worldmem["fps"] - 1
+                self.assertEqual(window["candidate_min"], first)
+                self.assertEqual(window["candidate_max"], last)
+                self.assertEqual(window["candidate_mean"], (first + last) / 2)
 
 
 if __name__ == "__main__":

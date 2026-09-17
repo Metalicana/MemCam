@@ -131,7 +131,7 @@ def latex(rows):
         previous = system
     lines += [r"\bottomrule", r"\end{tabular}", r"\par\smallskip",
               r"\begin{minipage}{\linewidth}\footnotesize",
-              r"MemCam selects one memory per target-frame query to populate 76 context slots per chunk; repeated indices are allowed. WorldMem reports eight memories per read. Each cohort has its separately reported size in the accompanying CSV. WorldMem's first window starts with 600 eligible memories; the initial-history protocol requires confirmation. MemCam means weight trajectories equally; WorldMem weighting awaits verification. Absolute counts are not a cross-system speed comparison.",
+              r"MemCam selects one memory per target-frame query to populate 76 context slots per chunk; repeated indices are allowed. WorldMem selects eight memories per read and starts with 600 context frames, then generates 600 more at 10 FPS. WorldMem windows measure generated time after this initial history. MemCam means weight trajectories equally; WorldMem reports means over 150 consecutive queries per window. Cohort sizes are recorded in the accompanying CSV. Absolute counts are not a cross-system speed comparison.",
               r"\end{minipage}", r"\end{table}"]
     return "\n".join(lines) + "\n"
 
@@ -170,7 +170,7 @@ def main():
               f"       {r['retrieved_per_query']:2}       {r['growth']:.2f}x")
     print(f"MemCam: {memcam['videos']} trajectories; {memcam['queries']} sampled reads; "
           f"{memcam['queries_with_logged_count']} counts checked against logs.")
-    print("WorldMem: user-reported summary; initial history and weighting pending audit.")
+    print("WorldMem: user-reported summary; 600 initial context frames + 600 generated frames at 10 FPS; raw-source audit pending.")
     print(f"Table and provenance: {args.output}")
 
 
