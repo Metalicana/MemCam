@@ -76,6 +76,34 @@ GT agreement scores and bypassed-gate provenance remain in the JSON; the
 separate GT strip supports visual inspection. These are inspection candidates,
 not automatically verified identical views or evidence of causal snowballing.
 
+## Five-Frame Video Progression
+
+```bash
+python paper/make_progression_strips.py \
+  --output "$HOME/memcam_results/progression_strips_$(date +%Y%m%d_%H%M%S)"
+```
+
+CPU-only. The main figure has three rows (Unbounded, FIFO-B32, Ours) and five
+matched timestamps, without GT tiles or metric overlays. This uses generated
+output from each policy, not retrieved memories, and does not require revisits.
+Separate bare strips, a GT check strip, and full sampled PSNR/SSIM curves are
+exported alongside the figure. Default sampling is every two seconds at width
+256, followed by full-resolution decoding of the five display frames.
+
+The search compares equally spaced five-frame sequences spanning at least 20
+seconds. It ranks decline in both baselines, penalizes their recoveries and
+variation in Ours, and penalizes Ours finishing below either baseline. One best
+candidate per trajectory is exported, up to 15; there is no success cutoff.
+`ranking.csv` and per-trajectory `scan_row*.json` retain the scores and selection
+provenance. Missing policies are errors, never substituted. `--rows` and `--top`
+restrict the scan and output respectively; `--min-span-sec` controls the span.
+
+These are outcome-selected inspection candidates. Exact-index fidelity conflates
+view/scene mismatch with image degradation, so confirm progressive visible
+degradation manually. Neither five frames nor a decreasing fidelity curve proves
+that retrieval caused errors to accumulate. Do not label the result a causal
+snowball demonstration. The full sampled trace is plotted, not only chosen points.
+
 ## Retrieval
 
 ```bash
