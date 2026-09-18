@@ -9,13 +9,13 @@ import unittest
 from paper import benchmark_b32_query_latency as bench
 
 
-def fixture(root):
+def fixture(root, duration=60):
     count = 305
     pose = root / "poses.json"
     pose.write_text(json.dumps({"CineCameraActor": {str(i): dict(position=[i, 0, 0], rotation=[0, 0, 0])
                                                   for i in range(count)}}))
-    item = dict(scene="fixture", start_frame=0, duration_sec=60, fps=30, num_frames=count,
-                pose_path=str(pose), output_prefix="seed0_fixture_60s_")
+    item = dict(scene="fixture", start_frame=0, duration_sec=duration, fps=30, num_frames=count,
+                pose_path=str(pose), output_prefix=f"seed0_fixture_{duration}s_")
     manifest = root / "manifest.jsonl"
     manifest.write_text(json.dumps(item) + "\n")
     for _, run, policy, budget in bench.RUNS:
@@ -28,14 +28,14 @@ def fixture(root):
                                        target_frame=s * 76 + slot + 1, selected_memory_frame=candidates[0],
                                        candidate_count=len(candidates), stored_memory_size=len(bank),
                                        memory_policy=policy, memory_budget=budget,
-                                       scene="fixture", dataset_start_frame=0, duration_sec=60))
+                                       scene="fixture", dataset_start_frame=0, duration_sec=duration))
             bank.update(range(s * 76, s * 76 + 77))
             if budget:
                 keep = set(sorted(bank)[-budget:])
                 for index in sorted(bank - keep):
                     events.append(dict(event="memory_eviction", section_idx=s, evicted_memory_frame=index))
                 bank = keep
-        path = root / run / "access_traces" / "seed0_fixture_60s_custom.jsonl"
+        path = root / run / "access_traces" / f"seed0_fixture_{duration}s_custom.jsonl"
         path.parent.mkdir(parents=True)
         path.write_text("".join(json.dumps(e) + "\n" for e in events))
     return SimpleNamespace(manifest=manifest, root=root, expected_videos=1,
@@ -43,6 +43,28 @@ def fixture(root):
 
 
 class B32LatencyTests(unittest.TestCase):
+    def test_single_180s_trajectory_selected_policies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = fixture(Path(temp), duration=180)
+            first = args.manifest.read_text()
+            # Later entries have no traces: first-video mode must not load them.
+            later = json.loads(first)
+            later["output_prefix"] = "missing_180s_"
+            args.manifest.write_text(first + json.dumps(later) + "\n")
+            args.duration, args.first_video, args.sample_sections = 180, True, 2
+            args.queries_per_section = 1
+            args.run_specs = [r for r in bench.RUNS if r[0] in ("Unbounded", "FIFO", "RI", "KEEPSAKE")]
+            items, cases, _, _, archives = bench.prepare(args)
+            self.assertEqual(len(items), 1)
+            self.assertEqual([c["section_idx"] for c in cases], [1, 3])
+            self.assertEqual(len(cases[0]["candidates"]), 4)
+            records = [dict(**{k: v for k, v in c.items() if k != "candidates"},
+                            run=run, repeat=0, query_ms=1)
+                       for c in cases for _, run, _, _ in args.run_specs]
+            summary, _ = bench.summarize(records, cases, archives, 1, args.run_specs, 180)
+            self.assertEqual(len(summary), 4)
+            self.assertTrue(all(r["videos"] == 1 and r["duration_sec"] == 180 for r in summary))
+
     def test_complete_six_policy_trace_adapter_and_final_counts(self):
         with tempfile.TemporaryDirectory() as temp:
             args = fixture(Path(temp))

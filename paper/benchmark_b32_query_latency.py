@@ -1,4 +1,4 @@
-"""Six-policy, matched-60s CPU retrieval replay; no generation or feature caches."""
+"""Matched-policy CPU retrieval replay; no generation or feature caches."""
 
 import argparse
 from collections import defaultdict
@@ -52,7 +52,10 @@ def final_bank_size(events, count, budget):
 
 
 def prepare(args):
-    items = load_manifest(args.manifest, duration=60)
+    items = load_manifest(args.manifest, duration=getattr(args, "duration", 60))
+    if getattr(args, "first_video", False):
+        items = items[:1]
+    runs = getattr(args, "run_specs", RUNS)
     if len(items) != args.expected_videos or len({i["output_prefix"] for i in items}) != len(items):
         raise ValueError("Expected complete distinct matched manifest cohort")
     pose_module = load_file_module("latency_grid_poses", ROOT / "dataset/poses.py")
@@ -75,7 +78,7 @@ def prepare(args):
         sources.append({"path": str(pose_path), "sha256": digest(pose_path)})
         sections = (count - 1) // 76
         banks = {}
-        for label, run, policy, budget in RUNS:
+        for label, run, policy, budget in runs:
             path = args.root / run / "access_traces" / f"{item['output_prefix']}custom.jsonl"
             audit = audit_trace(path, item, policy, budget)
             events = read_trace(path, expected_identity=run_identity(item))
@@ -87,19 +90,24 @@ def prepare(args):
             sources.append({"path": str(path), "sha256": audit["sha256"]})
         # Every retrieved section contributes the same number of target slots.
         # All 76 actual reads per section were validated above, across all policies.
-        for section in range(1, sections):
+        selected_sections = list(range(1, sections))
+        limit = getattr(args, "sample_sections", 0)
+        if limit and limit < len(selected_sections):
+            selected_sections = [selected_sections[(2*k+1)*len(selected_sections)//(2*limit)]
+                                 for k in range(limit)]
+        for section in selected_sections:
             for k in range(args.queries_per_section):
                 slot = (2 * k + 1) * 76 // (2 * args.queries_per_section)
                 cases.append(dict(row=row_id, scene=item["scene"], dataset_start_frame=start,
                                   section_idx=section, target_frame=section * 76 + slot + 1,
                                   candidates={run: bank[section] for run, bank in banks.items()}))
-        print(f"Validated {item['scene']}: six traces, {sections - 1} retrieved sections", flush=True)
+        print(f"Validated {item['scene']}: {len(runs)} traces; timing {len(selected_sections)} sections", flush=True)
     return items, cases, pose_sets, sources, archives
 
 
-def summarize(records, cases, archives, repeats):
+def summarize(records, cases, archives, repeats, runs=RUNS, duration=60):
     expected = {(c["row"], c["section_idx"], c["target_frame"], run, r)
-                for c in cases for _, run, _, _ in RUNS for r in range(repeats)}
+                for c in cases for _, run, _, _ in runs for r in range(repeats)}
     by_query, seen = defaultdict(list), set()
     for record in records:
         key = tuple(record[k] for k in ("row", "section_idx", "target_frame", "run", "repeat"))
@@ -117,23 +125,23 @@ def summarize(records, cases, archives, repeats):
     trajectories = [dict(row=row, run=run, queries=len(values), query_ms=mean(values))
                     for (row, run), values in sorted(by_trajectory.items())]
     summary = []
-    for label, run, _, budget in RUNS:
+    for label, run, _, budget in runs:
         values = [r for r in trajectories if r["run"] == run]
         counts = [r["final_stored_frames"] for r in archives if r["run"] == run]
         if len(counts) != len(values) or len(set(counts)) != 1:
             raise ValueError("Incomplete or inconsistent final archive counts")
         summary.append(dict(system="MemCam", policy=label, run=run, budget=budget or "unbounded",
-                            duration_sec=60, videos=len(values), final_stored_frames=counts[0],
+                            duration_sec=duration, videos=len(values), final_stored_frames=counts[0],
                             sampled_queries=sum(r["queries"] for r in values), repeats=repeats,
                             query_ms=mean(r["query_ms"] for r in values)))
     return summary, trajectories
 
 
-def measure(cases, poses, repeats, seed, overlap, torch, output):
+def measure(cases, poses, repeats, seed, overlap, torch, output, run_specs=RUNS):
     rng = random.Random(seed)
     order = list(cases)
     rng.shuffle(order)
-    runs = [r[1] for r in RUNS]
+    runs = [r[1] for r in run_specs]
     records = []
     with (output / "query_timings.jsonl").open("w") as raw:
         for index, case in enumerate(order):
@@ -158,7 +166,7 @@ def measure(cases, poses, repeats, seed, overlap, torch, output):
                     records.append(record)
                     raw.write(json.dumps(record) + "\n")
                     raw.flush()
-            print(f"[{index + 1}/{len(order)}] row {case['row']}, target {case['target_frame']}: six policies timed", flush=True)
+            print(f"[{index + 1}/{len(order)}] row {case['row']}, target {case['target_frame']}: {len(runs)} policies timed", flush=True)
     return records
 
 
@@ -167,6 +175,11 @@ def main():
     parser.add_argument("--manifest", type=Path, default=ROOT / "testbeds/context_memory/manifest.jsonl")
     parser.add_argument("--root", type=Path, default=Path.home() / "memcam_results/context_memory_60s")
     parser.add_argument("--dataset-root", type=Path)
+    parser.add_argument("--duration", type=int, choices=(60, 180), default=60)
+    parser.add_argument("--first-video", action="store_true", help="Use the first matching manifest trajectory, independently of results.")
+    parser.add_argument("--sample-sections", type=int, default=0, help="Evenly sample this many sections; 0 uses all.")
+    parser.add_argument("--runs", nargs="+", default=[r[1] for r in RUNS],
+                        choices=[r[1] for r in RUNS] + ["kcenter_b32_dino_pose"])
     parser.add_argument("--expected-videos", type=int, default=15)
     parser.add_argument("--queries-per-section", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=3)
@@ -175,12 +188,18 @@ def main():
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if not 1 <= args.queries_per_section <= 76 or min(args.repeats, args.threads, args.expected_videos) < 1:
+    if (not 1 <= args.queries_per_section <= 76 or min(args.repeats, args.threads, args.expected_videos) < 1
+            or args.sample_sections < 0 or len(set(args.runs)) != len(args.runs)):
         parser.error("Invalid sampling, repeat, thread or cohort count")
+    if args.first_video:
+        args.expected_videos = 1
+    specs = {r[1]: r for r in RUNS}
+    specs["kcenter_b32_dino_pose"] = ("K-center", "kcenter_b32_dino_pose", "kcenter_coreset", 32)
+    args.run_specs = [specs[run] for run in args.runs]
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("Use an empty output directory")
     args.output.mkdir(parents=True, exist_ok=True)
-    provenance = dict(status="validating", system="MemCam", duration_sec=60, videos=args.expected_videos,
+    provenance = dict(status="validating", system="MemCam", duration_sec=args.duration, videos=args.expected_videos,
                       parameters={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()})
     path = args.output / "provenance.json"
     try:
@@ -194,7 +213,7 @@ def main():
             status="validated" if args.check_only else "running", benchmark="isolated_cpu_retrieval_replay_b32",
             query_unit="One target-frame query; one selected memory. Not per-chunk latency.",
             scope="Production CPU FOV candidate scoring and argmax. Excludes generation, RGB transfer, encoding, descriptor extraction, bank reconstruction and eviction.",
-            sampling="Two equal-count stratum midpoints per 76-query section by default; no quality/timing-based selection. Initial section has no historical read.",
+            sampling="Equal-count stratum midpoints across sections when limited, and within each selected 76-query section. No quality/timing-based selection. First-video mode selects the first duration-matching manifest entry.",
             aggregation="Mean repeats per query, sampled queries per trajectory, then equal trajectory means.",
             limitations="Replay on current hardware/code, not original rollout wall time. Monte Carlo RNG is reset outside timers; historical winners need not recur. Historical code revisions not certified.",
             cohort=items, case_count=len(cases), host=platform.node(), platform=platform.platform(),
@@ -209,12 +228,12 @@ def main():
         path.write_text(json.dumps(provenance, indent=2) + "\n")
         (args.output / "query_plan.json").write_text(json.dumps(cases) + "\n")
         write_csv(args.output / "archive_counts.csv", archives)
-        print(f"{len(cases)} target queries x six policies x {args.repeats} timed repeats; CPU threads={args.threads}", flush=True)
+        print(f"{len(cases)} target queries x {len(args.run_specs)} policies x {args.repeats} timed repeats; CPU threads={args.threads}", flush=True)
         if args.check_only:
             return
         overlap = load_file_module("b32_production_overlap", scorer).calculate_overlap_from_c2w
-        records = measure(cases, poses, args.repeats, args.seed, overlap, torch, args.output)
-        summary, trajectories = summarize(records, cases, archives, args.repeats)
+        records = measure(cases, poses, args.repeats, args.seed, overlap, torch, args.output, args.run_specs)
+        summary, trajectories = summarize(records, cases, archives, args.repeats, args.run_specs, args.duration)
         write_csv(args.output / "trajectory_latency.csv", trajectories)
         write_csv(args.output / "latency_summary.csv", summary)
         provenance.update(status="complete", timing_records=len(records), summary_sha256=digest(args.output / "latency_summary.csv"))
