@@ -1,5 +1,56 @@
 # Query Latency Experiment
 
+## Main Table: Six Policies at B32 and 60 Seconds
+
+Use this separate job for the main quality table, not the older 180-second
+two-policy replay below:
+
+```bash
+cd "$HOME/MemCam"
+sbatch slurm/newton_b32_query_latency_cpu.sbatch
+```
+
+This submits one CPU job, with no GPU, generation, feature extraction or metric
+jobs. It directly uses the memcam environment's Python, without conda activation
+or `conda run`. The eight-hour scheduler limit is a ceiling, not an estimated
+runtime. There is no short Python/CUDA preflight timeout. Progress is flushed
+after each target query. Defaults cover all fifteen 60-second manifest entries
+and Unbounded, FIFO, MCE, K-center, RI and KEEPSAKE at B32.
+
+All 76 selected reads per retrieved section are checked in every policy trace,
+including identity, candidate counts, bank membership and complete query coverage.
+Final retained-frame counts are reconstructed from writes and evictions, including
+the last update. Missing inputs or inconsistent banks fail rather than reducing
+the cohort. No GT or DINO cache is needed; only traces, the manifest and poses.
+
+By default, two equal-stratum target slots (19 and 57, zero-indexed) are timed in
+each section after the initial section. For 24-section videos this yields 46
+queries per trajectory, 690 shared target queries, and 12,420 timed measurements
+across six policies and three repetitions. Each policy/query also receives one
+untimed warmup. Query order and initial policy order are shuffled with seed 2026;
+policy order rotates across repetitions. The same current production FOV function
+and exhaustive argmax loop run for all policies, with 5,000 samples per candidate.
+Torch runs on one CPU thread. RNG reseeding and disk I/O are outside the timer.
+
+The reported value is mean milliseconds per target-frame query: average repeats,
+then sampled queries within a trajectory, then weight trajectories equally.
+It is not milliseconds per chunk or end-to-end generation latency. Descriptor
+extraction, eviction, pose/trace loading, RGB transfers and encoding are excluded.
+Actual generated frames can exceed nominal duration times FPS due to chunk rounding;
+sampling is defined by the logged sections, not a synthetic 1,800-frame cutoff.
+
+Outputs live in `~/memcam_results/b32_query_latency_60s_JOBID/`:
+`latency_summary.csv` (six main-table rows), `trajectory_latency.csv`,
+`archive_counts.csv`, `query_plan.json`, `query_timings.jsonl` and `provenance.json`.
+Provenance records CPU/affinity, Torch/thread settings, timing scope, input/code
+hashes and summary hash. Failed runs keep raw measurements and an error status;
+only complete runs produce a final validated summary. A retry uses a new directory.
+Historical source revisions and runtime environments are not retroactively certified.
+
+Use `sbatch slurm/newton_b32_query_latency_cpu.sbatch --check-only` only to audit
+inputs without timing. Do not combine the six-row summary with the four-window
+format expected by the older lookup-work table importer.
+
 ## MemCam
 
 Run `paper/benchmark_query_latency.py` in the memcam environment on a compute
