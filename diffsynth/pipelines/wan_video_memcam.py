@@ -441,8 +441,11 @@ class WanVideoMemCamPipeline(BasePipeline):
         attention_query_chunk_size=16,
         profile_path=None,
         profile_metadata=None,
-        progress_bar_cmd=tqdm
+        progress_bar_cmd=tqdm,
+        keepsake_geometry_weight=0.65,
     ):
+        if not 0.0 <= keepsake_geometry_weight <= 1.0:
+            raise ValueError("keepsake_geometry_weight must be in [0, 1]")
         # Tiler parameters
         tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
         
@@ -699,6 +702,11 @@ class WanVideoMemCamPipeline(BasePipeline):
         )
         access_trace_handle = None
         access_trace_metadata = dict(access_trace_metadata or {})
+        if memory_policy == "slam_covisibility":
+            access_trace_metadata.update(
+                keepsake_geometry_weight=float(keepsake_geometry_weight),
+                keepsake_appearance_weight=float(1.0 - keepsake_geometry_weight),
+            )
         if access_trace_path is not None:
             os.makedirs(os.path.dirname(access_trace_path) or ".", exist_ok=True)
             access_trace_handle = open(access_trace_path, "w", encoding="utf-8")
@@ -1606,6 +1614,8 @@ class WanVideoMemCamPipeline(BasePipeline):
                     pinned_frames=pinned_memory_frames,
                     dino_features=memory_dino_features,
                     rgb_features=memory_rgb_features,
+                    geometry_weight=keepsake_geometry_weight,
+                    visual_weight=1.0 - keepsake_geometry_weight,
                     return_details=True,
                 )
             elif memory_policy == "slam_ri_blend":

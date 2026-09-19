@@ -171,6 +171,10 @@ def main():
     )
     parser.add_argument("--memory_budget", type=int, default=None)
     parser.add_argument(
+        "--keepsake_geometry_weight", type=float, default=0.65,
+        help="Pose affinity weight for slam_covisibility; appearance weight is 1 minus this value. Does not change the edge threshold.",
+    )
+    parser.add_argument(
         "--rarity_neighbors",
         type=int,
         default=3,
@@ -332,6 +336,11 @@ def main():
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
+    if not 0.0 <= args.keepsake_geometry_weight <= 1.0:
+        raise ValueError("--keepsake_geometry_weight must be in [0, 1]")
+    if args.memory_policy != "slam_covisibility" and args.keepsake_geometry_weight != 0.65:
+        raise ValueError("--keepsake_geometry_weight applies only to slam_covisibility")
+
     if args.ri_rarity_neighbors < 1:
         raise ValueError("--ri_rarity_neighbors must be at least 1")
     if args.rarity_neighbors < 1:
@@ -380,6 +389,8 @@ def main():
     status_path = output_dir / "run_status.jsonl"
     policy_metadata = {
         "memory_policy": args.memory_policy,
+        "keepsake_geometry_weight": args.keepsake_geometry_weight,
+        "keepsake_appearance_weight": 1.0 - args.keepsake_geometry_weight,
         "memory_budget": args.memory_budget,
         "memory_bank_device": args.memory_bank_device,
         "rarity_neighbors": args.rarity_neighbors,
@@ -627,6 +638,7 @@ def main():
                 num_inference_steps=num_inference_steps,
                 seed=args.seed,
                 memory_policy=args.memory_policy,
+                keepsake_geometry_weight=args.keepsake_geometry_weight,
                 memory_budget=args.memory_budget,
                 memory_bank_device=args.memory_bank_device,
                 density_coverage_alpha=args.density_coverage_alpha,
@@ -681,6 +693,8 @@ def main():
                     "output": str(save_path),
                     "output_prefix": item["output_prefix"],
                     "run_memory_policy": args.memory_policy,
+                    "keepsake_geometry_weight": args.keepsake_geometry_weight,
+                    "keepsake_appearance_weight": 1.0 - args.keepsake_geometry_weight,
                     "run_memory_budget": args.memory_budget,
                     "run_memory_bank_device": args.memory_bank_device,
                     "density_coverage_alpha": args.density_coverage_alpha,
