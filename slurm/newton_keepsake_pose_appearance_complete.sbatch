@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:nvidia_h100_pcie:2
-#SBATCH --exclude=evc33,evc40,evc43,evc44
+#SBATCH --exclude=evc30,evc33,evc40,evc43,evc44,evc45
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=192G
 #SBATCH --time=72:00:00

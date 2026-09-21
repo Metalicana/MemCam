@@ -100,6 +100,14 @@ class CompleteAblationTests(unittest.TestCase):
                     study.preflight(args, "control")
                 run.assert_not_called()
 
+    def test_launcher_excludes_nodes_with_recorded_cuda_failures(self):
+        launcher = study.REPO / "slurm/newton_keepsake_pose_appearance_complete.sbatch"
+        exclusions = [line.removeprefix("#SBATCH --exclude=").split(",")
+                      for line in launcher.read_text().splitlines()
+                      if line.startswith("#SBATCH --exclude=")]
+        self.assertEqual(len(exclusions), 1)
+        self.assertTrue({"evc30", "evc45"}.issubset(exclusions[0]))
+
     def test_batch_launcher_preserves_allocation_and_propagates_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

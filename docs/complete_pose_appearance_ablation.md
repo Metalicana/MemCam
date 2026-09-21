@@ -20,7 +20,7 @@ Missing legacy affinity metadata refers to the original fixed 0.65/0.35 code.
 
 ```bash
 cd "$HOME/MemCam"
-sbatch --exclude=evc33,evc40,evc43,evc44,evc45 \
+sbatch --exclude=evc30,evc33,evc40,evc43,evc44,evc45 \
   slurm/newton_keepsake_pose_appearance_complete.sbatch
 ```
 
@@ -118,8 +118,36 @@ device and a working kernel in both environments. The model and evaluation
 settings are unchanged. This removes manual GPU partitioning from the launcher;
 it is not proof that Newton's CUDA/driver or allocation problem is resolved.
 If initialization still fails inside a Slurm step, send the job/node/step IDs,
-inventory, and current preflight log to the cluster administrators rather than
-repeatedly excluding additional nodes or removing the CUDA checks.
+inventory, and current preflight log to the cluster administrators. Do not remove
+the CUDA checks or assume that changing the device mask will fix initialization.
+
+### Repeated CUDA Failure in Job 831258
+
+Job 831258 failed on `evc30` after 4 minutes 42 seconds. The control worker was
+inside Slurm step `831258.0`, with a one-GPU resource request. Its first `memcam`
+check emitted `CUDA initialization: CUDA unknown error` and then failed
+`assert torch.cuda.is_available()`. This was not the later assertion about the
+number of visible GPUs, not a preflight timeout, and not a generation failure.
+Control evaluation and both endpoint generations had not started.
+
+Together with job 831161, this establishes two CUDA-initialization failures on
+`evc30`, including one with Slurm-managed steps. It does not distinguish a driver,
+device-access, environment, or scheduler configuration fault. The batch inventory
+again printed one GPU despite two allocated GPU IDs; that alone does not identify
+the root cause.
+
+The launcher now excludes `evc30` as a temporary scheduling workaround and includes
+`evc45` in its defaults. The submission command above explicitly includes the full
+exclusion list, so it also works with the previously downloaded launcher. Keep the
+same `keepsake_pose_appearance_180s_steps` output directory: only the batch script,
+tests and documentation changed, not the fingerprinted experiment code or inputs.
+Do not delete earlier outputs or start a new experiment directory for this change.
+
+Send Newton support the two job IDs, node name, `control.log`, and
+`preflight_control_memcam.log` from the experiment directory. The exclusion avoids
+this node; it does not repair or validate CUDA on another node. If the same error
+recurs elsewhere, investigate the shared installation and allocation configuration
+with support instead of continuing to blacklist nodes.
 
 Local tests use synthetic files and mocked GPU commands to check the entire
 orchestration, exact cohorts, metric configuration, control reuse, checkpoint reuse,
