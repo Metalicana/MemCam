@@ -3,6 +3,8 @@
 #SBATCH --output=keepsake_ablation_%j.out
 #SBATCH --error=keepsake_ablation_%j.err
 #SBATCH --partition=normal
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 #SBATCH --gres=gpu:nvidia_h100_pcie:2
 #SBATCH --exclude=evc33,evc40,evc43,evc44
 #SBATCH --cpus-per-task=16
@@ -13,7 +15,7 @@ set -euo pipefail
 module load cuda
 module load ffmpeg
 unset PYTHONHOME PYTHONPATH
-# Match CUDA ordinal ordering to Slurm/NVML; preserve the allocated device mask.
+# Each worker receives its device mask from its own one-GPU srun step.
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -31,4 +33,4 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 cd "${MEMCAM_ROOT:-$HOME/MemCam}"
 "${MEMCAM_ENV_PATH:-$HOME/.conda/envs/memcam}/bin/python" -u paper/finish_keepsake_pose_appearance.py \
-    --output "${KEEPSAKE_ABLATION_OUTPUT:-$HOME/memcam_results/keepsake_pose_appearance_180s}" "$@"
+    --output "${KEEPSAKE_ABLATION_OUTPUT:-$HOME/memcam_results/keepsake_pose_appearance_180s_steps}" "$@"

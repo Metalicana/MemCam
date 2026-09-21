@@ -1,0 +1,28 @@
+{
+  "efficiency": {
+    "source": "User-provided latency_summary.csv excerpt from Newton",
+    "source_path": "/home/ab575577/memcam_results/latency_180s_all5_20260918_172626/latency_summary.csv",
+    "source_status": "Transcribed from the reported CSV, not independently fetched from Newton",
+    "system": "MemCam",
+    "duration_sec": 180,
+    "videos": 1,
+    "sampled_queries": 8,
+    "repeats": 1,
+    "threads": 1,
+    "scope": "CPU FOV scoring and argmax only; excludes generation, transfers, encoding, descriptor extraction and eviction",
+    "records": [
+      {"policy": "Unbounded", "run": "baseline", "final_stored_frames": 5397, "query_ms": 3781.9190497500003},
+      {"policy": "KEEPSAKE", "run": "slam_b32_covisibility", "final_stored_frames": 32, "query_ms": 43.771138}
+    ]
+  },
+  "retrieval_directory": "paper/figures/retrieval_deterioration_20260917_124310",
+  "sample_directory": "paper/figures/progression_strips_20260917_113732",
+  "samples": [
+    {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 0},
+    {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 1},
+    {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 2},
+    {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 3},
+    {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 4}
+  ],
+  "sample_note": "One selected trajectory at five ordered timestamps. Each column shows exact-index GT above the corresponding Unbounded and KEEPSAKE outputs. All five positions of the saved sequence are included. The camera can move between columns; this is not a verified same-view revisit, a representative cohort result, or a causal memory-propagation test. All images are extracted intact from the existing full-frame, label-free strips, without correcting generation errors."
+}

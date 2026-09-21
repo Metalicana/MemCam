@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import signal
 from statistics import mean
 import subprocess
@@ -50,11 +51,28 @@ def cohort(manifest, duration):
     return items
 
 
+def start_log(handle, command):
+    offset = handle.tell()
+    header = {"started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "job": os.environ.get("SLURM_JOB_ID"), "step": os.environ.get("SLURM_STEP_ID"),
+              "command": list(map(str, command))}
+    handle.write(("\n=== ATTEMPT " + json.dumps(header) + " ===\n").encode())
+    handle.flush()
+    return offset
+
+
+def current_log_tail(log, offset):
+    with log.open("rb") as handle:
+        handle.seek(max(offset, log.stat().st_size - 16384))
+        return "\n".join(handle.read().decode(errors="replace").splitlines()[-20:])
+
+
 def run_command(command, log, env=None, cwd=REPO):
     log.parent.mkdir(parents=True, exist_ok=True)
     print(f"START {log}: {' '.join(map(str, command))}", flush=True)
     started = time.monotonic()
-    with log.open("a") as handle:
+    with log.open("ab") as handle:
+        offset = start_log(handle, command)
         with subprocess.Popen(list(map(str, command)), cwd=cwd, env=env,
                               stdout=handle, stderr=subprocess.STDOUT) as process:
             while True:
@@ -64,7 +82,7 @@ def run_command(command, log, env=None, cwd=REPO):
                 except subprocess.TimeoutExpired:
                     print(f"RUNNING {log.name}: {(time.monotonic()-started)/60:.0f} min; log: {log}", flush=True)
             if code:
-                tail = "\n".join(log.read_text(errors="replace").splitlines()[-20:])
+                tail = current_log_tail(log, offset)
                 raise RuntimeError(f"Command failed ({code}); {log}\n{tail}")
 
 
@@ -302,17 +320,48 @@ def prepare(args):
     return items, frozen
 
 
+def step_command(args, run):
+    # Slurm owns GPU assignment and cgroup-local device numbering for each step.
+    return ["srun", "--exclusive", "--exact", "--nodes=1", "--ntasks=1",
+            "--cpus-per-task=8", "--mem=96G", "--gres=gpu:nvidia_h100_pcie:1",
+            "--kill-on-bad-exit=1", "--export=ALL",
+            sys.executable, "-u", str(Path(__file__).resolve()), "--worker", run,
+            "--output", str(args.output), "--duration", str(args.duration),
+            "--vbench-root", str(args.vbench_root)]
+
+
+def preflight(args, run):
+    step = os.environ.get("SLURM_STEP_ID")
+    if not step or step in ("batch", "extern"):
+        raise RuntimeError("GPU workers must run inside a resource-assigned srun step")
+    allocation = {name: os.environ.get(name) for name in (
+        "SLURM_JOB_ID", "SLURM_STEP_ID", "SLURM_JOB_NODELIST", "SLURM_JOB_GPUS",
+        "SLURM_STEP_GPUS", "CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER")}
+    print(f"WORKER {run}: {json.dumps(allocation, sort_keys=True)}", flush=True)
+    check = (cuda_check_code()
+             + "; print('Visible CUDA devices:', torch.cuda.device_count(), flush=True)"
+             + "; assert torch.cuda.device_count() == 1, 'Expected one GPU in this Slurm step'")
+    for name in ("memcam", "vbench"):
+        run_command(metric_command(name, "python", "-c", check),
+                    args.output / f"preflight_{run}_{name}.log", os.environ.copy())
+
+
 def worker(args):
     run = args.worker
-    if run not in ("pose_only", "appearance_only"):
-        raise ValueError("Only endpoints may generate videos")
+    if run not in dict(SETTINGS):
+        raise ValueError(f"Unknown setting: {run}")
     items = cohort(args.output / "manifest.jsonl", args.duration)
     alpha = dict(SETTINGS)[run]
     path = args.output / f"status_{run}.json"
-    state = {"status": "running", "setting": run, "phase": "generation"}
+    state = {"status": "running", "setting": run, "phase": "preflight",
+             "job": os.environ.get("SLURM_JOB_ID"), "step": os.environ.get("SLURM_STEP_ID")}
     save(path, state)
     try:
-        generate(args, run, alpha, items, args.output / "manifest.jsonl", os.environ.copy())
+        preflight(args, run)
+        if run != "control":
+            state["phase"] = "generation"
+            save(path, state)
+            generate(args, run, alpha, items, args.output / "manifest.jsonl", os.environ.copy())
         state["phase"] = "evaluation"
         save(path, state)
         evaluate(args, run, items, args.output / "manifest.jsonl", os.environ.copy())
@@ -337,29 +386,22 @@ def stop_workers(processes):
 
 
 def execute(args):
-    devices = [d.strip() for d in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if d.strip()]
-    if len(devices) != 2:
-        raise ValueError("This job needs exactly two allocated GPUs in CUDA_VISIBLE_DEVICES")
-    items, frozen = prepare(args)
-    environments = [dict(os.environ, CUDA_VISIBLE_DEVICES=device) for device in devices]
-    # Finish real control evaluation before spending compute on either endpoint.
-    for index, env in enumerate(environments):
-        for name in ("memcam", "vbench"):
-            run_command(metric_command(name, "python", "-c", cuda_check_code()),
-                        args.output / f"preflight_gpu{index}_{name}.log", env)
+    if not os.environ.get("SLURM_JOB_ID") or not shutil.which("srun"):
+        raise RuntimeError("Submit the two-GPU batch launcher; this driver requires Slurm srun")
+    prepare(args)
     for name in ("memcam", "vbench"):
         freeze_environment({"output": str(args.output), "vbench_root": str(args.vbench_root)}, name)
-    evaluate(args, "control", items, frozen, environments[0])
+    # Finish real control evaluation before spending compute on either endpoint.
+    run_command(step_command(args, "control"), args.output / "control.log", os.environ.copy())
     children = []
     handles = []
     try:
-        for run, env in zip(("appearance_only", "pose_only"), environments):
-            handle = (args.output / f"{run}.log").open("a")
+        for run in ("appearance_only", "pose_only"):
+            handle = (args.output / f"{run}.log").open("ab")
             handles.append(handle)
-            cmd = [sys.executable, "-u", str(Path(__file__).resolve()), "--worker", run,
-                   "--output", str(args.output), "--duration", str(args.duration),
-                   "--vbench-root", str(args.vbench_root)]
-            children.append(subprocess.Popen(cmd, cwd=REPO, env=env, stdout=handle,
+            cmd = step_command(args, run)
+            start_log(handle, cmd)
+            children.append(subprocess.Popen(cmd, cwd=REPO, env=os.environ.copy(), stdout=handle,
                                               stderr=subprocess.STDOUT, start_new_session=True))
         heartbeat = 0
         while any(p.poll() is None for p in children):
@@ -391,7 +433,7 @@ def main():
     parser.add_argument("--control", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--vbench-root", type=Path, default=Path.home() / "VBench")
-    parser.add_argument("--worker", choices=("appearance_only", "pose_only"))
+    parser.add_argument("--worker", choices=("appearance_only", "control", "pose_only"))
     args = parser.parse_args()
     args.manifest = (args.manifest or REPO / ("testbeds/context_memory_180s/manifest.jsonl" if args.duration == 180
                                             else "testbeds/context_memory/manifest.jsonl")).resolve()

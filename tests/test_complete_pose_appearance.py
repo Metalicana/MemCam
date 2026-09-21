@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -48,6 +49,57 @@ def quality_artifacts(directory, items, run, duration):
 
 
 class CompleteAblationTests(unittest.TestCase):
+    def test_log_failure_contains_only_current_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "preflight.log"
+            old = "GPU allocation/kernel OK: old attempt\n"
+            log.write_text(old)
+            with self.assertRaises(RuntimeError) as error:
+                study.run_command([sys.executable, "-c", "print('new CUDA failure'); raise SystemExit(7)"], log)
+            self.assertIn("Command failed (7)", str(error.exception))
+            self.assertIn("new CUDA failure", str(error.exception))
+            self.assertNotIn("old attempt", str(error.exception))
+            self.assertTrue(log.read_text().startswith(old), "Preserve historical logs")
+            self.assertIn("=== ATTEMPT", log.read_text())
+            study.run_command([sys.executable, "-c", "print('new success')"], log)
+            self.assertEqual(log.read_text().count("=== ATTEMPT"), 2)
+
+    def test_step_resources_match_two_gpu_batch_allocation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            for run, _ in study.SETTINGS:
+                cmd = study.step_command(args, run)
+                self.assertEqual(cmd[0], "srun")
+                for option in ("--exclusive", "--exact", "--nodes=1", "--ntasks=1",
+                               "--gres=gpu:nvidia_h100_pcie:1", "--cpus-per-task=8", "--mem=96G"):
+                    self.assertIn(option, cmd)
+                self.assertEqual(cmd[cmd.index("--worker")+1], run)
+                self.assertNotIn("CUDA_VISIBLE_DEVICES", " ".join(cmd))
+
+    def test_preflight_failure_prevents_worker_generation_and_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            args.worker = "pose_only"
+            (args.output / "manifest.jsonl").write_bytes(args.manifest.read_bytes())
+            with patch.dict(os.environ, SLURM_STEP_ID="7", CUDA_VISIBLE_DEVICES="0"), \
+                    patch.object(study, "metric_command", return_value=["fixture"]), \
+                    patch.object(study, "run_command", side_effect=RuntimeError("CUDA unavailable")), \
+                    patch.object(study, "generate") as generate, patch.object(study, "evaluate") as evaluate:
+                with self.assertRaisesRegex(RuntimeError, "CUDA unavailable"):
+                    study.worker(args)
+                generate.assert_not_called()
+                evaluate.assert_not_called()
+                state = study.load(args.output / "status_pose_only.json")
+                self.assertEqual((state["status"], state["phase"], state["step"]), ("failed", "preflight", "7"))
+
+    def test_worker_rejects_batch_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            with patch.dict(os.environ, SLURM_STEP_ID="batch"), patch.object(study, "run_command") as run:
+                with self.assertRaisesRegex(RuntimeError, "srun step"):
+                    study.preflight(args, "control")
+                run.assert_not_called()
+
     def test_batch_launcher_preserves_allocation_and_propagates_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -123,8 +175,21 @@ class CompleteAblationTests(unittest.TestCase):
             args = fixture(Path(tmp))
             generation_calls, metric_calls = [], []
 
+            def fake_step(cmd, env):
+                self.assertEqual(cmd[0], "srun")
+                # The launcher passes the batch mask unchanged; Slurm sets the worker mask.
+                self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "2,5")
+                worker_args = Namespace(**vars(args))
+                worker_args.worker = cmd[cmd.index("--worker")+1]
+                step = {"control": "0", "appearance_only": "1", "pose_only": "2"}[worker_args.worker]
+                with patch.dict(os.environ, dict(env, SLURM_STEP_ID=step, CUDA_VISIBLE_DEVICES="0"), clear=True):
+                    study.worker(worker_args)
+
             def fake_run(cmd, log, env=None, cwd=None):
                 cmd = list(map(str, cmd))
+                if cmd[0] == "srun":
+                    fake_step(cmd, env)
+                    return
                 def arg(name):
                     return cmd[cmd.index(name)+1]
                 if any(s.endswith("run_context_memory_batch.py") for s in cmd):
@@ -133,7 +198,7 @@ class CompleteAblationTests(unittest.TestCase):
                     self.assertNotEqual(alpha, .65)
                     self.assertEqual(arg("--seed"), "42")
                     self.assertEqual(arg("--num_inference_steps"), "50")
-                    generation_calls.append((source.name, row, alpha, env["CUDA_VISIBLE_DEVICES"]))
+                    generation_calls.append((source.name, row, alpha, env["CUDA_VISIBLE_DEVICES"], env["SLURM_STEP_ID"]))
                     item = [i for i in study.cohort(Path(arg("--manifest")), 180) if i["_row"] == row][0]
                     (source / "access_traces").mkdir(parents=True, exist_ok=True)
                     (source / (item["output_prefix"] + "custom.mp4")).write_bytes(b"generated")
@@ -154,17 +219,15 @@ class CompleteAblationTests(unittest.TestCase):
 
             class FakeWorker:
                 def __init__(self, cmd, **kwargs):
-                    worker_args = Namespace(**vars(args))
-                    worker_args.worker = cmd[cmd.index("--worker")+1]
-                    with patch.dict(os.environ, kwargs["env"], clear=True):
-                        study.worker(worker_args)
+                    fake_step(cmd, kwargs["env"])
                     self.returncode = 0
                 def poll(self):
                     return self.returncode
                 def wait(self, timeout=None):
                     return self.returncode
 
-            with patch.dict(os.environ, CUDA_VISIBLE_DEVICES="2,5"), \
+            with patch.dict(os.environ, CUDA_VISIBLE_DEVICES="2,5", SLURM_JOB_ID="fixture"), \
+                    patch.object(study.shutil, "which", return_value="/usr/bin/srun"), \
                     patch.object(study, "metric_command", side_effect=lambda name, program, *cmd: [program, *map(str, cmd)]), \
                     patch.object(study, "run_command", side_effect=fake_run), \
                     patch.object(study, "probe_video", return_value={}), \
@@ -176,8 +239,8 @@ class CompleteAblationTests(unittest.TestCase):
                 self.assertEqual(len(generation_calls), 30)
                 self.assertEqual(metric_calls[:2], [("control", "quality"), ("control", "vbench")])
                 self.assertEqual(len(metric_calls), 6)
-                self.assertEqual({c[3] for c in generation_calls if c[0] == "appearance_only"}, {"2"})
-                self.assertEqual({c[3] for c in generation_calls if c[0] == "pose_only"}, {"5"})
+                self.assertEqual({c[3:] for c in generation_calls if c[0] == "appearance_only"}, {("0", "1")})
+                self.assertEqual({c[3:] for c in generation_calls if c[0] == "pose_only"}, {("0", "2")})
                 self.assertTrue((args.output / "ablation.tex").exists())
                 with (args.output / "ablation.csv").open() as handle:
                     rows = list(csv.DictReader(handle))
@@ -190,11 +253,12 @@ class CompleteAblationTests(unittest.TestCase):
     def test_control_failure_prevents_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
             args = fixture(Path(tmp))
-            with patch.dict(os.environ, CUDA_VISIBLE_DEVICES="0,1"), \
+            with patch.dict(os.environ, CUDA_VISIBLE_DEVICES="0,1", SLURM_JOB_ID="fixture"), \
+                    patch.object(study.shutil, "which", return_value="/usr/bin/srun"), \
                     patch.object(study, "prepare", return_value=([], args.manifest)), \
                     patch.object(study, "metric_command", return_value=["fixture"]), \
-                    patch.object(study, "run_command"), patch.object(study, "freeze_environment"), \
-                    patch.object(study, "evaluate", side_effect=RuntimeError("control evaluator failed")), \
+                    patch.object(study, "run_command", side_effect=RuntimeError("control evaluator failed")), \
+                    patch.object(study, "freeze_environment"), \
                     patch.object(study.subprocess, "Popen") as start:
                 with self.assertRaisesRegex(RuntimeError, "control evaluator failed"):
                     study.execute(args)
