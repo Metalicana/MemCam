@@ -3,6 +3,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -47,6 +48,40 @@ def quality_artifacts(directory, items, run, duration):
 
 
 class CompleteAblationTests(unittest.TestCase):
+    def test_batch_launcher_preserves_allocation_and_propagates_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binaries = root / "bin"
+            binaries.mkdir()
+            scripts = {
+                "module": "#!/bin/bash\nexit 0\n",
+                "nvidia-smi": "#!/bin/bash\nprintf 'GPU inventory fixture\\n'\n",
+                "python": (
+                    "#!/bin/bash\n"
+                    "printf 'CHILD order=%s mask=%s\\n' \"$CUDA_DEVICE_ORDER\" \"$CUDA_VISIBLE_DEVICES\"\n"
+                    "exit \"$TEST_EXIT_CODE\"\n"
+                ),
+            }
+            for name, content in scripts.items():
+                path = binaries / name
+                path.write_text(content)
+                path.chmod(0o755)
+            for mask, exit_code in (("2,5", 0), ("GPU-first,GPU-second", 7)):
+                with self.subTest(mask=mask, exit_code=exit_code):
+                    env = dict(os.environ, PATH=f"{binaries}:{os.environ.get('PATH', '')}",
+                               MEMCAM_ROOT=str(root), MEMCAM_ENV_PATH=str(root),
+                               CUDA_VISIBLE_DEVICES=mask, CUDA_DEVICE_ORDER="FASTEST_FIRST",
+                               SLURM_JOB_ID="fixture", TEST_EXIT_CODE=str(exit_code))
+                    env.pop("BASH_ENV", None)
+                    result = subprocess.run(
+                        ["bash", str(study.REPO / "slurm/newton_keepsake_pose_appearance_complete.sbatch")],
+                        env=env, text=True, capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, exit_code, result.stderr)
+                    self.assertIn("SLURM_JOB_ID=fixture", result.stdout)
+                    self.assertIn("GPU inventory fixture", result.stdout)
+                    self.assertIn(f"CHILD order=PCI_BUS_ID mask={mask}", result.stdout)
+
     def test_quality_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             args = fixture(Path(tmp))

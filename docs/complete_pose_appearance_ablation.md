@@ -71,6 +71,37 @@ source, or an evaluator failure. Failed metric stages use fresh attempt director
 on retry. Final tables are produced only after all three settings finish. Long
 evaluations and generation print one-minute heartbeats with the active log path.
 
+### GPU Preflight Failure in Job 829288
+
+Job 829288 failed on `evc45` before control evaluation or endpoint generation.
+The first selected GPU passed both environment checks. The second failed
+`torch.cuda.is_available()` in `memcam`. This was not a startup timeout, and
+the logs do not distinguish a device-mapping problem from a node/driver problem.
+`new_videos: 30` in `status.json` is the planned workload, not a completion count.
+
+The batch launcher now logs the Slurm allocation and CUDA mask, prints the GPU
+inventory, and sets `CUDA_DEVICE_ORDER=PCI_BUS_ID` to align CUDA and NVML ordering
+as described in [Slurm's GRES documentation](https://slurm.schedmd.com/gres.html).
+It does not replace the scheduler's `CUDA_VISIBLE_DEVICES` mask or remove the
+kernel checks. This change is a launch precaution and diagnostic improvement,
+not confirmation of the failed node's root cause.
+
+After syncing the updated launcher to Newton, retry the same experiment while
+temporarily excluding the node involved in this failure:
+
+```bash
+cd "$HOME/MemCam"
+sbatch --exclude=evc33,evc40,evc43,evc44,evc45 \
+  slurm/newton_keepsake_pose_appearance_complete.sbatch
+```
+
+This is still one job for both endpoints and their evaluations. The Python
+experiment code and frozen configuration are unchanged, so the existing output
+directory can be reused without deleting its validation records. The exclusion
+does not establish that `evc45` is permanently faulty. If availability fails
+again, inspect the newly logged allocation/mask and report the job/node to the
+cluster administrators before another blind retry.
+
 Local tests use synthetic files and mocked GPU commands to check the entire
 orchestration, exact cohorts, metric configuration, control reuse, checkpoint reuse,
 GPU separation, failure propagation, and table exports. They do not establish that
