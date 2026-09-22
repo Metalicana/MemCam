@@ -1,4 +1,5 @@
 {
+  "layout": "compact",
   "efficiency": {
     "source": "User-provided latency_summary.csv excerpt from Newton",
     "source_path": "/home/ab575577/memcam_results/latency_180s_all5_20260918_172626/latency_summary.csv",
@@ -16,6 +17,11 @@
     ]
   },
   "retrieval_directory": "paper/figures/retrieval_deterioration_20260917_124310",
+  "retrieval_comparison": {
+    "source": "paper/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
+    "y_limits": [0.2, 0.7],
+    "parameters": {"duration": 60, "expected_videos": 15, "fps": 30, "bins": 8, "bootstrap": 10000, "seed": 0}
+  },
   "sample_directory": "paper/figures/progression_strips_20260917_113732",
   "samples": [
     {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 0},
@@ -24,5 +30,20 @@
     {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 3},
     {"case": "progression_09_row53", "display_name": "Feudal Japan", "position": 4}
   ],
-  "sample_note": "One selected trajectory at five ordered timestamps. Each column shows exact-index GT above the corresponding Unbounded and KEEPSAKE outputs. All five positions of the saved sequence are included. The camera can move between columns; this is not a verified same-view revisit, a representative cohort result, or a causal memory-propagation test. All images are extracted intact from the existing full-frame, label-free strips, without correcting generation errors."
+  "revisit_triplet": {
+    "case": "progression_12_row3",
+    "display_name": "Ancient temple",
+    "frames": [616, 901, 1816],
+    "videos_directory": "~/Downloads/memcam_editing",
+    "diagnostics": "paper/figures/revisit_diagnostics_20260917_105624/diagnostics.json",
+    "profile": "nearby",
+    "anchor": 1816,
+    "display_gamma": 0.65,
+    "display_right_crop_fraction": 0.25,
+    "highlight_box": [0.02, 0.06, 0.35, 0.80],
+    "revisit_annotations": {"Unbounded": "View mismatch", "KEEPSAKE_B32": "View matched"},
+    "visual_note": "Ancient temple / same timestamps / nearby camera return",
+    "caption_detail": "After an intervening view of the temple complex, KEEPSAKE returns to a similar left-hand temple and foliage composition. Unbounded returns with the left temple mostly out of frame and a different courtyard composition. The comparison concerns recurrence of generated scene appearance; it does not separate content errors from camera-following errors."
+  },
+  "sample_note": "Manually selected AncientTempleEnv_5 frames 616, 901 and 1816 (20.53, 30.03 and 60.53 seconds), identical for Unbounded and KEEPSAKE-B32. The nominal 60-second output contains 1825 frames at 30 FPS; labels use actual frame timestamps. Endpoint candidates were drawn from saved pose-return diagnostics, ranked for visual inspection by generated endpoint similarity differences, then manually reviewed. The endpoint poses differ by 0.3483 m and 6.2162 degrees, within the nearby profile's 0.5 m and 10 degree thresholds. Endpoint GT SSIM is 0.1819192 and the group did not pass the original 0.9 GT-similarity gate. This is a nearby-return illustration, not an exact-view reconstruction claim, a measured disappearance interval, or a representative quantitative comparison. Frame 901 was selected visually as an intervening temple-complex view. Full decoded frames are retained unchanged. All six displayed copies omit the rightmost 25 percent, retaining pixels [0, 0, 480, 352] of each 640-by-352 frame, and use the same fixed gamma 0.65 on every RGB channel. The same source-coordinate highlight boxes are remapped into the cropped images. No stretching, local enhancement, inpainting, per-image normalization or metric recomputation. Editable red/green boxes indicate identical image coordinates, not tracked object correspondence."
 }

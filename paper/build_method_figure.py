@@ -1,8 +1,9 @@
-"""Enlarge the original four-stage draw.io figure without replacing its structure."""
+"""Build the trace-grounded method figure with an expanded graph/scoring panel."""
 
 import argparse
 import base64
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -26,7 +27,177 @@ FRAMES = {
     272: 0, 280: 41, 283: 125, 286: 145, 289: 176, 292: 228,
 }
 PANEL_TOP = 385
-PANEL_HEIGHT = 625
+PANEL_HEIGHT = 585
+PANELS = {83: (34, 230), 138: (282, 1120), 209: (1420, 132), 263: (1570, 236)}
+
+
+def scoring_example(evicted):
+    record = evicted[227]
+    count = int(record["eviction_covisible_observers"])
+    maximum = float(record["eviction_max_covisibility"])
+    score = float(record["eviction_score"])
+    if count < 1 or not 0.65 <= maximum <= 1 or record["eviction_nearest_covisible_frame"] != 228:
+        raise ValueError("Invalid logged graph example")
+    expected = 1 - min(count / 3, 1) + 0.5 / (count + 1) + 0.25 * (1 - maximum)
+    if not math.isclose(expected, score, rel_tol=0, abs_tol=1e-9):
+        raise ValueError("Logged utility disagrees with the illustrated scoring rule")
+    return {"frame": 227, "closest_frame": 228, "neighbors": count,
+            "max_affinity": maximum, "utility": score}
+
+
+def draw_update(root, assets, example):
+    """Native draw.io shapes; only the highlighted pair/statistics are measured."""
+    layer = PREFIX + "82"
+    graph = PREFIX + "138"
+    nodes = {}
+    text_color = "#151D2A"
+
+    def vertex(name, value, x, y, w, h, parent=layer, *, fill="none",
+               stroke="none", size=26, bold=False, shape="rectangle", color=text_color):
+        c = ET.SubElement(root, "mxCell", id=name, parent=parent, value=value, vertex="1")
+        set_style(c, shape=shape, html="1", whiteSpace="wrap", fontFamily="Georgia",
+                  fontSize=str(size), fontStyle="1" if bold else "0", fontColor=color,
+                  fillColor=fill, strokeColor=stroke, strokeWidth="1.5",
+                  align="center", verticalAlign="middle", spacing="0", rounded="0")
+        ET.SubElement(c, "mxGeometry", x=str(x), y=str(y), width=str(w), height=str(h),
+                      attrib={"as": "geometry"})
+        nodes[name] = c
+        return name
+
+    def line(name, points, parent=layer, *, color="#607083", width=2,
+             arrow=True, dashed=False):
+        c = ET.SubElement(root, "mxCell", id=name, parent=parent, value="", edge="1")
+        set_style(c, edgeStyle="none", rounded="0", html="1", strokeColor=color,
+                  strokeWidth=str(width), endArrow="block" if arrow else "none",
+                  startArrow="none", endSize="7", dashed="1" if dashed else "0")
+        g = ET.SubElement(c, "mxGeometry", relative="1", attrib={"as": "geometry"})
+        ET.SubElement(g, "mxPoint", x=str(points[0][0]), y=str(points[0][1]), attrib={"as": "sourcePoint"})
+        ET.SubElement(g, "mxPoint", x=str(points[-1][0]), y=str(points[-1][1]), attrib={"as": "targetPoint"})
+        if len(points) > 2:
+            bends = ET.SubElement(g, "Array", attrib={"as": "points"})
+            for x, y in points[1:-1]:
+                ET.SubElement(bends, "mxPoint", x=str(x), y=str(y))
+        nodes[name] = c
+        return c
+
+    def photo(name, frame, x, y, w, parent, role, stroke="#607083"):
+        h = w * 352 / 640
+        vertex(name, "", x, y, w, h, parent, stroke=stroke)
+        c = nodes[name]
+        set_style(c, shape="image", imageAspect="1",
+                  image="data:image/png," + base64.b64encode(assets[frame].read_bytes()).decode())
+        c.set("data-frame-index", str(frame))
+        c.set("data-source-video", VIDEO)
+        c.set("data-role", role)
+
+    def panel(n, number, title, fill, stroke):
+        x, w = PANELS[n]
+        name = PREFIX + str(n)
+        vertex(name, "", x, PANEL_TOP, w, PANEL_HEIGHT, fill="#FFFFFF", stroke=stroke)
+        vertex(name + "-header", "", 1, 1, w - 2, 89, name, fill=fill)
+        vertex(name + "-number", str(number), 12, 20, 44, 44, name,
+               fill=stroke, shape="ellipse", color="#FFFFFF", bold=True, size=30)
+        vertex(name + "-title", title, 63, 8, w - 73, 74, name, bold=True,
+               size=29 if n == 138 else 27)
+        return name
+
+    bank = panel(83, 1, "Candidate<br>bank", "#EDF5FC", "#2F6FA9")
+    panel(138, 2, "Pose&ndash;appearance graph and retention priority", "#EDF7F3", "#3D806E")
+    archive = panel(263, 4, "Retained<br>archive", "#F4F0FB", "#7655A7")
+
+    for title, frames, y, color, role in (("Existing <i>M</i><sub>t</sub>", (0, 41, 125, 145), 108, "#2F6FA9", "existing"),
+            ("New <i>N</i><sub>t</sub>", (176, 184, 227, 228), 288, "#B87624", "new")):
+        vertex(role + "-title", title, 12, y, 206, 38, bank, size=27, bold=True)
+        for k, frame in enumerate(frames):
+            photo(role + f"-{frame}", frame, 13 + 106 * (k % 2), y + 48 + 62 * (k // 2),
+                  98, bank, role, color)
+    line("candidate-merge", [(115, 456), (115, 479)], bank)
+    vertex("candidate-union", "<i>C</i><sub>t</sub> = <i>M</i><sub>t</sub> &cup; <i>N</i><sub>t</sub>",
+           8, 484, 214, 42, bank, size=28)
+    vertex("candidate-count", "108 candidates", 8, 538, 214, 36, bank, size=27)
+
+    # Pairwise inputs split into pose and appearance branches, then recombine.
+    vertex("pair-title", "Pairwise similarity", 16, 104, 318, 38, graph, bold=True, size=27)
+    for frame, x, symbol in ((227, 35, "i"), (228, 203, "j")):
+        photo("pair-" + symbol, frame, x, 175, 112, graph, "affinity_pair")
+        vertex("pair-" + symbol + "-label", f"<i>{symbol}</i>", x, 141, 112, 30, graph, size=26)
+    line("pair-join-i", [(91, 237), (91, 249), (259, 249), (259, 237)], graph, arrow=False)
+    line("pair-pose", [(91, 249), (91, 268)], graph)
+    line("pair-dino", [(259, 249), (259, 268)], graph)
+    vertex("pose-affinity", "<b>Pose</b><br><i>P</i><sub>ij</sub> = e<sup>&minus;d<sub>p</sub>(i,j)</sup>",
+           16, 268, 150, 85, graph, fill="#EDF5FC", stroke="#8EB4D8", size=24)
+    vertex("appearance-affinity", "<b>DINO</b><br><i>A</i><sub>ij</sub> = [z<sub>i</sub><sup>T</sup>z<sub>j</sub>]<sub>+</sub>",
+           186, 268, 150, 85, graph, fill="#F2F6EE", stroke="#9DB18E", size=22)
+    line("affinity-merge", [(91, 353), (91, 371), (261, 371), (261, 353)], graph, arrow=False)
+    line("affinity-merge-output", [(176, 371), (176, 390)], graph)
+    vertex("combined-affinity", "<i>K</i><sub>ij</sub> = 0.65<i>P</i><sub>ij</sub> + 0.35<i>A</i><sub>ij</sub>",
+           16, 390, 320, 58, graph, fill="#EDF7F3", stroke="#3D806E", size=25)
+
+    vertex("edge-rule-title", "Add undirected links", 368, 104, 426, 38, graph, bold=True, size=27)
+    vertex("edge-rule", "<i>i</i> &ne; <i>j</i>, &nbsp;<i>K</i><sub>ij</sub> &ge; &tau; = 0.65",
+           368, 146, 426, 42, graph, size=26)
+    line("affinity-to-graph", [(336, 419), (383, 419), (383, 345), (421, 345)], graph)
+
+    # Anonymous nodes show thresholded links schematically, without inventing frame IDs.
+    for name, points in (("schematic-link-1", [(467, 309), (445, 245)]),
+                         ("schematic-link-2", [(499, 355), (566, 385)]),
+                         ("schematic-link-3", [(461, 381), (464, 409)])):
+        c = line(name, points, graph, arrow=False, color="#8FA6AD", width=2.3)
+        c.set("data-link-origin", "schematic")
+    c = line("logged-closest-link", [(496, 318), (668, 269)], graph, arrow=False, color="#B87624", width=3.5)
+    c.set("data-link-origin", "logged nearest affinity")
+    c.set("data-frame-pair", "227,228")
+    c.set("data-affinity", str(example["max_affinity"]))
+    for name, x, y in (("neighbor-1", 419, 206), ("neighbor-2", 563, 366), ("neighbor-3", 440, 406)):
+        vertex(name, "<i>j</i>", x, y, 44, 44, graph, fill="#F6F9FA", stroke="#8FA6AD", shape="ellipse", size=24)
+    vertex("omitted-neighbors", "&ctdot;", 538, 198, 77, 43, graph, size=34)
+    vertex("graph-i", "", 416, 298, 92, 92, graph, fill="#FFF8EE", stroke="#B87624", shape="ellipse")
+    photo("graph-i-image", 227, 422, 321, 80, graph, "scored_node", "#B87624")
+    vertex("graph-i-label", "<i>i</i> = 227", 398, 266, 132, 30, graph, size=25)
+    vertex("graph-j", "", 666, 214, 92, 92, graph, fill="#EEF7F3", stroke="#3D806E", shape="ellipse")
+    photo("graph-j-image", 228, 672, 237, 80, graph, "closest_node", "#3D806E")
+    vertex("graph-j-label", "<i>j</i>* = 228", 647, 184, 134, 30, graph, size=25)
+    vertex("graph-edge-value", f"{example['max_affinity']:.4f}", 542, 263, 117, 31, graph,
+           fill="#FFFFFF", color="#A66D22", size=25)
+    vertex("unlinked-node", "<i>j</i>", 710, 368, 48, 48, graph,
+           fill="#FAFAFA", stroke="#B8C2C7", shape="ellipse", color="#78858E", size=24)
+    vertex("no-edge-rule", "<i>K</i><sub>ij</sub> &lt; &tau;", 675, 414, 118, 32, graph,
+           color="#65717A", size=24)
+
+    vertex("statistics-title", "Node statistics", 825, 104, 279, 38, graph, bold=True, size=27)
+    vertex("neighbor-count", "<b>Neighbor count</b><br><i>c</i><sub>i</sub> = |{j &ne; i : K<sub>ij</sub> &ge; &tau;}|",
+           825, 159, 279, 93, graph, fill="#EDF5FC", stroke="#8EB4D8", size=24)
+    vertex("neighbor-value", f"<i>c</i><sub>227</sub> = {example['neighbors']}", 825, 252, 279, 39, graph, size=27, color="#2F6FA9")
+    vertex("strongest-affinity", "<b>Closest substitute</b><br><i>k</i><sub>i</sub><sup>max</sup> = max<sub>j &ne; i</sub> K<sub>ij</sub>",
+           825, 311, 279, 93, graph, fill="#FFF7EC", stroke="#D1A76C", size=24)
+    vertex("strongest-value", f"<i>k</i><sub>227</sub><sup>max</sup> = {example['max_affinity']:.4f}",
+           825, 404, 279, 42, graph, size=27, color="#A66D22")
+    line("graph-to-statistics", [(796, 301), (818, 301)], graph)
+    line("statistics-to-priority", [(965, 448), (965, 473)], graph)
+    vertex("priority-band", "", 16, 477, 1088, 93, graph, fill="#F1F7F4", stroke="#A2C5B7")
+    vertex("priority-title", "Retention priority", 27, 479, 1070, 32, graph, bold=True, size=27)
+    vertex("priority-formula",
+           "<i>u</i><sub>i</sub> = 1 &minus; min(c<sub>i</sub>/3, 1) + 0.5/(c<sub>i</sub> + 1) + 0.25(1 &minus; k<sub>i</sub><sup>max</sup>)",
+           27, 521, 806, 37, graph, size=26)
+    vertex("priority-value", f"<i>u</i><sub>227</sub> = {example['utility']:.4f}",
+           848, 521, 245, 37, graph, bold=True, size=28, color="#B64B51")
+
+    # Eviction is a narrow operation between the scoring diagram and output archive.
+    eviction = PREFIX + "209"
+    vertex(eviction, "", PANELS[209][0], PANEL_TOP + 215, PANELS[209][1], 207,
+           fill="#FFF8EE", stroke="#D1A76C")
+    vertex("evict-number", "3", 44, 10, 44, 44, eviction,
+           fill="#B87624", color="#FFFFFF", shape="ellipse", bold=True, size=30)
+    vertex("evict-title", "Evict", 4, 63, 124, 40, eviction, bold=True, size=28)
+    vertex("evict-rule", "Low priority", 4, 105, 124, 39, eviction, size=23)
+    vertex("evict-count", "108 &rarr; 32", 4, 154, 124, 38, eviction, size=23)
+    for k, frame in enumerate((0, 125, 228)):
+        photo("retained-" + str(frame), frame, 21, 166 + 123 * k, 194, archive, "retained", "#7655A7")
+    vertex("retained-title", "<i>M</i><sub>t+1</sub>", 14, 99, 208, 36, archive, bold=True, size=30)
+    vertex("retained-count", "|<i>M</i><sub>t+1</sub>| = 32", 6, 538, 224, 38, archive, size=29)
+    for name, start, end in (("candidates-to-graph", 264, 280),
+                              ("graph-to-eviction", 1403, 1418), ("eviction-to-archive", 1553, 1568)):
+        line(name, [(start, PANEL_TOP + 318), (end, PANEL_TOP + 318)], width=2.5)
 
 
 def prepare(trace):
@@ -35,6 +206,10 @@ def prepare(trace):
     keys = ("scene", "dataset_start_frame", "duration_sec", "run_memory_policy", "run_memory_budget")
     if not events or any(tuple(e.get(k) for k in keys) != expected for e in events):
         raise ValueError("Wrong rollout identity")
+    for event in events:
+        for key, value in (("keepsake_geometry_weight", .65), ("keepsake_appearance_weight", .35)):
+            if key in event and not math.isclose(float(event[key]), value, abs_tol=1e-12):
+                raise ValueError("Trace affinity weights differ from the method figure")
     old, new, kept, evicted = update_bank(events, 2)
     for indices, available in (((92, 95, 98, 101), old), ((107, 110, 113, 116), new),
             ((217, 228, 234, 272, 280, 283, 286, 289, 292), kept), ((240, 247, 254), evicted)):
@@ -78,6 +253,32 @@ def rewrite(template, output, assets, evicted):
             for x, y in points[1:-1]:
                 ET.SubElement(a, "mxPoint", x=str(x), y=str(y))
 
+    def connect(n, source, target, start, end):
+        c = cell(n)
+        c.set("source", cell(source).get("id"))
+        c.set("target", cell(target).get("id"))
+        set_style(c, exitX=str(start[0]), exitY=str(start[1]),
+                  entryX=str(end[0]), entryY=str(end[1]),
+                  exitDx="0", exitDy="0", entryDx="0", entryDy="0",
+                  exitPerimeter="1", entryPerimeter="1")
+        g = c.find("mxGeometry")
+        for child in list(g):
+            g.remove(child)
+
+    def conditioning_input(name, title, x, width, entry_x):
+        c = ET.SubElement(root, "mxCell", id=name, vertex="1",
+                          parent=PREFIX + "7", value=title)
+        c.set("style", cell(72).get("style"))
+        set_style(c, fontSize="24", fillColor="#F4F7FB", strokeColor="#607083")
+        ET.SubElement(c, "mxGeometry", x=str(x), y="247", width=str(width),
+                      height="45", attrib={"as": "geometry"})
+        cells[name] = c
+        arrow = ET.SubElement(root, "mxCell", id=name + "-arrow", edge="1",
+                              parent=PREFIX + "7", style=cell(79).get("style"))
+        ET.SubElement(arrow, "mxGeometry", relative="1", attrib={"as": "geometry"})
+        cells[name + "-arrow"] = arrow
+        connect(name + "-arrow", name, 28, (0.5, 0), (entry_x, 1))
+
     # Frame IDs belong in provenance/caption, not tiny labels on every thumbnail.
     for c in list(root):
         if c.get("id", "").startswith("real-frame-label-"):
@@ -98,170 +299,60 @@ def rewrite(template, output, assets, evicted):
 
     # Preserve the original generation loop, arrows, cameras and image stack.
     label(303, "Long-horizon generation loop (KEEPSAKE)", 38)
-    label(304, "<b>Plug-and-play:</b> generator and retriever unchanged.", 27)
-    geom(304, h=53, y=6)
-    geom(3, y=6, h=53)
     geom(8, w=245, h=150)
     geom(9, w=245, h=150)
     geom(10, x=3, w=239, h=65, y=8)
     label(10, size=24)
     label(27, size=26)
     label(55, size=26)
-    label(35, "Generator<br>(unchanged)", 28)
-    geom(35, y=3, h=57)
-    geom(36, y=67, h=62)
-    geom(37, y=71, h=53)
+    label(35, "Generator", 28)
+    geom(35, y=8, h=39)
+    geom(36, y=58, h=70)
+    geom(37, y=64, h=58)
     label(37, size=26)
     label(51, "Generated chunk <i>N</i><sub>t</sub>", 27)
     geom(51, h=46, y=98)
     label(52, "<b>Update memory<br>(KEEPSAKE)</b>", 26)
-    geom(72, w=225, x=284)
-    geom(73, w=225, x=1289)
     root.remove(cell(305))
     if "memory-feedback" in cells:
         root.remove(cell("memory-feedback"))
-    geom(4, y=324, h=704)
+    geom(4, y=324, h=PANEL_TOP + PANEL_HEIGHT + 18 - 324)
+    set_style(cell(4), strokeColor="#B24C55", strokeWidth="2.3")
     label(306, "KEEPSAKE: geometry-aware memory update", 38)
     geom(306, y=332, h=47, w=1720)
-    for c in root:
-        if c.get("parent") == PREFIX + "7":
-            g = c.find("mxGeometry")
-            if g is not None and c.get("vertex"):
-                g.set("y", str(float(g.get("y", 0)) - 25))
-            elif g is not None and c.get("edge"):
-                for point in g.iter("mxPoint"):
-                    if point.get("y") is not None:
-                        point.set("y", str(float(point.get("y")) - 25))
-    edge(5, [(1330, 184), (1330, 307), (270, 324)])
-    edge(6, [(1474, 184), (1474, 307), (1667, 324)])
-    for panel, background, band, number, title, subtitle, width in (
-            (83, 84, 85, 86, 87, 88, 470), (138, 139, 140, 141, 142, 143, 460),
-            (209, 210, 211, 212, 213, 214, 372), (263, 264, 265, 266, 267, 268, 416)):
-        geom(panel, y=PANEL_TOP, h=PANEL_HEIGHT)
-        geom(background, h=PANEL_HEIGHT)
-        geom(band, h=130)
-        geom(number, y=17, w=52, h=52)
-        label(number, size=34)
-        geom(title, x=77, y=10, w=width - 89, h=67)
-        label(title, size=30)
-        geom(subtitle, x=17, y=79, w=width - 34, h=47)
-        label(subtitle, size=24)
-    label(88, "Merge existing memory<br>and new observations.")
-    label(143, "Connect views using<br>pose and appearance.")
-    label(214, "Compute utility;<br>evict low-utility views.")
-    label(268, "Six of 32 retained<br>frames shown.")
+    # Equal 40-unit gaps and shared centerline keep the retrieval arrows symmetric.
+    for n, x, y, width, height in ((8, 30, 72, 245, 150),
+            (27, 315, 95, 208, 104), (28, 563, 76.5, 332, 141),
+            (38, 935, 76.5, 294, 141), (52, 1269, 100.5, 232, 93),
+            (53, 1541, 72, 243, 150)):
+        geom(n, x=x, y=y, w=width, h=height)
+    for n, source, target in ((74, 8, 27), (75, 27, 28), (76, 28, 38),
+                               (77, 38, 52), (78, 52, 53)):
+        connect(n, source, target, (1, 0.5), (0, 0.5))
+    geom(72, x=306.5, y=247, w=225)
+    geom(73, x=1272.5, y=247, w=225)
+    connect(79, 72, 27, (0.5, 0), (0.5, 1))
+    connect(80, 52, 73, (0.5, 1), (0.5, 0))
+    conditioning_input("caption-input", "Initial caption", 563, 204, 102 / 332)
+    conditioning_input("noise-input", "Noise", 789, 106, 279 / 332)
 
-    # Restore horizontal filmstrips so the four-stage figure stays landscape.
-    for box, title, groups, images, borders, top in (
-            (89, 90, (91, 94, 97, 100), (92, 95, 98, 101), (93, 96, 99, 102), 144),
-            (104, 105, (106, 109, 112, 115), (107, 110, 113, 116), (108, 111, 114, 117), 285),
-            (121, 122, (123, 126, 129, 132), (124, 127, 130, 133), (125, 128, 131, 134), 456)):
-        geom(box, y=top, h=119)
-        geom(title, y=top + 5, h=36)
-        label(title, size=28)
-        for i, (group, image, border) in enumerate(zip(groups, images, borders)):
-            geom(group, x=18 + i * 110, y=top + 49, w=100, h=55)
-            geom(image, x=0, y=0, w=100, h=55)
-            geom(border, x=-1, y=-1, w=102, h=57)
-    for n in (103, 118, 135):
-        root.remove(cell(n))
-    label(122, "<i>C</i><sub>t</sub> = <i>M</i><sub>t</sub> &cup; <i>N</i><sub>t</sub>", 32)
-    geom(122, x=26, w=414)
-    edge(119, [(455, 217), (462, 217), (462, 434), (236, 434)])
-    edge(120, [(46, 410), (46, 434), (236, 434), (236, 452)])
-    label(137, "108 candidates", 32)
-    geom(137, x=30, y=581, w=410, h=39)
-    set_style(cell(137), align="center")
-
-    # Keep all eleven original graph nodes and all original connections.
-    graph_positions = ((162, 12, 249), (164, 99, 196), (166, 201, 154),
-                       (168, 71, 300), (170, 177, 267), (172, 17, 377),
-                       (174, 135, 377), (176, 343, 156), (178, 282, 263),
-                       (180, 307, 366), (182, 378, 333))
-    for node, x, y in graph_positions:
-        geom(node, x=x, y=y, w=72, h=72)
-        geom(node + 1, x=x + 4, y=y + 18.4, w=64, h=35.2)
-    set_style(cell(168), strokeColor="#B87624")
-    geom(146, x=9, y=205, w=280, h=250)
-    geom(144, x=18, y=140, w=177, h=52)
-    geom(145, x=22, y=140, w=169, h=52)
-    label(145, "neighbor<br>support", 24)
-    edge(190, [(58, 194), (68, 219), (77, 250)])
-    geom(184, x=257, y=148)
-    geom("protected-graph-endpoint", x=362, y=361)
-    geom(189, x=361, y=230, w=30, h=40)
-    geom(191, x=179, y=465, w=264, h=38)
-    geom(192, x=183, y=465, w=256, h=38)
-    label(192, size=26)
-    edge(193, [(427, 465), (444, 441), (425, 406)])
-    geom(194, y=514, h=104)
-    edge(195, [(33, 532), (76, 532)])
-    geom(196, x=87, y=516, w=185, h=32)
-    label(196, size=24)
-    edge(197, [(33, 565), (76, 565)])
-    geom(198, x=87, y=549, w=260, h=32)
-    label(198, size=24)
-    geom(199, x=284, y=521)
-    geom(204, x=307, y=516, w=130, h=32)
-    label(204, size=24)
-    geom(205, x=48, y=592)
-    geom(206, x=76, y=584, w=133, h=32)
-    geom(207, x=263, y=592)
-    geom(208, x=291, y=584, w=133, h=32)
-
-    # Retain the score list, utility bars, checks and crosses from the original.
-    geom(215, x=20, y=138, w=332, h=34)
-    label(215, size=28)
-    rows = ((216, 217, 220, 221, 178), (227, 228, 231, 232, 245),
-            (233, 234, 237, 238, 312), (239, 240, 243, 244, 431),
-            (246, 247, 250, 251, 493), (253, 254, 257, 258, 555))
-    for index, (circle, image, text, mark, y) in enumerate(rows):
-        geom(circle, x=23, y=y, w=60, h=60)
-        geom(image, x=26, y=y + 15.15, w=54, h=29.7)
-        if index < 3:
-            geom(text, x=106, y=y + 11, w=192, h=38)
-            label(text, size=28)
-            edge(mark, [(318, y + 28), (328, y + 38), (346, y + 17)])
-        else:
-            geom(text, x=212, y=y + 11, w=99, h=38)
-            label(text, size=26)
-            edge(mark, [(324, y + 20), (345, y + 41)])
-            edge(mark + 1, [(324, y + 41), (345, y + 20)])
-    set_style(cell(246), strokeColor="#B87624")
-    for frame, bar, background, text, y in ((146, 242, 241, 243, 451),
-            (183, 249, 248, 250, 513), (227, 256, 255, 257, 575)):
-        score = evicted[frame]["eviction_score"]
-        geom(background, x=104, y=y, w=92, h=20)
-        geom(bar, x=104, y=y, w=92 * score / .05, h=20)
-        label(text, f"{score:.4f}")
-    geom(222, x=72, y=174)
-    geom(260, x=47, y=386, w=25, h=31)
-    geom(261, x=96, y=382, w=259, h=42)
-    geom(262, x=105, y=385, w=241, h=36)
-    label(262, "Evict lowest utility", 24)
-
-    # The same six retained items, enlarged to a two-column, three-row bank.
-    geom(269, y=145, h=391)
-    geom(270, y=151, h=62)
-    label(270, "Updated memory<br><i>M</i><sub>t+1</sub>", 28)
-    for i, (group, image, border) in enumerate(((271, 272, 273), (279, 280, 281),
-            (282, 283, 284), (285, 286, 287), (288, 289, 290), (291, 292, 293))):
-        geom(group, x=36 + i % 2 * 183, y=219 + i // 2 * 107, w=156, h=85.8)
-        geom(image, x=0, y=0, w=156, h=85.8)
-        geom(border, x=-1, y=-1, w=158, h=87.8)
-    geom(274, x=168, y=212)
-    geom("protected-archive-endpoint", x=350, y=426)
-    root.remove(cell(294))
-    geom(296, x=36, y=546, w=344, h=42)
-    label(296, "|<i>M</i><sub>t+1</sub>| = 32", 36)
-    geom(297, y=593, h=28)
-    geom(298, y=593, h=28)
-    label(298, "Bounded archive", 26)
-    for n, start, end in ((299, 505, 520), (300, 984, 998), (301, 1374, 1388)):
-        edge(n, [(start, 706), (end, 706)])
-    geom(307, x=35, y=1033, w=1785, h=35)
-    label(307, "Preserve views with few geometric and visual substitutes.", 32)
-    root.remove(cell(308))
+    # Expansion guides, not data-flow arrows; route outside the updated-memory box.
+    edge(5, [(1269, 193.5), (1247, 218), (1247, 301), (270, 324)])
+    edge(6, [(1501, 193.5), (1523, 218), (1523, 301), (1667, 324)])
+    for n in (5, 6):
+        set_style(cell(n), strokeColor="#B24C55", strokeWidth="3", dashed="1",
+                  dashPattern="4 3", opacity="100", endArrow="none", startArrow="none")
+    obsolete = {PREFIX + str(n) for n in (*range(83, 302), 3, 304, 307, 308)}
+    obsolete.update(("protected-graph-endpoint", "protected-archive-endpoint"))
+    while True:
+        descendants = {c.get("id") for c in root if c.get("parent") in obsolete}
+        if descendants <= obsolete:
+            break
+        obsolete.update(descendants)
+    for c in list(root):
+        if c.get("id") in obsolete:
+            root.remove(c)
+    draw_update(root, assets, scoring_example(evicted))
     ET.indent(tree)
     tree.write(output, encoding="utf-8", xml_declaration=True)
 
@@ -276,31 +367,54 @@ def build(args):
     if args.output.exists() and not rejected.exists():
         shutil.copy2(args.output, rejected)
     rewrite(args.template, args.output, assets, evicted)
+    example = scoring_example(evicted)
+    rendered_cells = list(ET.parse(args.output).iter("mxCell"))
     provenance = dict(source_video=str(video), source_video_sha256=digest(video),
         source_trace=str(trace), source_trace_sha256=digest(trace), section_idx=2,
         old_bank=sorted(old), new_frames=sorted(new), retained_bank=sorted(kept),
-        evicted_frames=sorted(evicted), cell_frames=FRAMES,
-        shown_evictions={str(n): evicted[n] for n in (146, 183, 227)},
+        evicted_frames=sorted(evicted),
+        cell_frames={c.get("id"): int(c.get("data-frame-index")) for c in rendered_cells
+                     if c.get("data-frame-index") is not None},
+        scoring_example=example, shown_evictions={"227": evicted[227]},
+        protection={"permanent": [0], "temporary_endpoint": 228,
+                    "counts_toward_budget": True, "participates_in_affinity": True,
+                    "meaning": "Excluded from eviction, not a separate category from retained."},
         original_layout=str(args.template), original_layout_sha256=digest(args.template),
         builder_sha256=digest(Path(__file__)),
-        changes="Original four stages, eleven graph nodes, score list and generation flow preserved. "
-                "Return arrow and its next-chunk label removed. Original landscape proportions; "
-                "larger text and thumbnails; daylight frames.",
-        limitations="Graph layout/edges schematic except the logged nearest pair f227--f228. "
-                    "Only a subset of candidates and retained frames is displayed.",
+        changes="Generation loop preserved. Narrow candidate/retained banks; compact eviction step; "
+                "expanded pairwise affinity, thresholded linking, node statistics and utility. "
+                "Protection annotations omitted from the visual explanation.",
+        scoring_sources=["diffsynth/pipelines/memory_policies.py:_slam_covisibility_affinity",
+                         "diffsynth/pipelines/memory_policies.py:compute_slam_covisibility_scores",
+                         "diffsynth/pipelines/memory_policies.py:FrameMemoryBuffer.evict_to_budget"],
+        conditioning_sources=["inference_memcam.py:run_generation",
+                              "diffsynth/pipelines/wan_video_memcam.py:WanVideoMemCamPipeline.__call__"],
+        limitations="Anonymous graph nodes/links illustrate the threshold rule, not measured IDs. "
+                    "The highlighted 227--228 pair and the count/maximum/utility are logged. "
+                    "Neighbor count covers all 108 candidates, not only the drawn subset.",
         extraction="Exact decoded zero-based frame indices; full frames, no image enhancement.")
     args.output.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     caption = r"""\caption{\textbf{KEEPSAKE maintains a bounded archive inside the generation loop.}
-The original retriever and generator are unchanged. Existing memory and new
-observations are merged, connected using camera pose and DINO appearance, scored
-for redundancy, and pruned to the fixed budget. The example uses real frames
-from one ChemicalPlant update with 108 candidates, 76 evictions and 32 retained
-items. Eviction scores and membership are logged; graph layout is schematic.
-The closest-substitute pair is frame 227 and retained frame 228. The initial
-input and current chunk endpoint are protected. Only selected items are shown.}
+The original retriever and generator are unchanged. Dark dashed guides expand
+the memory-update block; they are not data-flow arrows. (1) Merge existing and
+new observations. (2) For every distinct pair, combine pose proximity with
+nonnegative cosine similarity of normalized DINO descriptors, where
+$[s]_+=\max(s,0)$. Pose distance combines median-normalized translation
+and rotation angle with weight two.
+Add an undirected link when the combined affinity is at least 0.65. Count these
+neighbors and find the strongest affinity over all other candidates to compute
+the displayed retention priority. (3) Evict the lowest-scored eligible items
+using scores fixed for this update. (4) Keep the bounded archive.
 """
+    caption += (f"The ChemicalPlant example has {len(old | new)} candidates and retains {len(kept)}. "
+                f"Frame {example['frame']} has {example['neighbors']} thresholded neighbors; "
+                f"its strongest match is frame {example['closest_frame']} with affinity "
+                f"{example['max_affinity']:.4f}, yielding priority {example['utility']:.4f}. "
+                "This pair, its statistics, and archive membership are logged. Anonymous nodes "
+                "and links illustrate the rule schematically; the count is over the full "
+                "candidate bank, not just the displayed subset.}\n")
     (args.output.parent / "ICLR27_Method_caption.tex").write_text(caption)
-    print(f"Restored and enlarged: {args.output}")
+    print(f"Updated method figure: {args.output}")
 
 
 def main():
