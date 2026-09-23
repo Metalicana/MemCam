@@ -27,6 +27,12 @@ RUNS = (
     ("RI", "ri_b32_dino_rgb", "rarity_irreplaceability", 32),
     ("KEEPSAKE", "slam_b32_covisibility", "slam_covisibility", 32),
 )
+RUN_SPECS = {spec[1]: spec for spec in RUNS}
+RUN_SPECS.update({
+    f"slam_b{budget}_covisibility": ("KEEPSAKE", f"slam_b{budget}_covisibility", "slam_covisibility", budget)
+    for budget in (16, 32, 64, 128)
+})
+RUN_SPECS["kcenter_b32_dino_pose"] = ("K-center", "kcenter_b32_dino_pose", "kcenter_coreset", 32)
 
 
 def final_bank_size(events, count, budget):
@@ -179,7 +185,8 @@ def main():
     parser.add_argument("--first-video", action="store_true", help="Use the first matching manifest trajectory, independently of results.")
     parser.add_argument("--sample-sections", type=int, default=0, help="Evenly sample this many sections; 0 uses all.")
     parser.add_argument("--runs", nargs="+", default=[r[1] for r in RUNS],
-                        choices=[r[1] for r in RUNS] + ["kcenter_b32_dino_pose"])
+                        choices=list(RUN_SPECS),
+                        help="Runs to compare; also accepts KEEPSAKE B16/B64/B128. Defaults to the six B32 comparisons.")
     parser.add_argument("--expected-videos", type=int, default=15)
     parser.add_argument("--queries-per-section", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=3)
@@ -193,9 +200,7 @@ def main():
         parser.error("Invalid sampling, repeat, thread or cohort count")
     if args.first_video:
         args.expected_videos = 1
-    specs = {r[1]: r for r in RUNS}
-    specs["kcenter_b32_dino_pose"] = ("K-center", "kcenter_b32_dino_pose", "kcenter_coreset", 32)
-    args.run_specs = [specs[run] for run in args.runs]
+    args.run_specs = [RUN_SPECS[run] for run in args.runs]
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("Use an empty output directory")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -210,7 +215,7 @@ def main():
         items, cases, poses, sources, archives = prepare(args)
         scorer = ROOT / "diffsynth/models/wan_video_overlap.py"
         provenance.update(
-            status="validated" if args.check_only else "running", benchmark="isolated_cpu_retrieval_replay_b32",
+            status="validated" if args.check_only else "running", benchmark="isolated_cpu_retrieval_replay",
             query_unit="One target-frame query; one selected memory. Not per-chunk latency.",
             scope="Production CPU FOV candidate scoring and argmax. Excludes generation, RGB transfer, encoding, descriptor extraction, bank reconstruction and eviction.",
             sampling="Equal-count stratum midpoints across sections when limited, and within each selected 76-query section. No quality/timing-based selection. First-video mode selects the first duration-matching manifest entry.",
@@ -238,7 +243,7 @@ def main():
         write_csv(args.output / "latency_summary.csv", summary)
         provenance.update(status="complete", timing_records=len(records), summary_sha256=digest(args.output / "latency_summary.csv"))
         for row in summary:
-            print(f"{row['policy']:12s} N={row['videos']} frames={row['final_stored_frames']} query={row['query_ms']:.3f} ms")
+            print(f"{row['policy']:12s} B={row['budget']} N={row['videos']} frames={row['final_stored_frames']} query={row['query_ms']:.3f} ms")
         print(f"Completed: {args.output}")
     except Exception as exc:
         provenance.update(status="failed", error=str(exc))

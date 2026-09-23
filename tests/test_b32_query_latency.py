@@ -1,3 +1,4 @@
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -9,7 +10,7 @@ import unittest
 from paper import benchmark_b32_query_latency as bench
 
 
-def fixture(root, duration=60):
+def fixture(root, duration=60, runs=bench.RUNS):
     count = 305
     pose = root / "poses.json"
     pose.write_text(json.dumps({"CineCameraActor": {str(i): dict(position=[i, 0, 0], rotation=[0, 0, 0])
@@ -18,7 +19,7 @@ def fixture(root, duration=60):
                 pose_path=str(pose), output_prefix=f"seed0_fixture_{duration}s_")
     manifest = root / "manifest.jsonl"
     manifest.write_text(json.dumps(item) + "\n")
-    for _, run, policy, budget in bench.RUNS:
+    for _, run, policy, budget in runs:
         bank, events = {0}, []
         for s in range(4):
             if s:
@@ -43,6 +44,53 @@ def fixture(root, duration=60):
 
 
 class B32LatencyTests(unittest.TestCase):
+    def test_keepsake_budget_grid_uses_matched_queries_and_actual_banks(self):
+        runs = [bench.RUN_SPECS[f"slam_b{b}_covisibility"] for b in (16, 32, 64, 128)]
+        with tempfile.TemporaryDirectory() as temp:
+            args = fixture(Path(temp), duration=180, runs=runs)
+            args.duration, args.first_video, args.sample_sections = 180, True, 2
+            args.queries_per_section, args.run_specs = 1, runs
+            _, cases, _, _, archives = bench.prepare(args)
+            self.assertEqual([c["section_idx"] for c in cases], [1, 3])
+            self.assertEqual([a["final_stored_frames"] for a in archives], [16, 32, 64, 128])
+            for case in cases:
+                self.assertEqual(set(case["candidates"]), {r[1] for r in runs})
+                for _, run, _, budget in runs:
+                    self.assertLessEqual(len(case["candidates"][run]), budget)
+            records = [dict(**{k: v for k, v in c.items() if k != "candidates"},
+                            run=run, repeat=repeat, query_ms=budget + repeat)
+                       for c in cases for _, run, _, budget in runs for repeat in range(3)]
+            summary, _ = bench.summarize(records, cases, archives, 3, runs, 180)
+            self.assertEqual([r["budget"] for r in summary], [16, 32, 64, 128])
+            self.assertEqual([r["query_ms"] for r in summary], [17, 33, 65, 129])
+            self.assertTrue(all(r["videos"] == 1 and r["sampled_queries"] == 2 for r in summary))
+            trace = args.root / runs[-1][1] / "access_traces/seed0_fixture_180s_custom.jsonl"
+            trace.unlink()
+            with self.assertRaises(FileNotFoundError):
+                bench.prepare(args)
+
+    def test_keepsake_budget_grid_cpu_cli(self):
+        runs = [bench.RUN_SPECS[f"slam_b{b}_covisibility"] for b in (16, 32, 64, 128)]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            args = fixture(root, duration=180, runs=runs)
+            output = root / "output"
+            result = subprocess.run([
+                sys.executable, str(bench.ROOT / "paper/benchmark_b32_query_latency.py"),
+                "--manifest", str(args.manifest), "--root", str(root), "--duration", "180",
+                "--first-video", "--sample-sections", "2", "--queries-per-section", "1",
+                "--repeats", "1", "--runs", *[r[1] for r in runs], "--output", str(output),
+            ], capture_output=True, text=True, timeout=180)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            with (output / "latency_summary.csv").open() as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([int(r["budget"]) for r in rows], [16, 32, 64, 128])
+            self.assertTrue(all(int(r["videos"]) == 1 and int(r["duration_sec"]) == 180 for r in rows))
+            self.assertTrue(all(float(r["query_ms"]) > 0 for r in rows))
+            meta = json.loads((output / "provenance.json").read_text())
+            self.assertEqual(meta["status"], "complete")
+            self.assertEqual(meta["timing_records"], 8)
+
     def test_single_180s_trajectory_selected_policies(self):
         with tempfile.TemporaryDirectory() as temp:
             args = fixture(Path(temp), duration=180)

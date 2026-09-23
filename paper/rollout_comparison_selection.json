@@ -1,0 +1,34 @@
+[
+  {
+    "system": "MemCam",
+    "filename": "seed0_ChemicalPlantEnv_5_3648_60s_custom.mp4",
+    "frames": [0, 456, 912, 1368, 1824],
+    "stem": "01_memcam_chemical_plant",
+    "display_title": "Chemical plant",
+    "reason": "Primary: bright scene with readily identifiable cylindrical tanks. KEEPSAKE retains their recognizable structure; Unbounded changes the tank layout late and FIFO becomes a long repetitive wall. No GT correctness claim. Five equally spaced indices cover the full video."
+  },
+  {
+    "system": "WorldMem",
+    "filename": "video_batch00004_0_rank0.mp4",
+    "frames": [0, 150, 300, 449, 599],
+    "stem": "02_worldmem_snow",
+    "display_title": "Snow-covered terrain",
+    "reason": "Primary: snow and block boundaries remain visible in KEEPSAKE throughout the sampled rollout; Unbounded and FIFO develop conspicuous colored stripe artifacts late. All three start from the same image. Five equally spaced indices cover the full video. The source of the artifacts is not established by this figure."
+  },
+  {
+    "system": "MemCam",
+    "filename": "seed0_ContainerYard_9_2584_60s_custom.mp4",
+    "frames": [0, 456, 912, 1368, 1824],
+    "stem": "03_memcam_container_yard_alternate",
+    "display_title": "Container yard",
+    "reason": "Alternate: recognizable buildings, containers and cranes. KEEPSAKE's final sampled view includes a building resembling the initial one, whereas the alternatives remain dominated by container walls. Similarity alone does not verify a camera revisit or GT fidelity."
+  },
+  {
+    "system": "WorldMem",
+    "filename": "video_batch00007_0_rank0.mp4",
+    "frames": [0, 150, 300, 449, 599],
+    "stem": "04_worldmem_snowfield_alternate",
+    "display_title": "Snowfield",
+    "reason": "Alternate: after the sky-facing initial views, KEEPSAKE reveals coherent snowy terrain while Unbounded and FIFO exhibit extensive colored stripe artifacts. Five equally spaced indices cover the full video; artifact causes are not inferred."
+  }
+]
