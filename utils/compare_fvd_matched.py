@@ -5,8 +5,10 @@ import csv
 from fractions import Fraction
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 
 import numpy as np
 
@@ -30,6 +32,49 @@ def save_json(path, data):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, allow_nan=False) + "\n")
     temporary.replace(path)
+
+
+def check_device(torch, device, output):
+    """Keep the actual CUDA initialization/kernel error instead of a boolean check."""
+    record = dict(
+        python=sys.executable, torch=str(torch.__version__), torch_path=str(torch.__file__),
+        torch_cuda_build=torch.version.cuda, requested_device=device,
+        environment={key: os.environ.get(key) for key in (
+            "SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_JOB_GPUS", "SLURM_STEP_GPUS",
+            "CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "CONDA_PREFIX", "LD_LIBRARY_PATH",
+            "PYTORCH_NVML_BASED_CUDA_CHECK")},
+        status="checking",
+    )
+    path = output / "device_diagnostics.json"
+    save_json(path, record)
+    print("Device diagnostics: " + json.dumps(record), flush=True)
+    if not device.startswith("cuda"):
+        record["status"] = "explicit_non_cuda"
+        save_json(path, record)
+        return record
+    try:
+        print("Initializing CUDA", flush=True)
+        torch.cuda.init()
+        print(f"Checking tensor allocation and kernel on {device}", flush=True)
+        value = torch.ones(1, device=device)
+        value.mul_(2)
+        torch.cuda.synchronize(device)
+        if value.item() != 2:
+            raise RuntimeError("CUDA kernel check returned an incorrect value")
+        record.update(status="passed", device_count=torch.cuda.device_count(),
+                      gpu_name=torch.cuda.get_device_name(device))
+    except Exception as exc:
+        record.update(status="failed", error_type=type(exc).__name__, error=str(exc))
+        save_json(path, record)
+        save_json(output / "status.json", dict(status="failed", phase="cuda_setup",
+                                               error=str(exc), diagnostics=str(path)))
+        raise RuntimeError(
+            f"CUDA setup failed before FVD: {type(exc).__name__}: {exc}. "
+            f"Environment details: {path}. No CPU fallback or metric scoring was performed."
+        ) from exc
+    save_json(path, record)
+    print(f"CUDA kernel OK: {record['gpu_name']}", flush=True)
+    return record
 
 
 def cohort_items(manifest, expected):
@@ -281,11 +326,11 @@ def main():
           "original 15 present. File/GT audit passed.", flush=True)
     if args.audit_only:
         return
-    print("Importing torch and loading the production I3D detector", flush=True)
+    print(f"Importing torch with {sys.executable}", flush=True)
     import torch
 
-    if args.device.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError("CUDA unavailable in this allocation; no silent CPU fallback")
+    device_info = check_device(torch, args.device, args.output)
+    print("Loading the production I3D detector", flush=True)
     runner = FVDRunner(device=args.device, batch_size=args.batch_size,
                        detector_path=args.detector_path, cache_dir=args.fvd_cache_dir, **CONFIG)
     encoder = dict(detector_sha256=digest(runner.resolved_detector_path),
@@ -295,6 +340,7 @@ def main():
     save_json(args.output / "provenance.json", dict(
         manifest=str(args.manifest.resolve()), manifest_sha256=digest(args.manifest),
         original_manifest_sha256=digest(args.original_manifest), config=CONFIG, encoder=encoder,
+        device_diagnostics=device_info,
         runs=RUNS, budget=32, duration_sec=60, videos_per_policy=30,
         identity="Fixed manifest filenames and GT mapping; per-video content hashes in feature receipts. "
                  "Does not independently certify historical generation checkpoint/settings."))

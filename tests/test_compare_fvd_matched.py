@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from PIL import Image
@@ -53,6 +53,63 @@ class FakeRunner:
 
 
 class MatchedFVDTests(unittest.TestCase):
+    def fake_torch(self):
+        torch = Mock()
+        torch.__version__ = "test-cuda"
+        torch.__file__ = "/test/memcam/torch/__init__.py"
+        torch.version.cuda = "12.1"
+        torch.cuda.device_count.return_value = 1
+        torch.cuda.get_device_name.return_value = "Test GPU"
+        torch.ones.return_value.item.return_value = 2
+        return torch
+
+    def test_device_check_reports_real_init_error_without_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            torch = self.fake_torch()
+            torch.cuda.init.side_effect = RuntimeError("CUDA driver initialization failed")
+            with self.assertRaisesRegex(RuntimeError, "CUDA driver initialization failed") as error:
+                compare.check_device(torch, "cuda", root)
+            self.assertIs(error.exception.__cause__, torch.cuda.init.side_effect)
+            torch.ones.assert_not_called()
+            record = json.loads((root / "device_diagnostics.json").read_text())
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["torch_cuda_build"], "12.1")
+            status = json.loads((root / "status.json").read_text())
+            self.assertEqual(status["phase"], "cuda_setup")
+
+    def test_device_check_uses_requested_device_and_preserves_mask(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            torch = self.fake_torch()
+            with patch.dict(compare.os.environ, {"CUDA_VISIBLE_DEVICES": "GPU-test-uuid"}):
+                record = compare.check_device(torch, "cuda:0", Path(temporary))
+                self.assertEqual(compare.os.environ["CUDA_VISIBLE_DEVICES"], "GPU-test-uuid")
+            torch.ones.assert_called_once_with(1, device="cuda:0")
+            torch.cuda.synchronize.assert_called_once_with("cuda:0")
+            self.assertEqual(record["status"], "passed")
+            self.assertEqual(record["environment"]["CUDA_VISIBLE_DEVICES"], "GPU-test-uuid")
+
+    def test_device_check_catches_allocation_failure_and_supports_explicit_cpu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            torch = self.fake_torch()
+            torch.ones.side_effect = RuntimeError("CUDA device busy or unavailable")
+            with self.assertRaisesRegex(RuntimeError, "busy or unavailable"):
+                compare.check_device(torch, "cuda", Path(temporary))
+            torch = self.fake_torch()
+            record = compare.check_device(torch, "cpu", Path(temporary))
+            torch.cuda.init.assert_not_called()
+            torch.ones.assert_not_called()
+            self.assertEqual(record["status"], "explicit_non_cuda")
+
+    def test_launcher_preserves_slurm_mask_and_has_no_conda_or_import_timeout(self):
+        launcher = (ROOT / "slurm/newton_fvd_ri_keepsake_30.sbatch").read_text()
+        self.assertIn("#SBATCH --exclude=evc27,evc30", launcher)
+        self.assertIn("nvidia-smi --query-gpu", launcher)
+        self.assertIn("export CUDA_DEVICE_ORDER=PCI_BUS_ID", launcher)
+        self.assertNotIn("export CUDA_VISIBLE_DEVICES=", launcher)
+        self.assertNotIn("conda activate", launcher)
+        self.assertNotIn("timeout ", launcher)
+
     def test_fixed_manifest_not_directory_intersection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

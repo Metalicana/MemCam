@@ -64,3 +64,25 @@ The Slurm launcher uses the environment's Python directly. It does not run
 `conda activate`, use nested GPU steps, override `CUDA_VISIBLE_DEVICES`, or impose
 an import/preflight timeout. The allocation wall-time limit is four hours, not
 a runtime estimate. CUDA failures remain allocation/environment errors.
+
+## Job 839413: CUDA Unavailable on evc27
+
+The fixed-cohort audit passed: 30 videos per method, 30 scenes, original 15
+included, sampled GT files present. The job stopped at `torch.cuda.is_available()`
+before loading I3D or extracting any features. This was not a timeout or a
+missing-video failure. The boolean check did not identify whether the failure
+was in the driver, GPU access/mapping, or the Python installation.
+
+The runner now records the Python executable, Torch path/version/CUDA build,
+Slurm device variables and library path in `device_diagnostics.json`. It calls
+CUDA initialization explicitly and exercises a tensor kernel, preserving the
+underlying exception and marking `status.json` as failed at `cuda_setup` if
+either fails. It does not switch to CPU or alter the GPU visibility mask.
+
+The launcher prints NVIDIA inventory and loaded modules, and sets PCI bus
+ordering following the [Slurm GRES guide](https://slurm.schedmd.com/gres.html).
+Its default exclusions now include `evc27` as a temporary scheduling workaround,
+not a confirmed diagnosis or repair. If CUDA fails elsewhere, use the recorded
+initialization error and inventory to investigate the shared installation and
+allocation with Newton support rather than repeatedly excluding more nodes.
+The FVD inputs, parameters and statistical comparison are unchanged.
