@@ -28,7 +28,8 @@ FRAMES = {
 }
 PANEL_TOP = 385
 PANEL_HEIGHT = 585
-PANELS = {83: (34, 230), 138: (282, 1120), 209: (1420, 132), 263: (1570, 236)}
+PANELS = {83: (34, 230), 138: (282, 1268), 263: (1570, 236)}
+RED, BLUE, GREEN = "#B24C55", "#2F6FA9", "#277A60"
 
 
 def scoring_example(evicted):
@@ -90,23 +91,21 @@ def draw_update(root, assets, example):
         c.set("data-source-video", VIDEO)
         c.set("data-role", role)
 
-    def panel(n, number, title, fill, stroke):
+    def panel(n, title, fill, stroke):
         x, w = PANELS[n]
         name = PREFIX + str(n)
         vertex(name, "", x, PANEL_TOP, w, PANEL_HEIGHT, fill="#FFFFFF", stroke=stroke)
         vertex(name + "-header", "", 1, 1, w - 2, 89, name, fill=fill)
-        vertex(name + "-number", str(number), 12, 20, 44, 44, name,
-               fill=stroke, shape="ellipse", color="#FFFFFF", bold=True, size=30)
-        vertex(name + "-title", title, 63, 8, w - 73, 74, name, bold=True,
+        vertex(name + "-title", title, 12, 8, w - 24, 74, name, bold=True,
                size=29 if n == 138 else 27)
         return name
 
-    bank = panel(83, 1, "Candidate<br>bank", "#EDF5FC", "#2F6FA9")
-    panel(138, 2, "Pose&ndash;appearance graph and retention priority", "#EDF7F3", "#3D806E")
-    archive = panel(263, 4, "Retained<br>archive", "#F4F0FB", "#7655A7")
+    bank = panel(83, "Candidate<br>bank", "#FBEFF0", RED)
+    panel(138, "Pose&ndash;appearance graph and budgeted update", "#EDF5FC", BLUE)
+    archive = panel(263, "Retained<br>archive", "#EDF7F2", GREEN)
 
-    for title, frames, y, color, role in (("Existing <i>M</i><sub>t</sub>", (0, 41, 125, 145), 108, "#2F6FA9", "existing"),
-            ("New <i>N</i><sub>t</sub>", (176, 184, 227, 228), 288, "#B87624", "new")):
+    for title, frames, y, color, role in (("Existing <i>M</i><sub>t</sub>", (0, 41, 125, 145), 108, RED, "existing"),
+            ("New <i>N</i><sub>t</sub>", (176, 184, 227, 228), 288, RED, "new")):
         vertex(role + "-title", title, 12, y, 206, 38, bank, size=27, bold=True)
         for k, frame in enumerate(frames):
             photo(role + f"-{frame}", frame, 13 + 106 * (k % 2), y + 48 + 62 * (k // 2),
@@ -123,18 +122,18 @@ def draw_update(root, assets, example):
         vertex("pair-" + symbol + "-label", f"<i>{symbol}</i>", x, 141, 112, 30, graph, size=26)
     line("pair-join-i", [(91, 237), (91, 249), (259, 249), (259, 237)], graph, arrow=False)
     line("pair-pose", [(91, 249), (91, 268)], graph)
-    line("pair-dino", [(259, 249), (259, 268)], graph)
+    line("pair-appearance", [(259, 249), (259, 268)], graph)
     vertex("pose-affinity", "<b>Pose</b><br><i>P</i><sub>ij</sub> = e<sup>&minus;d<sub>p</sub>(i,j)</sup>",
            16, 268, 150, 85, graph, fill="#EDF5FC", stroke="#8EB4D8", size=24)
-    vertex("appearance-affinity", "<b>DINO</b><br><i>A</i><sub>ij</sub> = [z<sub>i</sub><sup>T</sup>z<sub>j</sub>]<sub>+</sub>",
-           186, 268, 150, 85, graph, fill="#F2F6EE", stroke="#9DB18E", size=22)
+    vertex("appearance-affinity", "<b>Appearance</b><br><i>A</i><sub>ij</sub> = [z<sub>i</sub><sup>T</sup>z<sub>j</sub>]<sub>+</sub>",
+           186, 268, 150, 85, graph, fill="#EDF5FC", stroke="#8EB4D8", size=22)
     line("affinity-merge", [(91, 353), (91, 371), (261, 371), (261, 353)], graph, arrow=False)
     line("affinity-merge-output", [(176, 371), (176, 390)], graph)
-    vertex("combined-affinity", "<i>K</i><sub>ij</sub> = 0.65<i>P</i><sub>ij</sub> + 0.35<i>A</i><sub>ij</sub>",
-           16, 390, 320, 58, graph, fill="#EDF7F3", stroke="#3D806E", size=25)
+    vertex("combined-affinity", "<i>K</i><sub>ij</sub> = &alpha;<i>P</i><sub>ij</sub> + (1 &minus; &alpha;)<i>A</i><sub>ij</sub>",
+           16, 390, 320, 58, graph, fill="#EDF5FC", stroke=BLUE, size=25)
 
     vertex("edge-rule-title", "Add undirected links", 368, 104, 426, 38, graph, bold=True, size=27)
-    vertex("edge-rule", "<i>i</i> &ne; <i>j</i>, &nbsp;<i>K</i><sub>ij</sub> &ge; &tau; = 0.65",
+    vertex("edge-rule", "<i>i</i> &ne; <i>j</i>, &nbsp;<i>K</i><sub>ij</sub> &ge; &tau;",
            368, 146, 426, 42, graph, size=26)
     line("affinity-to-graph", [(336, 419), (383, 419), (383, 345), (421, 345)], graph)
 
@@ -144,60 +143,56 @@ def draw_update(root, assets, example):
                          ("schematic-link-3", [(461, 381), (464, 409)])):
         c = line(name, points, graph, arrow=False, color="#8FA6AD", width=2.3)
         c.set("data-link-origin", "schematic")
-    c = line("logged-closest-link", [(496, 318), (668, 269)], graph, arrow=False, color="#B87624", width=3.5)
+    c = line("logged-closest-link", [(496, 318), (668, 269)], graph, arrow=False, color=BLUE, width=3.5)
     c.set("data-link-origin", "logged nearest affinity")
     c.set("data-frame-pair", "227,228")
     c.set("data-affinity", str(example["max_affinity"]))
     for name, x, y in (("neighbor-1", 419, 206), ("neighbor-2", 563, 366), ("neighbor-3", 440, 406)):
         vertex(name, "<i>j</i>", x, y, 44, 44, graph, fill="#F6F9FA", stroke="#8FA6AD", shape="ellipse", size=24)
     vertex("omitted-neighbors", "&ctdot;", 538, 198, 77, 43, graph, size=34)
-    vertex("graph-i", "", 416, 298, 92, 92, graph, fill="#FFF8EE", stroke="#B87624", shape="ellipse")
-    photo("graph-i-image", 227, 422, 321, 80, graph, "scored_node", "#B87624")
-    vertex("graph-i-label", "<i>i</i> = 227", 398, 266, 132, 30, graph, size=25)
-    vertex("graph-j", "", 666, 214, 92, 92, graph, fill="#EEF7F3", stroke="#3D806E", shape="ellipse")
-    photo("graph-j-image", 228, 672, 237, 80, graph, "closest_node", "#3D806E")
+    vertex("graph-i", "", 416, 298, 92, 92, graph, fill="#EDF5FC", stroke=BLUE, shape="ellipse")
+    photo("graph-i-image", 227, 422, 321, 80, graph, "scored_node", BLUE)
+    vertex("graph-i-label", "<i>i</i> = 227", 346, 266, 92, 28, graph, size=24)
+    vertex("graph-j", "", 666, 214, 92, 92, graph, fill="#EDF5FC", stroke=BLUE, shape="ellipse")
+    photo("graph-j-image", 228, 672, 237, 80, graph, "closest_node", BLUE)
     vertex("graph-j-label", "<i>j</i>* = 228", 647, 184, 134, 30, graph, size=25)
     vertex("graph-edge-value", f"{example['max_affinity']:.4f}", 542, 263, 117, 31, graph,
-           fill="#FFFFFF", color="#A66D22", size=25)
+           fill="#FFFFFF", color=BLUE, size=25)
     vertex("unlinked-node", "<i>j</i>", 710, 368, 48, 48, graph,
            fill="#FAFAFA", stroke="#B8C2C7", shape="ellipse", color="#78858E", size=24)
     vertex("no-edge-rule", "<i>K</i><sub>ij</sub> &lt; &tau;", 675, 414, 118, 32, graph,
            color="#65717A", size=24)
 
-    vertex("statistics-title", "Node statistics", 825, 104, 279, 38, graph, bold=True, size=27)
+    vertex("statistics-title", "Node statistics", 844, 104, 392, 38, graph, bold=True, size=27)
     vertex("neighbor-count", "<b>Neighbor count</b><br><i>c</i><sub>i</sub> = |{j &ne; i : K<sub>ij</sub> &ge; &tau;}|",
-           825, 159, 279, 93, graph, fill="#EDF5FC", stroke="#8EB4D8", size=24)
-    vertex("neighbor-value", f"<i>c</i><sub>227</sub> = {example['neighbors']}", 825, 252, 279, 39, graph, size=27, color="#2F6FA9")
+           844, 159, 392, 93, graph, fill="#EDF5FC", stroke="#8EB4D8", size=25)
+    vertex("neighbor-value", f"<i>c</i><sub>227</sub> = {example['neighbors']}", 844, 252, 392, 39, graph, size=27, color=BLUE)
     vertex("strongest-affinity", "<b>Closest substitute</b><br><i>k</i><sub>i</sub><sup>max</sup> = max<sub>j &ne; i</sub> K<sub>ij</sub>",
-           825, 311, 279, 93, graph, fill="#FFF7EC", stroke="#D1A76C", size=24)
+           844, 311, 392, 93, graph, fill="#EDF5FC", stroke="#8EB4D8", size=25)
     vertex("strongest-value", f"<i>k</i><sub>227</sub><sup>max</sup> = {example['max_affinity']:.4f}",
-           825, 404, 279, 42, graph, size=27, color="#A66D22")
-    line("graph-to-statistics", [(796, 301), (818, 301)], graph)
-    line("statistics-to-priority", [(965, 448), (965, 473)], graph)
-    vertex("priority-band", "", 16, 477, 1088, 93, graph, fill="#F1F7F4", stroke="#A2C5B7")
-    vertex("priority-title", "Retention priority", 27, 479, 1070, 32, graph, bold=True, size=27)
+           844, 404, 392, 42, graph, size=27, color=BLUE)
+    line("graph-to-statistics", [(796, 301), (836, 301)], graph)
+    line("statistics-to-priority", [(1040, 448), (1040, 462), (482, 462), (482, 473)], graph)
+    vertex("priority-band", "", 16, 477, 932, 93, graph, fill="#F4F8FD", stroke="#8EB4D8")
+    vertex("priority-title", "Retention priority", 27, 479, 910, 32, graph, bold=True, size=27)
     vertex("priority-formula",
            "<i>u</i><sub>i</sub> = 1 &minus; min(c<sub>i</sub>/3, 1) + 0.5/(c<sub>i</sub> + 1) + 0.25(1 &minus; k<sub>i</sub><sup>max</sup>)",
-           27, 521, 806, 37, graph, size=26)
+           27, 521, 695, 37, graph, size=24)
     vertex("priority-value", f"<i>u</i><sub>227</sub> = {example['utility']:.4f}",
-           848, 521, 245, 37, graph, bold=True, size=28, color="#B64B51")
+           732, 521, 206, 37, graph, bold=True, size=25, color=BLUE)
 
-    # Eviction is a narrow operation between the scoring diagram and output archive.
+    # Eviction is the final operation inside the graph/scoring update, not a separate stage.
     eviction = PREFIX + "209"
-    vertex(eviction, "", PANELS[209][0], PANEL_TOP + 215, PANELS[209][1], 207,
-           fill="#FFF8EE", stroke="#D1A76C")
-    vertex("evict-number", "3", 44, 10, 44, 44, eviction,
-           fill="#B87624", color="#FFFFFF", shape="ellipse", bold=True, size=30)
-    vertex("evict-title", "Evict", 4, 63, 124, 40, eviction, bold=True, size=28)
-    vertex("evict-rule", "Low priority", 4, 105, 124, 39, eviction, size=23)
-    vertex("evict-count", "108 &rarr; 32", 4, 154, 124, 38, eviction, size=23)
+    vertex(eviction, "", 1000, 477, 252, 93, graph, fill="#E4EFFB", stroke=BLUE)
+    vertex("evict-title", "Evict lowest<br>priority", 6, 4, 240, 53, eviction, bold=True, size=26)
+    vertex("evict-count", "108 &rarr; 32", 6, 61, 240, 28, eviction, size=26)
+    line("priority-to-eviction", [(951, 523), (992, 523)], graph, color=BLUE, width=2.5)
     for k, frame in enumerate((0, 125, 228)):
-        photo("retained-" + str(frame), frame, 21, 166 + 123 * k, 194, archive, "retained", "#7655A7")
+        photo("retained-" + str(frame), frame, 21, 166 + 123 * k, 194, archive, "retained", GREEN)
     vertex("retained-title", "<i>M</i><sub>t+1</sub>", 14, 99, 208, 36, archive, bold=True, size=30)
     vertex("retained-count", "|<i>M</i><sub>t+1</sub>| = 32", 6, 538, 224, 38, archive, size=29)
-    for name, start, end in (("candidates-to-graph", 264, 280),
-                              ("graph-to-eviction", 1403, 1418), ("eviction-to-archive", 1553, 1568)):
-        line(name, [(start, PANEL_TOP + 318), (end, PANEL_TOP + 318)], width=2.5)
+    line("candidates-to-graph", [(264, PANEL_TOP + 318), (280, PANEL_TOP + 318)], width=2.5)
+    line("eviction-to-archive", [(1536, PANEL_TOP + 523), (1568, PANEL_TOP + 523)], width=2.5, color=GREEN)
 
 
 def prepare(trace):
@@ -299,6 +294,8 @@ def rewrite(template, output, assets, evicted):
 
     # Preserve the original generation loop, arrows, cameras and image stack.
     label(303, "Long-horizon generation loop (KEEPSAKE)", 38)
+    geom(303, x=34, w=1772)
+    set_style(cell(303), align="center")
     geom(8, w=245, h=150)
     geom(9, w=245, h=150)
     geom(10, x=3, w=239, h=65, y=8)
@@ -319,7 +316,8 @@ def rewrite(template, output, assets, evicted):
     geom(4, y=324, h=PANEL_TOP + PANEL_HEIGHT + 18 - 324)
     set_style(cell(4), strokeColor="#B24C55", strokeWidth="2.3")
     label(306, "KEEPSAKE: geometry-aware memory update", 38)
-    geom(306, y=332, h=47, w=1720)
+    geom(306, x=34, y=332, h=47, w=1772)
+    set_style(cell(306), align="center")
     # Equal 40-unit gaps and shared centerline keep the retrieval arrows symmetric.
     for n, x, y, width, height in ((8, 30, 72, 245, 150),
             (27, 315, 95, 208, 104), (28, 563, 76.5, 332, 141),
@@ -331,6 +329,7 @@ def rewrite(template, output, assets, evicted):
         connect(n, source, target, (1, 0.5), (0, 0.5))
     geom(72, x=306.5, y=247, w=225)
     geom(73, x=1272.5, y=247, w=225)
+    set_style(cell(73), fillColor="#EDF7F2", strokeColor=GREEN)
     connect(79, 72, 27, (0.5, 0), (0.5, 1))
     connect(80, 52, 73, (0.5, 1), (0.5, 0))
     conditioning_input("caption-input", "Initial caption", 563, 204, 102 / 332)
@@ -381,8 +380,10 @@ def build(args):
                     "meaning": "Excluded from eviction, not a separate category from retained."},
         original_layout=str(args.template), original_layout_sha256=digest(args.template),
         builder_sha256=digest(Path(__file__)),
-        changes="Generation loop preserved. Narrow candidate/retained banks; compact eviction step; "
-                "expanded pairwise affinity, thresholded linking, node statistics and utility. "
+        changes="Generation loop preserved. Red candidate bank, expanded blue graph/scoring/update "
+                "panel with integrated budgeted eviction, green retained archive. Centered titles "
+                "without step numbers. Symbolic alpha and one-minus-alpha affinity weights; "
+                "pose/appearance labels and no numeric covisibility threshold. "
                 "Protection annotations omitted from the visual explanation.",
         scoring_sources=["diffsynth/pipelines/memory_policies.py:_slam_covisibility_affinity",
                          "diffsynth/pipelines/memory_policies.py:compute_slam_covisibility_scores",
@@ -396,15 +397,16 @@ def build(args):
     args.output.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     caption = r"""\caption{\textbf{KEEPSAKE maintains a bounded archive inside the generation loop.}
 The original retriever and generator are unchanged. Dark dashed guides expand
-the memory-update block; they are not data-flow arrows. (1) Merge existing and
-new observations. (2) For every distinct pair, combine pose proximity with
+the memory-update block; they are not data-flow arrows. Merge existing and
+new observations. For every distinct pair, combine pose proximity with
 nonnegative cosine similarity of normalized DINO descriptors, where
-$[s]_+=\max(s,0)$. Pose distance combines median-normalized translation
+$K_{ij}=\alpha P_{ij}+(1-\alpha)A_{ij}$ and $[s]_+=\max(s,0)$.
+Pose distance combines median-normalized translation
 and rotation angle with weight two.
-Add an undirected link when the combined affinity is at least 0.65. Count these
+Add an undirected link when the combined affinity meets the linking criterion. Count these
 neighbors and find the strongest affinity over all other candidates to compute
-the displayed retention priority. (3) Evict the lowest-scored eligible items
-using scores fixed for this update. (4) Keep the bounded archive.
+the displayed retention priority. Within the same update, evict the lowest-scored
+eligible items using fixed scores, then keep the bounded archive.
 """
     caption += (f"The ChemicalPlant example has {len(old | new)} candidates and retains {len(kept)}. "
                 f"Frame {example['frame']} has {example['neighbors']} thresholded neighbors; "

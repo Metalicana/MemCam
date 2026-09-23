@@ -54,16 +54,21 @@ class MethodFigureTests(unittest.TestCase):
     def cell(self, n):
         return self.cells[method.PREFIX + str(n) if isinstance(n, int) else n]
 
-    def test_narrow_banks_dominant_graph_and_compact_eviction(self):
+    def test_narrow_banks_dominant_graph_and_integrated_eviction(self):
         graph_width = float(self.cell(138).find("mxGeometry").get("width"))
         self.assertGreater(graph_width / 1808, .60)
         for n in (83, 263):
             g = self.cell(n).find("mxGeometry")
             self.assertLess(float(g.get("width")), 250)
             self.assertEqual(float(g.get("height")), method.PANEL_HEIGHT)
+        self.assertEqual(self.cell(209).get("parent"), method.PREFIX + "138")
         eviction = self.cell(209).find("mxGeometry")
-        self.assertLess(float(eviction.get("width")), 150)
+        self.assertLess(float(eviction.get("width")), graph_width / 4)
         self.assertLess(float(eviction.get("height")), method.PANEL_HEIGHT / 2)
+        self.assertLess(float(eviction.get("x")) + float(eviction.get("width")), graph_width)
+        self.assertEqual(eviction.get("y"), self.cell("priority-band").find("mxGeometry").get("y"))
+        self.assertIn("priority-to-eviction", self.cells)
+        self.assertNotIn("graph-to-eviction", self.cells)
         for n in (83, 138, 263):
             self.assertEqual(float(self.cell(n).find("mxGeometry").get("y")), method.PANEL_TOP)
 
@@ -81,10 +86,18 @@ class MethodFigureTests(unittest.TestCase):
         self.assertEqual(retained, {0, 125, 228})
 
     def test_graph_construction_and_scoring_are_explicit(self):
-        self.assertIn("0.65", self.cell("combined-affinity").get("value"))
-        self.assertIn("0.35", self.cell("combined-affinity").get("value"))
+        formula = self.cell("combined-affinity").get("value")
+        self.assertIn("&alpha;<i>P</i>", formula)
+        self.assertIn("(1 &minus; &alpha;)<i>A</i>", formula)
         self.assertIn("&ge;", self.cell("edge-rule").get("value"))
         self.assertIn("i</i> &ne;", self.cell("edge-rule").get("value"))
+        self.assertIn("&tau;", self.cell("edge-rule").get("value"))
+        self.assertIn("Appearance", self.cell("appearance-affinity").get("value"))
+        self.assertIn("Pose", self.cell("pose-affinity").get("value"))
+        for c in self.rendered:
+            self.assertNotIn("0.65", c.get("value", ""))
+            self.assertNotIn("0.35", c.get("value", ""))
+            self.assertNotIn("DINO", c.get("value", ""))
         self.assertIn("31", self.cell("neighbor-value").get("value"))
         self.assertIn("0.9834", self.cell("strongest-value").get("value"))
         self.assertIn("0.0198", self.cell("priority-value").get("value"))
@@ -96,6 +109,20 @@ class MethodFigureTests(unittest.TestCase):
         self.assertAlmostEqual(float(edge.get("data-affinity")), example_record()[227]["eviction_max_covisibility"])
         for i in range(1, 4):
             self.assertEqual(self.cell(f"schematic-link-{i}").get("data-link-origin"), "schematic")
+
+    def test_centered_unnumbered_headers_and_stage_colors(self):
+        for n, color in ((83, method.RED), (138, method.BLUE), (263, method.GREEN)):
+            self.assertIn(f"strokeColor={color};", self.cell(n).get("style"))
+            panel = self.cell(n).find("mxGeometry")
+            header = self.cell(method.PREFIX + str(n) + "-title")
+            g = header.find("mxGeometry")
+            self.assertEqual(float(g.get("x")) + float(g.get("width")) / 2,
+                             float(panel.get("width")) / 2)
+            self.assertIn("align=center;", header.get("style"))
+            self.assertNotIn(method.PREFIX + str(n) + "-number", self.cells)
+        self.assertNotIn("evict-number", self.cells)
+        for n in (303, 306):
+            self.assertIn("align=center;", self.cell(n).get("style"))
 
     def test_preserves_generation_inputs_spacing_and_visible_expansion(self):
         flow = (8, 27, 28, 38, 52, 53)
