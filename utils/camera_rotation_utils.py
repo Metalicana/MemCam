@@ -2,6 +2,35 @@ import math
 import numpy as np
 
 
+def exact_roundtrip_c2ws(c2w, angle_deg):
+    """MemCam-sized out-and-back paths with exactly paired camera poses."""
+    if angle_deg not in (90, 360):
+        raise ValueError("Round-trip angle must be 90 or 360 degrees")
+    c2w = np.asarray(c2w, dtype=np.float64)
+    if (c2w.shape != (4, 4) or not np.isfinite(c2w).all()
+            or not np.allclose(c2w[3], [0, 0, 0, 1])
+            or not np.allclose(c2w[:3, :3].T @ c2w[:3, :3], np.eye(3), atol=1e-6)
+            or not np.isclose(np.linalg.det(c2w[:3, :3]), 1.0, atol=1e-6)):
+        raise ValueError("Expected a finite rigid camera-to-world transform")
+    half = 76 if angle_deg == 90 else 304
+    angles = np.linspace(0, math.radians(angle_deg), half + 1)
+    rotations = np.repeat(np.eye(4)[None], half + 1, axis=0)
+    rotations[:, 0, 0] = rotations[:, 1, 1] = np.cos(angles)
+    rotations[:, 0, 1] = -np.sin(angles)
+    rotations[:, 1, 0] = np.sin(angles)
+    outward = c2w @ rotations
+    # Match the released helper's local-Z rotation convention; do not pad endpoints.
+    return np.concatenate([outward, outward[-2::-1]])
+
+
+def roundtrip_pairs(num_frames):
+    """Generated/generated pairs, excluding the input and turnaround self-pair."""
+    if num_frames not in (153, 609):
+        raise ValueError("Expected 153 or 609 round-trip frames")
+    half = num_frames // 2
+    return [(i, num_frames - 1 - i) for i in range(1, half)]
+
+
 def rotate_c2w_z_swing(c2w: np.ndarray, num_frames: int, max_angle_deg: float = 45.0) -> np.ndarray:
     """
     绕 Z 轴摆动旋转（向右再回来）
