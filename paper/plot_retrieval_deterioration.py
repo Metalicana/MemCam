@@ -77,14 +77,7 @@ def summarize(values, targets, fps, bins, repeats, seed):
             "curve_ci": interval(curves), "time_sec": x}
 
 
-def plot(result, n, output):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "pdf.fonttype": 42})
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.7), layout="constrained",
-                             gridspec_kw={"width_ratios": [1, 1.3]})
-    ax = axes[0]
+def draw_changes(ax, result, n, title):
     for index, color in enumerate(("#238575", "#BD443A")):
         y = 1 - index
         mean = result["delta_mean"][index]
@@ -99,21 +92,92 @@ def plot(result, n, output):
     ax.set(yticks=[1, 0], yticklabels=["View\nmismatch", "Memory\ncorruption"], ylim=(-.45, 1.55),
            xlabel="Late minus early DINO distance")
     ax.margins(x=.3)
-    ax.set_title("(a) Changes in retrieved memory", loc="left", fontsize=11)
-    ax = axes[1]
+    ax.set_title(title, loc="left", fontsize=11)
+
+
+def draw_evidence(ax, result, title):
     for index, name, color in ((2, "Selected memory", "#BD443A"), (3, "Best available in archive", "#2673A8")):
         ax.plot(result["time_sec"], result["curve_mean"][:, index], marker="o", markersize=4,
                 color=color, label=name, linewidth=2)
         ax.fill_between(result["time_sec"], result["curve_ci"][0, :, index],
                         result["curve_ci"][1, :, index], color=color, alpha=.12)
     ax.set(xlabel="Rollout time (s)", ylabel="DINO distance to target GT")
-    ax.set_title("(b) Selected versus available evidence", loc="left", fontsize=11)
+    ax.set_title(title, loc="left", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-    for ext in ("png", "pdf"):
-        fig.savefig(output / f"retrieval_deterioration.{ext}", dpi=200)
-    plt.close(fig)
+
+
+def plot(result, n, output, individual_only=False):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def save(fig, stem):
+        for ax in fig.axes:
+            ax.spines[["top", "right"]].set_visible(False)
+        for ext in ("png", "pdf"):
+            fig.savefig(output / f"{stem}.{ext}", dpi=300, facecolor="white")
+        plt.close(fig)
+
+    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "pdf.fonttype": 42}):
+        if not individual_only:
+            fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.7), layout="constrained",
+                                     gridspec_kw={"width_ratios": [1, 1.3]})
+            draw_changes(axes[0], result, n, "(a) Changes in retrieved memory")
+            draw_evidence(axes[1], result, "(b) Selected versus available evidence")
+            save(fig, "retrieval_deterioration")
+
+        fig, ax = plt.subplots(figsize=(5.6, 3.8), layout="constrained")
+        draw_changes(ax, result, n, "Changes in retrieved memory")
+        save(fig, "retrieval_deterioration_changes")
+        fig, ax = plt.subplots(figsize=(5.6, 3.8), layout="constrained")
+        draw_evidence(ax, result, "Selected versus available evidence")
+        save(fig, "retrieval_deterioration_evidence")
+
+
+def load_saved_result(directory):
+    """Restore exported statistics verbatim; do not resample saved aggregate means."""
+    def read(name):
+        with (directory / name).open(newline="") as handle:
+            return list(csv.DictReader(handle))
+
+    provenance = json.loads((directory / "provenance.json").read_text())
+    changes, trajectories, curves = (read(name) for name in
+                                    ("changes.csv", "trajectory_changes.csv", "curves.csv"))
+    identities = [tuple(str(row[key]) for key in IDENTITY) for row in trajectories]
+    expected = [tuple(str(row[key]) for key in IDENTITY) for row in provenance["trajectories"]]
+    if len(identities) < 2 or len(set(identities)) != len(identities) or set(identities) != set(expected):
+        raise ValueError("Saved trajectory identities do not match provenance")
+    by_metric = {row["metric"]: row for row in changes}
+    if len(changes) != len(FIELDS) or set(by_metric) != set(FIELDS):
+        raise ValueError("Expected one saved change for each metric")
+    by_time_metric = {(float(row["time_sec"]), row["metric"]): row for row in curves}
+    times = sorted({key[0] for key in by_time_metric})
+    if (len(times) < 2 or len(by_time_metric) != len(curves)
+            or set(by_time_metric) != {(t, field) for t in times for field in FIELDS}):
+        raise ValueError("Saved curve coverage is incomplete or duplicated")
+    if len(times) != int(provenance["parameters"]["bins"]):
+        raise ValueError("Saved curve bin count differs from provenance")
+    result = {
+        "deltas": np.asarray([[float(row[field]) for field in FIELDS] for row in trajectories]),
+        "delta_mean": np.asarray([float(by_metric[field]["late_minus_early"]) for field in FIELDS]),
+        "delta_ci": np.asarray([[float(by_metric[field][bound]) for field in FIELDS]
+                                for bound in ("ci_low", "ci_high")]),
+        "curve_mean": np.asarray([[float(by_time_metric[t, field]["mean"]) for field in FIELDS]
+                                  for t in times]),
+        "curve_ci": np.asarray([[[float(by_time_metric[t, field][bound]) for field in FIELDS]
+                                 for t in times] for bound in ("ci_low", "ci_high")]),
+        "time_sec": np.asarray(times),
+    }
+    if not all(np.isfinite(array).all() for array in result.values()):
+        raise ValueError("Nonfinite saved statistic")
+    if not np.allclose(result["deltas"].mean(axis=0), result["delta_mean"], atol=1e-10, rtol=0):
+        raise ValueError("Saved changes do not match trajectory means")
+    for key in ("delta_ci", "curve_ci"):
+        if np.any(result[key][0] > result[key][1]):
+            raise ValueError("Reversed confidence interval")
+    if np.any(result["curve_mean"][:, 3] > result["curve_mean"][:, 2] + 1e-5):
+        raise ValueError("Saved best-available mismatch exceeds selected mismatch")
+    return result, len(identities)
 
 
 def write_csv(path, rows):
@@ -126,6 +190,9 @@ def write_csv(path, rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=Path.home() / "memcam_results/context_180s/unbounded_failure_decomposition_180s/tables/query_decomposition.csv")
+    parser.add_argument("--from-results", type=Path,
+                        help="Re-render saved changes/curves/trajectory CSVs without raw queries or recomputation")
+    parser.add_argument("--individual-only", action="store_true", help="Export separate panels only")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run", default="baseline")
     parser.add_argument("--duration", type=int, default=180)
@@ -135,16 +202,32 @@ def main():
     parser.add_argument("--bootstrap", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    if args.output.exists() and any(args.output.iterdir()):
+        parser.error("Use an empty output directory")
+    if args.from_results:
+        result, n = load_saved_result(args.from_results)
+        args.output.mkdir(parents=True, exist_ok=True)
+        plot(result, n, args.output, args.individual_only)
+        sources = [args.from_results / name for name in
+                   ("changes.csv", "trajectory_changes.csv", "curves.csv", "provenance.json")]
+        (args.output / "render_provenance.json").write_text(json.dumps({
+            "operation": "Re-render existing statistics; no new bootstrap or feature extraction",
+            "trajectories": n, "individual_only": args.individual_only,
+            "inputs": [{"path": str(p.resolve()), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                       for p in sources],
+            "original_provenance": json.loads(sources[-1].read_text()),
+        }, indent=2) + "\n")
+        print(f"Re-rendered {n} trajectories from {args.from_results}")
+        print(f"Individual PNG/PDF panels: {args.output}")
+        return
     if not args.input.is_file():
         parser.error(f"Missing source CSV: {args.input}. Supply --input with the existing query_decomposition.csv; no GPU analysis is launched.")
     if args.expected_videos < 2:
         parser.error("At least two trajectories are required for uncertainty estimates")
-    if args.output.exists() and any(args.output.iterdir()):
-        parser.error("Use an empty output directory")
     identities, sections, values, targets, queries = load_sections(args.input, args.run, args.duration, args.expected_videos)
     result = summarize(values, targets, args.fps, args.bins, args.bootstrap, args.seed)
     args.output.mkdir(parents=True, exist_ok=True)
-    plot(result, len(identities), args.output)
+    plot(result, len(identities), args.output, args.individual_only)
     summary = [{"metric": field, "late_minus_early": float(result["delta_mean"][i]),
                 "ci_low": float(result["delta_ci"][0, i]), "ci_high": float(result["delta_ci"][1, i])}
                for i, field in enumerate(FIELDS)]
@@ -173,7 +256,7 @@ def main():
     print(f"Source: {args.input}\n{len(identities)} trajectories; {queries:,} queries; {len(identities) * len(sections):,} sections")
     for name, row in zip(NAMES, summary):
         print(f"{name:28s} {row['late_minus_early']:+.4f}  95% CI [{row['ci_low']:+.4f}, {row['ci_high']:+.4f}]")
-    print(f"Figure: {args.output / 'retrieval_deterioration.pdf'}")
+    print(f"Figures: {args.output}")
 
 
 if __name__ == "__main__":

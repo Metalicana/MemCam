@@ -1,0 +1,14 @@
+{
+  "policy": "KEEPSAKE",
+  "duration_sec": 180,
+  "trajectories": 13,
+  "source": "paper/make_figures.py::plot_retention_selection_tradeoff, families['GeoCov']['points']",
+  "source_kind": "legacy_rounded_summary",
+  "note": "Original figure's four-decimal point estimates. Raw 180-second query results and uncertainty are not available locally. The thirteen-trajectory cohort is documented in paper/main.tex, tab:gaps.",
+  "points": [
+    {"budget": 16, "retention_gap": 0.0669, "selection_gap": 0.1037},
+    {"budget": 32, "retention_gap": 0.0426, "selection_gap": 0.1470},
+    {"budget": 64, "retention_gap": 0.0366, "selection_gap": 0.1596},
+    {"budget": 128, "retention_gap": 0.0298, "selection_gap": 0.1783}
+  ]
+}

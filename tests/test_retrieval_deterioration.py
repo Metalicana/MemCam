@@ -81,12 +81,42 @@ class DeteriorationTests(unittest.TestCase):
             self.assertIn("3 trajectories; 48 queries; 24 sections", completed.stdout)
             self.assertTrue((output / "retrieval_deterioration.pdf").is_file())
             self.assertTrue((output / "retrieval_deterioration.png").is_file())
+            for panel in ("changes", "evidence"):
+                for extension in ("png", "pdf"):
+                    self.assertTrue((output / f"retrieval_deterioration_{panel}.{extension}").is_file())
             source = json.loads((output / "provenance.json").read_text())
             self.assertEqual(source["early_sections"], [0, 1])
             self.assertEqual(source["late_sections"], [6, 7])
             self.assertEqual(len(source["source_sha256"]), 64)
             with (output / "curves.csv").open() as handle:
                 self.assertEqual(len(list(csv.DictReader(handle))), 32)
+
+            _, _, values, targets, _ = plotter.load_sections(path, "baseline", 180, 3)
+            expected = plotter.summarize(values, targets, 30, 8, 1000, 0)
+            restored, n = plotter.load_saved_result(output)
+            self.assertEqual(n, 3)
+            for key in restored:
+                np.testing.assert_array_equal(restored[key], expected[key])
+
+            panels = root / "panels"
+            subprocess.run([sys.executable, str(SCRIPT), "--from-results", str(output),
+                            "--individual-only", "--output", str(panels)],
+                           capture_output=True, text=True, timeout=60, check=True)
+            self.assertFalse((panels / "retrieval_deterioration.png").exists())
+            for panel in ("changes", "evidence"):
+                self.assertTrue((panels / f"retrieval_deterioration_{panel}.png").is_file())
+                self.assertTrue((panels / f"retrieval_deterioration_{panel}.pdf").is_file())
+            render = json.loads((panels / "render_provenance.json").read_text())
+            self.assertEqual(render["original_provenance"], source)
+            self.assertEqual(len(render["inputs"]), 4)
+
+            with (output / "curves.csv").open() as handle:
+                curves = list(csv.DictReader(handle))
+            for bad_curves in (curves[:-1], curves + [curves[0]],
+                               [dict(curves[0], mean="nan")] + curves[1:]):
+                plotter.write_csv(output / "curves.csv", bad_curves)
+                with self.assertRaises(ValueError):
+                    plotter.load_saved_result(output)
 
 
 if __name__ == "__main__":
