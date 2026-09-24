@@ -1,4 +1,4 @@
-"""Redraw the original tradeoff with explicitly labeled, mixed rollout horizons."""
+"""Plot the full policy landscape with budget markers and explicit rollout horizons."""
 
 import argparse
 import csv
@@ -18,6 +18,7 @@ from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 
 ROOT = Path(__file__).resolve().parent
 BUDGETS = (16, 32, 64, 128)
+MARKERS = {16: "o", 32: "s", 64: "^", 128: "D"}
 POLICIES = ("Unbounded", "FIFO", "K-center", "MCE", "KEEPSAKE")
 COLORS = dict(zip(POLICIES, ("#454545", "#C56368", "#BF902E", "#8C79AF", "#27845D")))
 RUNS = {"baseline": ("Unbounded", None)}
@@ -117,62 +118,49 @@ def load_points(summary_path, queries_path, legacy_path):
 
 
 def make_figure(points):
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 5.25))
-    fig.subplots_adjust(left=.075, right=.985, bottom=.15, top=.78, wspace=.20)
-    offsets = {
-        ("K-center", 16): (-32, -15), ("K-center", 32): (7, 15),
-        ("K-center", 64): (-30, -14), ("K-center", 128): (6, 8),
-        ("MCE", 16): (6, 6), ("MCE", 32): (28, 6),
-        ("MCE", 64): (-20, -25), ("MCE", 128): (-18, 20),
-        ("KEEPSAKE", 16): (6, -3), ("KEEPSAKE", 32): (8, -5),
-        ("KEEPSAKE", 64): (-44, -6), ("KEEPSAKE", 128): (7, 10),
-    }
-    for index, ax in enumerate(axes):
-        for policy in POLICIES:
-            if index == 1 and policy in ("Unbounded", "FIFO"):
-                continue
-            rows = [p for p in points if p["policy"] == policy]
-            x, y = ([p[m] for p in rows] for m in ("retention_gap", "selection_gap"))
-            color = COLORS[policy]
-            ax.plot(x, y, color=color, lw=1.5, marker="o", markersize=7,
-                    markeredgecolor="white", markeredgewidth=.9,
-                    linestyle="--" if policy == "KEEPSAKE" else "-", zorder=3)
-            for p in rows:
-                if policy == "Unbounded":
-                    label, offset = "Unbounded", (9, -3)
-                elif index == 0 and policy != "FIFO":
-                    continue
-                else:
-                    label = f"B{p['budget']}"
-                    offset = offsets.get((policy, p["budget"]), (7, -3))
-                leader = (dict(arrowstyle="-", color=color, lw=.55, shrinkA=3, shrinkB=6)
-                          if index == 1 and max(abs(v) for v in offset) >= 14 else None)
-                ax.annotate(label, (p["retention_gap"], p["selection_gap"]),
-                            xytext=offset, textcoords="offset points", color=color,
-                            fontsize=9, weight="medium", zorder=4, arrowprops=leader,
-                            bbox=dict(facecolor="white", edgecolor="none", pad=.3, alpha=.9))
-        ax.set_xlabel("Retention gap (lower is better)", labelpad=9)
-        ax.grid(color="#E5E7EB", linewidth=.65)
-        ax.set_axisbelow(True)
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-        ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-        ax.yaxis.set_major_locator(MultipleLocator(.04 if index == 0 else .02))
-    axes[0].set(xlim=(-.008, .202), ylim=(.025, .216),
-                ylabel="Selection gap (lower is better)")
-    axes[0].xaxis.set_major_locator(MultipleLocator(.04))
-    axes[1].set(xlim=(.008, .076), ylim=(.093, .201))
-    axes[1].xaxis.set_major_locator(MultipleLocator(.02))
-    axes[0].set_title("(a) Full policy landscape", loc="left", pad=12)
-    axes[1].set_title("(b) K-center, MCE and KEEPSAKE", loc="left", pad=12)
+    fig, ax = plt.subplots(figsize=(8.6, 6.6))
+    fig.subplots_adjust(left=.13, right=.975, bottom=.21, top=.80)
     handles = []
     for policy in POLICIES:
-        row = next(p for p in points if p["policy"] == policy)
-        handles.append(Line2D([], [], color=COLORS[policy], lw=1.5, marker="o",
-                              linestyle="--" if policy == "KEEPSAKE" else "-",
+        rows = sorted((p for p in points if p["policy"] == policy),
+                      key=lambda p: p["budget"] or 0)
+        color = COLORS[policy]
+        style = "--" if policy == "KEEPSAKE" else "-"
+        if policy != "Unbounded":
+            ax.plot([p["retention_gap"] for p in rows],
+                    [p["selection_gap"] for p in rows], color=color, lw=1.1,
+                    linestyle=style, zorder=2, gid=f"connection:{policy}")
+        for point in rows:
+            ax.plot([point["retention_gap"]], [point["selection_gap"]],
+                    marker="*" if policy == "Unbounded" else MARKERS[point["budget"]],
+                    markersize=12 if policy == "Unbounded" else 8,
+                    linestyle="none", color=color, markeredgecolor="white",
+                    markeredgewidth=.8, zorder=3, gid=f"point:{point['run']}")
+        row = rows[0]
+        handles.append(Line2D([], [], color=color, lw=1.3,
+                              marker="*" if policy == "Unbounded" else None,
+                              markersize=10,
+                              linestyle="none" if policy == "Unbounded" else style,
                               label=f"{policy}\n{row['duration_sec']} s, n={row['trajectories']}"))
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(.53, .995),
-               ncol=5, frameon=False, handlelength=2.2, columnspacing=2.1, fontsize=10)
+    ax.set(xlim=(-.008, .202), ylim=(.025, .216),
+           ylabel="Selection gap (lower is better)")
+    ax.set_xlabel("Retention gap (lower is better)", labelpad=9)
+    ax.set_title("Full policy landscape", loc="left", pad=12)
+    ax.grid(color="#E5E7EB", linewidth=.6)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right"]].set_visible(False)
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_formatter(FormatStrFormatter("%.2f"))
+        axis.set_major_locator(MultipleLocator(.04))
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(.54, .98),
+               ncol=5, frameon=False, handlelength=1.5, columnspacing=1.4, fontsize=9)
+    budget_handles = [Line2D([], [], color="#555555", marker=MARKERS[budget],
+                             linestyle="none", markersize=8, label=f"B{budget}")
+                      for budget in BUDGETS]
+    fig.legend(handles=budget_handles, title="Memory budget (frames)",
+               loc="lower center", bbox_to_anchor=(.55, .025), ncol=4,
+               frameon=False, handletextpad=.6, columnspacing=2.2, fontsize=10,
+               title_fontsize=10)
     return fig
 
 
@@ -196,13 +184,16 @@ def export(summary, queries, legacy, output):
         "Unbounded, FIFO, K-center and MCE: 60 seconds, 15 matched trajectories; "
         "KEEPSAKE (dashed): 180 seconds, 13 trajectories. "
         "Points are within-suite common-source means; lines connect budgets. "
-        "The right panel enlarges K-center, MCE and KEEPSAKE. "
+        "Marker shapes encode budget: circle B16, square B32, triangle B64, diamond B128; "
+        "the star denotes Unbounded. "
         "Different horizons and cohorts make this a descriptive, not matched-duration, comparison."
     )
     output.with_suffix(".caption.txt").write_text(caption + "\n")
     output.with_suffix(".provenance.json").write_text(json.dumps({
         "system": "MemCam", "comparison": "mixed_horizon_descriptive",
         "policies": POLICIES, "budgets": BUDGETS, "points": points,
+        "presentation": {"layout": "single_panel", "budget_markers": MARKERS,
+                         "unbounded_marker": "*", "policy_colors": COLORS},
         "inputs": [{"path": str(p.resolve()), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
                    for p in (summary, queries, legacy)],
         "legacy_source": json.loads(legacy.read_text()),
@@ -224,7 +215,7 @@ def main():
     parser.add_argument("--queries", type=Path, default=tables / "query_decomposition_common_source.csv")
     parser.add_argument("--legacy", type=Path, default=ROOT / "retention_selection_180s_reported.json")
     parser.add_argument("--output", type=Path,
-                        default=ROOT / "figures/retention_selection_comparison_mixed_horizons")
+                        default=ROOT / "figures/retention_selection_policy_landscape")
     args = parser.parse_args()
     export(args.summary, args.queries, args.legacy, args.output)
 

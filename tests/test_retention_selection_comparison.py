@@ -98,9 +98,27 @@ class ComparisonTests(unittest.TestCase):
             labels = [t.get_text() for t in fig.legends[0].get_texts()]
             self.assertEqual(labels[-1], "KEEPSAKE\n180 s, n=13")
             self.assertTrue(all("60 s, n=15" in label for label in labels[:-1]))
-            self.assertEqual(len(fig.axes[0].lines), 5)
-            self.assertEqual(len(fig.axes[1].lines), 3)
-            self.assertEqual(fig.axes[1].lines[-1].get_linestyle(), "--")
+            self.assertEqual(len(fig.axes), 1)
+            ax = fig.axes[0]
+            marks = {line.get_gid(): line for line in ax.lines
+                     if line.get_gid().startswith("point:")}
+            self.assertEqual(len(marks), 17)
+            self.assertEqual(len(set(plotter.MARKERS.values())), 4)
+            for point in points:
+                line = marks[f"point:{point['run']}"]
+                expected = "*" if point["budget"] is None else plotter.MARKERS[point["budget"]]
+                self.assertEqual(line.get_marker(), expected)
+                self.assertEqual(line.get_color(), plotter.COLORS[point["policy"]])
+                self.assertEqual(list(line.get_xdata()), [point["retention_gap"]])
+                self.assertEqual(list(line.get_ydata()), [point["selection_gap"]])
+            connections = {line.get_gid(): line for line in ax.lines
+                           if line.get_gid().startswith("connection:")}
+            self.assertEqual(len(connections), 4)
+            self.assertEqual(connections["connection:KEEPSAKE"].get_linestyle(), "--")
+            self.assertEqual([t.get_text() for t in fig.legends[1].get_texts()],
+                             ["B16", "B32", "B64", "B128"])
+            self.assertEqual([line.get_marker() for line in fig.legends[1].get_lines()],
+                             ["o", "s", "^", "D"])
             plotter.plt.close(fig)
             output = root / "figure"
             plotter.export(summary, queries, LEGACY, output)
@@ -109,6 +127,12 @@ class ComparisonTests(unittest.TestCase):
             provenance = json.loads(output.with_suffix(".provenance.json").read_text())
             self.assertEqual(provenance["comparison"], "mixed_horizon_descriptive")
             self.assertEqual(len(provenance["points"]), 17)
+            self.assertEqual(provenance["presentation"]["layout"], "single_panel")
+            self.assertEqual(provenance["presentation"]["budget_markers"],
+                             {str(k): v for k, v in plotter.MARKERS.items()})
+            caption = output.with_suffix(".caption.txt").read_text()
+            self.assertNotIn("right panel", caption)
+            self.assertIn("square B32", caption)
 
 
 if __name__ == "__main__":
