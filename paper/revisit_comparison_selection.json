@@ -1,0 +1,13 @@
+[
+  {
+    "stem": "FeudalJapan_3_4230_4650",
+    "description": "On the 141-to-155-second return, KEEPSAKE more closely preserves the right-hand multi-storey building and courtyard arrangement. Unbounded returns with the building shifted toward the right edge and a changed courtyard composition. Neither output is pixel-identical on return."
+  },
+  {
+    "stem": "DragonRise_9_gt_return",
+    "basis": "visual_gt",
+    "scene": "DragonRise_9",
+    "frames": [30, 1800, 5396],
+    "description": "GT returns to the stone-wall and fluted-column view. KEEPSAKE retains more of that arrangement; Unbounded introduces a large ornamental band into the left wall. Both generated intervening views differ from GT, and the returned views are not exact reconstructions."
+  }
+]

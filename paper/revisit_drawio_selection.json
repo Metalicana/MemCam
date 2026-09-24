@@ -1,0 +1,31 @@
+[
+  {
+    "stem": "memcam_180s_revisit",
+    "system": "MemCam",
+    "scene": "FeudalJapan_3",
+    "start_frame": 2128,
+    "duration_sec": 180,
+    "timeline_fps": 30,
+    "frames": [4230, 4440, 4650],
+    "expected_video": {"width": 640, "height": 352, "frames": 5397, "fps": 30.0},
+    "videos": {
+      "Unbounded": "~/Downloads/memcam_edit_180s/unbounded/seed0_FeudalJapan_3_2128_180s_custom.mp4",
+      "FIFO": "~/Downloads/context_180s/fifo_b32/seed0_FeudalJapan_3_2128_180s_custom.mp4",
+      "KEEPSAKE": "~/Downloads/memcam_edit_180s/keepsake_b32/seed0_FeudalJapan_3_2128_180s_custom.mp4"
+    },
+    "revisit_evidence": {
+      "csv": "~/Downloads/context_180s/revisit_consistency_b32_oracle30/tables/revisit_events.csv",
+      "match": {"scene": "FeudalJapan_3", "start_frame": 2128, "revisit_type": "exact_pose", "frame_i": 4230, "frame_j": 4650}
+    },
+    "highlights": [
+      {"method": "Unbounded", "frame": 4230, "landmark": "timber_facade", "xywh": [357, 99, 264, 221]},
+      {"method": "Unbounded", "frame": 4650, "landmark": "timber_facade", "xywh": [524, 101, 111, 220]},
+      {"method": "FIFO", "frame": 4230, "landmark": "pavilion_roof_and_frontage", "xywh": [241, 97, 249, 154]},
+      {"method": "FIFO", "frame": 4650, "landmark": "pavilion_roof_and_frontage", "xywh": [206, 6, 285, 265]},
+      {"method": "KEEPSAKE", "frame": 4230, "landmark": "timber_facade", "xywh": [383, 92, 251, 225]},
+      {"method": "KEEPSAKE", "frame": 4650, "landmark": "timber_facade", "xywh": [424, 100, 210, 220]}
+    ],
+    "highlight_description": "Green boxes mark the timber-framed facade preserved across KEEPSAKE's visits. Red boxes mark Unbounded's facade, shifted toward and partly outside the right edge, and FIFO's changing pavilion roofline and frontage. Boxes indicate visual regions, not automated object tracks or GT correspondence.",
+    "description": "At 141, 148 and 155 seconds, the camera visits the courtyard, turns toward a different facade, and returns to a nearby viewpoint. Endpoint poses differ by 0.236 m and 2.46 degrees in the saved analysis. The figure compares preservation of generated scene content, not fidelity to ground truth."
+  }
+]
