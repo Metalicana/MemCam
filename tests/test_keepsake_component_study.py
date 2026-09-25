@@ -74,6 +74,43 @@ def synthetic_trace(path, item, alpha, mode):
 
 
 class ComponentStudyTests(unittest.TestCase):
+    def test_cli_limits_threads_before_first_numpy_import(self):
+        # Use fresh interpreters: importing NumPy in this test process is too late.
+        check = '''
+import builtins
+import json
+import os
+import runpy
+import sys
+original_import = builtins.__import__
+def checked_import(name, *args, **kwargs):
+    if name == "numpy" or name.startswith("numpy."):
+        limits = {key: os.environ.get(key) for key in
+                  ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
+        assert set(limits.values()) == {"1"}, limits
+        print("THREAD_LIMITS_OK", json.dumps(limits, sort_keys=True))
+        raise SystemExit(0)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = checked_import
+entry = sys.argv[1]
+sys.argv = [entry, "--help"]
+runpy.run_path(entry, run_name="__main__")
+raise AssertionError("Did not reach numerical imports")
+'''
+        keys = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+        for entry in ("submit_keepsake_component_study.py", "run_keepsake_component_study.py"):
+            for inherited in (None, "32"):
+                with self.subTest(entry=entry, inherited=inherited):
+                    env = dict(os.environ)
+                    for key in keys:
+                        env.pop(key, None)
+                        if inherited is not None:
+                            env[key] = inherited
+                    result = subprocess.run([sys.executable, "-c", check, str(study.ROOT / "paper" / entry)],
+                                            env=env, text=True, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("THREAD_LIMITS_OK", result.stdout)
+
     def test_revisits_require_departure_and_do_not_use_initial_frame(self):
         poses = np.tile(np.eye(4), (1825, 1, 1))
         self.assertEqual(analysis.revisit_queries(poses), [])

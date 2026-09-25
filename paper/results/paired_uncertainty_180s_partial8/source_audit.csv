@@ -1,0 +1,3 @@
+policy,intended_videos,completed_videos,reported_completed,reported_lpips,completed_lpips_mean,reported_fvd,lpips_frame_stride,fvd_clips_per_video,fvd_frame_stride,source
+baseline,15,8,8,0.6004121996889201,0.6004121996889201,797.4809340684792,90,8,8,/Users/metalicana/Downloads/context_180s/eval_metrics_180s/baseline/summary.json
+keepsake,15,15,15,0.5876462302708791,0.5876462302708791,476.62103642503985,90,8,8,/Users/metalicana/Downloads/context_180s/eval_metrics_180s/slam_b32_covisibility/summary.json

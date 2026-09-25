@@ -1,0 +1,16 @@
+scene,start_frame,duration_sec,baseline,keepsake,matched
+AncientTempleEnv_5,684,180,completed,completed,True
+AnimeCitySuburbs_5,304,180,completed,completed,True
+ChemicalPlantEnv_5,1824,180,completed,completed,True
+ClothingStore_1,228,180,completed,completed,True
+ClothingStore_6,1444,180,completed,completed,True
+ContainerYard_3,1900,180,completed,completed,True
+ContainerYard_7,608,180,completed,completed,True
+ContainerYard_9,2204,180,completed,completed,True
+DragonRise_1,1292,180,missing_output,completed,False
+DragonRise_9,1672,180,missing_output,completed,False
+FeudalJapan_0,1900,180,missing_output,completed,False
+FeudalJapan_2,1444,180,missing_output,completed,False
+FeudalJapan_3,2128,180,missing_output,completed,False
+IslandMap_2,304,180,missing_output,completed,False
+Warehouse_0,684,180,missing_output,completed,False

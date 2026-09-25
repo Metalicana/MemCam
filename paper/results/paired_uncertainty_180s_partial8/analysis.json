@@ -1,0 +1,19 @@
+{
+  "scope": "Partial matched-cohort diagnostic (8/15); NOT the headline comparison",
+  "videos": 8,
+  "groups": [
+    "AncientTempleEnv_5",
+    "AnimeCitySuburbs_5",
+    "ChemicalPlantEnv_5",
+    "ClothingStore_1",
+    "ClothingStore_6",
+    "ContainerYard_3",
+    "ContainerYard_7",
+    "ContainerYard_9"
+  ],
+  "draws": 5000,
+  "seed": 17,
+  "cluster_map": null,
+  "interval": "Paired whole-group percentile bootstrap; all clips and policies stay together. Equal-trajectory LPIPS mean and pooled FVD recomputed on every draw.",
+  "limitations": "Approximate, conditional on existing outputs; not generation-seed variance, not held-out generalization, not a correction for finite-sample FVD bias. Without a cluster map, scene identifiers define independence; shared environments need an explicit map. Leave-one-group-out results are sensitivity checks, not selection rules."
+}

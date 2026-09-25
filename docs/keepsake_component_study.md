@@ -38,6 +38,19 @@ not the wall time of the whole study.
 No Newton submission or real-GPU validation has been performed from the Mac.
 
 For preparation/audit without submission, append `--prepare-only`.
+Both Python entry points cap BLAS/OpenMP/NumExpr threads at one before importing
+NumPy, including when an inherited environment requests 32 threads. The batch
+script's limits alone do not protect the login-node submission process.
+
+For an older checkout that fails with `OpenBLAS blas_thread_init: pthread_create
+failed` before submission, retry without changing packages:
+
+```bash
+env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
+  "$HOME/.conda/envs/memcam/bin/python" \
+  paper/submit_keepsake_component_study.py --array-parallel 5
+```
+
 Omitting `--array-parallel` retains the older serial mode, which will not fit the
 deadline. The two modes cannot submit to the same study root. A previously frozen
 launcher without array support is rejected rather than silently modified; do not

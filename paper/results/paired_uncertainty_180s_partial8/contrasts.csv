@@ -1,0 +1,2 @@
+metric,videos,resampling_groups,baseline,keepsake,difference,ci_low,ci_high,draws,seed,duration_sec,scope
+LPIPS,8,8,0.6004121996889201,0.6019436682690866,0.0015314685801665062,-0.00814554485181955,0.010156567891438817,5000,17,180,Partial matched-cohort diagnostic (8/15); NOT the headline comparison

@@ -13,6 +13,11 @@ import sys
 import tempfile
 import time
 
+if __name__ == "__main__":
+    # Direct prepare/report calls also need the limit before importing NumPy.
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[name] = "1"
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "utils"))

@@ -3,11 +3,17 @@
 import argparse
 import fcntl
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+
+if __name__ == "__main__":
+    # Login-node limits apply before sbatch; inherited BLAS defaults can be 32+.
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[name] = "1"
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
