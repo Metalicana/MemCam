@@ -1,0 +1,21 @@
+{
+  "memcam_bundle": "~/Downloads/memcam_edit_180s",
+  "memcam_fifo": "~/Downloads/context_180s/fifo_b32",
+  "memcam_events": "~/Downloads/context_180s/revisit_consistency_b32_oracle30/tables/revisit_events.csv",
+  "worldmem_bundle": "paper/figures/revisit_editable/worldmem_source/revisit_qualitative_60s_n15",
+  "worldmem_videos": "~/Downloads/worldmem_editing",
+  "memcam_selection": "longest_return_per_scene",
+  "worldmem_selection": "first_geometry_rank_per_trajectory",
+  "shortlist": [
+    {"example_id": "M03", "note": "Shop signs, ceiling fixtures and clothing racks provide inspectable structure."},
+    {"example_id": "M04", "note": "Container stacks, road and overhead structures are visible at both endpoints."},
+    {"example_id": "M06", "note": "Container markings, roof lines and cranes provide landmarks; outcomes are mixed."},
+    {"example_id": "M07", "note": "Statue, window and columns are recognizable across the turn."},
+    {"example_id": "M08", "note": "Roof lines, red facade and water provide visible scene structure."},
+    {"example_id": "M09", "note": "Distinctive timber facade and flowering tree; a different triplet from the main figure."},
+    {"example_id": "M10", "note": "Brick walls, staircase, barrels and pallets provide recognizable structure."},
+    {"example_id": "W06", "note": "Grass ledge, tree and flower remain inspectable in the generated frames."},
+    {"example_id": "W07", "note": "Sand ledges are inspectable; includes a degraded FIFO rollout."},
+    {"example_id": "W14", "note": "Mixed outcome: Unbounded shows recognizable snow terraces while Keepsake's view is dominated by ground."}
+  ]
+}

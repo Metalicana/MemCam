@@ -9,6 +9,7 @@
 | Motivation | `ICLR27_Motivation_two_row.drawio`, matching PDF/PNG |
 | B32 and budget metrics | `metric_bars/` |
 | Editable revisit examples | `revisit_editable/` |
+| Appendix revisit collection | `revisit_appendix/revisit_appendix.drawio`, `revisit_appendix/index.csv` |
 | 180-second GT/rollout comparisons | `rollout_comparisons_180s/` |
 | Retention/selection landscape | `retention_selection_policy_landscape.pdf` |
 | Individual retrieval diagnostics | `retrieval_deterioration_panels/` |

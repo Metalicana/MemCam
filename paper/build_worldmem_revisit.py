@@ -116,9 +116,9 @@ def review(folder, output):
     print(f"Reviewed-sheet export: {len(candidates)} candidates in {output}", flush=True)
 
 
-def build(folder, videos, config, output):
+def prepare_case(folder, videos, spec, output):
+    """Decode and verify one selection without writing or replacing diagram pages."""
     candidates, provenance = load_bundle(folder)
-    spec = json.loads(config.read_text())
     selected = [c for c in candidates if c["trajectory"] == spec["trajectory_id"] and c["rank"] == spec["candidate_rank"]]
     if len(selected) != 1 or selected[0]["frames"] != spec["frames"]:
         raise ValueError("Selection does not identify one exported candidate")
@@ -133,7 +133,7 @@ def build(folder, videos, config, output):
                   source_videos={}, remote_provenance=provenance,
                   source_files_sha256={name: digest(folder / name) for name in
                       ("revisit_candidates.csv", "trajectory_mapping.csv", "preview_manifest.csv", "provenance.json")},
-                  config_sha256=digest(config), renderer_sha256=digest(Path(__file__)),
+                  renderer_sha256=digest(Path(__file__)),
                   diagram_renderer_sha256=digest(ROOT / "paper/build_revisit_drawio.py"),
                   pixel_check_tolerance=dict(max_channel_error=3, mean_channel_error=1,
                       units="8-bit RGB levels", reason="Allow small decoder RGB-conversion rounding differences; not a perceptual similarity test."))
@@ -157,6 +157,14 @@ def build(folder, videos, config, output):
                     raise ValueError(f"Local video pixels differ from exported preview: {method}, {frame}")
             record["pixel_checks"][f"{method}:{frame}"] = dict(max_error=int(error.max()), mean_error=float(error.mean()),
                                                                preview_sha256=digest(preview))
+    return record
+
+
+def build(folder, videos, config, output):
+    spec = json.loads(config.read_text())
+    record = prepare_case(folder, videos, spec, output)
+    record["config_sha256"] = digest(config)
+    stem = spec["stem"]
     diagram = make_diagram(record)
     diagram.save(output / f"{stem}.drawio")
     record.update(selection="Manually selected qualitative illustration after contact-sheet review; not an aggregate policy result.",
