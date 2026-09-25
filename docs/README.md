@@ -10,6 +10,7 @@ see the [repository README](../README.md).
 - [Complete metric grid](budget_metric_grid.md)
 - [Query-latency experiment](query_latency_experiment.md)
 - [Pose/appearance ablation](complete_pose_appearance_ablation.md)
+- [Full-cohort component ablation](keepsake_component_study.md)
 - [Weight ablation](keepsake_weight_ablation.md)
 - [Native round-trip evaluation](keepsake_native_roundtrip.md)
 - [Matched RI/KEEPSAKE FVD comparison](fvd_ri_keepsake_30.md)
@@ -25,6 +26,7 @@ see the [repository README](../README.md).
 
 ## Cross-System Handoffs
 
+- [VMem on Newton](newton_vmem_handoff.md)
 - [WorldMem final evaluation](worldmem_final_evaluation_handoff.md)
 - [WorldMem retention/selection gaps](worldmem_retention_selection_handoff.md)
 - [WorldMem retrieval deterioration](worldmem_retrieval_deterioration_handoff.md)
