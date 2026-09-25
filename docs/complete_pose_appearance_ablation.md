@@ -30,12 +30,18 @@ four hours per 180-second video, so endpoint generation alone is roughly 120
 GPU-hours / 60 elapsed hours when both GPUs run concurrently. Evaluation adds time;
 72 hours is an allocation ceiling, not a completion-time guarantee.
 
-Default output: `~/memcam_results/keepsake_pose_appearance_180s_steps/`.
+Default output: `~/memcam_results/keepsake_pose_appearance_180s_batched/`.
 The original control files remain untouched. All generated files live under this
 new experiment directory. Use `KEEPSAKE_ABLATION_OUTPUT` to change the output root.
 This launch revision uses a new directory because the driver is included in the
-frozen code fingerprint. The earlier `keepsake_pose_appearance_180s/` directory is
-preserved, not overwritten or deleted. Job 831161 did not reach generation.
+frozen code fingerprint. Both earlier output directories are preserved. The job
+tries to reuse the control LPIPS/FVD receipt from `keepsake_pose_appearance_180s_steps`
+only after checking the manifest, video/output hashes, quality contract, unchanged
+experiment dependencies and metric environment. Otherwise it recomputes those
+metrics, not the control videos. It does not reuse old VBench results.
+
+This is still the full 15-video, 180-second experiment, not a 15-hour pilot.
+Do not shorten its time limit and expect all 30 new videos to finish.
 
 ## Automatic Workflow
 
@@ -45,7 +51,10 @@ preserved, not overwritten or deleted. Job 831161 did not reach generation.
    in both existing Python environments, without Conda activation hooks or a short
    startup timeout.
 3. In that same step, evaluate the existing control with LPIPS, cohort FVD and all
-   six standard VBench dimensions. Do this before either new endpoint starts.
+   six standard VBench dimensions. Each dimension runs in a separate process and
+   saves a validated receipt. Background CLIP encoding uses batches of 16 frames
+   with gradients disabled, preserving every frame and the upstream temporal
+   formula. Do this before either new endpoint starts.
 4. Launch two concurrent, exclusive one-GPU steps, each with eight CPUs and 96 GiB
    of host memory. Each step checks both environments before its own generation.
    Generate 15 videos per endpoint; validate each video and trace, recording hashes
@@ -66,9 +75,10 @@ Top-level logs: `keepsake_ablation_JOBID.out` and `.err` in the submission direc
 Worker logs: `control.log`, `appearance_only.log`, `pose_only.log` in the output root.
 GPU checks: `preflight_SETTING_memcam.log` and `preflight_SETTING_vbench.log`.
 Per-video logs: `generation/SETTING/row_NNN.log`. Metric logs:
-`metrics/SETTING/quality.log` and `vbench.log`.
+`metrics/SETTING/quality.log` and `vbench_DIMENSION.log`.
 
-Each completed generation and metric stage has a receipt with source/output hashes.
+Each completed generation, quality stage and VBench dimension has a receipt with
+source/output hashes. A failed VBench dimension does not discard completed ones.
 Rerunning the same submission command with unchanged code and output root resumes
 completed stages; it does not regenerate a control or completed endpoint video.
 An interrupted video may need to restart; resumability is per video, not per chunk.
@@ -153,3 +163,31 @@ Local tests use synthetic files and mocked GPU commands to check the entire
 orchestration, exact cohorts, metric configuration, control reuse, checkpoint reuse,
 GPU separation, failure propagation, and table exports. They do not establish that
 Newton's model/checkpoint installations work; the job tests them before new generation.
+
+### VBench Memory Failure in Job 831412
+
+Job 831412 passed CUDA setup on `evc32`, but exhausted the 80-GB H100 during the
+control's CLIP evaluation. The [standard background-consistency implementation](https://github.com/Vchitect/VBench/blob/master/vbench/background_consistency.py)
+encodes an entire video in one call; at 5,397 frames this produces a very large
+activation batch. Its call also lacks a local no-grad context. The job failed
+before either endpoint started generating. `new_videos: 30` was a plan, not a
+count of generated videos; new status files call this `planned_new_videos`.
+
+`utils/run_vbench_batched.py` now wraps only background image encoding, using
+16-frame microbatches and disabling autograd during evaluation. It invokes the
+original background scorer, so normalization, first-frame comparisons, adjacent
+comparisons across batch boundaries, and aggregation remain upstream operations.
+Videos are not truncated, subsampled, or converted to short-clip scores. The
+upstream checkout is not modified. Original video decoding/preprocessing still
+uses host RAM, and transformed video inputs can still occupy GPU RAM: this change
+bounds CLIP activations, not every allocation in VBench.
+
+One subprocess per dimension releases model memory between metrics. Per-dimension
+receipts record the adapter hash, input hashes and batch size. A failed dimension
+restarts in a new attempt directory without repeating valid completed dimensions.
+The combined six-dimension result still passes the existing matched-cohort checker.
+
+Local tests check bounded batch sizes, disabled gradients, preserved frame order
+and temporal scores, partial-metric resume, invalid-cohort rejection, and verified
+control-quality reuse. They are not an H100 end-to-end certification; the real
+control evaluation remains the in-job gate before new generation.

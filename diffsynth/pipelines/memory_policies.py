@@ -1086,12 +1086,15 @@ def compute_slam_covisibility_scores(
     visual_weight=0.35,
     geometry_weight=0.65,
     return_details=False,
+    priority_mode="full",
 ):
     """Score frames by SLAM-style marginal evidence contribution.
 
     Higher scores mean the frame is more worth keeping. A low score means the
     frame is already covered by several visually/geometrically similar memories.
     """
+    if priority_mode not in ("full", "degree_only", "closest_only"):
+        raise ValueError(f"Unknown KEEPSAKE priority mode: {priority_mode}")
     memory_frame_indices = list(memory_frame_indices)
     pinned_frames = set(pinned_frames or [])
     if not memory_frame_indices:
@@ -1125,7 +1128,13 @@ def compute_slam_covisibility_scores(
 
         marginal_contribution = 1.0 / (covisible_observers + 1.0)
         unique_bonus = 1.0 - max_covisibility
-        score = (1.0 - redundancy_ratio) + 0.5 * marginal_contribution + 0.25 * unique_bonus
+        degree_score = (1.0 - redundancy_ratio) + 0.5 * marginal_contribution
+        closest_score = 0.25 * unique_bonus
+        score = degree_score + closest_score
+        if priority_mode == "degree_only":
+            score = degree_score
+        elif priority_mode == "closest_only":
+            score = closest_score
         if frame_idx in pinned_frames:
             score = float("inf")
 
@@ -1140,6 +1149,7 @@ def compute_slam_covisibility_scores(
             "unique_bonus": float(unique_bonus),
             "covisibility_threshold": float(covisibility_threshold),
             "n_other_observers": int(n_other_observers),
+            "priority_mode": priority_mode,
         }
 
     return (scores, details) if return_details else scores

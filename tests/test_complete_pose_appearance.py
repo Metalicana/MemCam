@@ -219,11 +219,15 @@ class CompleteAblationTests(unittest.TestCase):
                     quality_artifacts(Path(arg("--metrics_dir")) / run, items, run, 180)
                 elif "--videos_path" in cmd:
                     source = Path(arg("--videos_path"))
-                    metric_calls.append((source.name, "vbench"))
+                    dimension = arg("--dimension")
+                    self.assertIn(str(study.VBENCH_ADAPTER), cmd)
+                    self.assertEqual(arg("--clip-batch-size"), "16")
+                    metric_calls.append((source.name, dimension))
                     result = Path(arg("--output_path"))
                     payload = {dim: [0, [dict(video_path=str(p), video_results=50 if dim == "imaging_quality" else .5)
-                                         for p in sorted(source.glob("*.mp4"))]] for dim in study.DIMENSIONS}
+                                         for p in sorted(source.glob("*.mp4"))]] for dim in [dimension]}
                     study.save(result / "fixture_eval_results.json", payload)
+                    study.save(result / "batching.json", {"clip_batch_size": 16})
 
             class FakeWorker:
                 def __init__(self, cmd, **kwargs):
@@ -245,8 +249,9 @@ class CompleteAblationTests(unittest.TestCase):
                     patch.object(study.subprocess, "Popen", FakeWorker):
                 study.execute(args)
                 self.assertEqual(len(generation_calls), 30)
-                self.assertEqual(metric_calls[:2], [("control", "quality"), ("control", "vbench")])
-                self.assertEqual(len(metric_calls), 6)
+                self.assertEqual(metric_calls[:7], [("control", "quality")]
+                                 + [("control", dim) for dim in study.DIMENSIONS])
+                self.assertEqual(len(metric_calls), 21)
                 self.assertEqual({c[3:] for c in generation_calls if c[0] == "appearance_only"}, {("0", "1")})
                 self.assertEqual({c[3:] for c in generation_calls if c[0] == "pose_only"}, {("0", "2")})
                 self.assertTrue((args.output / "ablation.tex").exists())
@@ -256,7 +261,89 @@ class CompleteAblationTests(unittest.TestCase):
                 self.assertEqual([r["geometry_weight"] for r in rows], ["0.0", "0.65", "1.0"])
                 study.execute(args)
                 self.assertEqual(len(generation_calls), 30, "Resume must not regenerate completed videos")
-                self.assertEqual(len(metric_calls), 6, "Resume must not recompute completed metrics")
+                self.assertEqual(len(metric_calls), 21, "Resume must not recompute completed metrics")
+
+    def test_dimension_failure_resumes_without_repeating_finished_dimensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            source = args.control
+            videos = sorted(source.glob("*.mp4"))
+            work = args.output / "metrics/control"
+            work.mkdir(parents=True)
+            calls = []
+
+            def fake_run(cmd, *unused):
+                cmd = list(map(str, cmd))
+                dimension = cmd[cmd.index("--dimension")+1]
+                calls.append(dimension)
+                if len(calls) == 2:
+                    raise RuntimeError("fixture evaluator failure")
+                attempt = Path(cmd[cmd.index("--output_path")+1])
+                payload = {dimension: [0, [dict(video_path=str(p), video_results=.5) for p in videos]]}
+                study.save(attempt / "fixture_eval_results.json", payload)
+                study.save(attempt / "batching.json", {"clip_batch_size": 16})
+
+            inputs = study.fingerprint(videos)
+            with patch.object(study, "metric_command", side_effect=lambda name, program, *cmd: [program, *cmd]), \
+                    patch.object(study, "run_command", side_effect=fake_run):
+                with self.assertRaisesRegex(RuntimeError, "fixture evaluator failure"):
+                    study.evaluate_vbench(args, source.name, source, work, videos, inputs, {})
+                self.assertFalse((work / "vbench.json").exists())
+                scores = study.evaluate_vbench(args, source.name, source, work, videos, inputs, {})
+                self.assertEqual(set(scores), set(study.DIMENSIONS))
+                self.assertEqual(calls.count(study.DIMENSIONS[0]), 1)
+                self.assertEqual(calls.count(study.DIMENSIONS[1]), 2)
+                self.assertEqual(len(calls), 7)
+                artifact = work / "vbench_combined/combined_eval_results.json"
+                self.assertTrue(artifact.exists())
+
+    def test_dimension_rejects_duplicate_cohort_and_invalid_scores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            videos = sorted(args.control.glob("*.mp4"))
+            dim = "background_consistency"
+            rows = [dict(video_path=str(p), video_results=.5) for p in videos]
+            path = args.output / "fixture_eval_results.json"
+            study.save(path, {dim: [.5, rows]})
+            study.validate_vbench_dimension(args.output, dim, videos, args.control.name)
+            rows[-1] = dict(rows[0])
+            study.save(path, {dim: [.5, rows]})
+            with self.assertRaisesRegex(ValueError, "matched cohort"):
+                study.validate_vbench_dimension(args.output, dim, videos, args.control.name)
+            rows[-1] = dict(video_path=str(videos[-1]), video_results=float("nan"))
+            study.save(path, {dim: [.5, rows]})
+            with self.assertRaisesRegex(ValueError, "matched cohort"):
+                study.validate_vbench_dimension(args.output, dim, videos, args.control.name)
+
+    def test_control_quality_reuse_requires_unchanged_sources_and_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = fixture(Path(tmp))
+            previous = args.output / "previous"
+            (previous / "metrics/control").mkdir(parents=True)
+            args.reuse_control_metrics = previous
+            (args.output / "manifest.jsonl").write_bytes(args.manifest.read_bytes())
+            items = study.cohort(args.manifest, 180)
+            directory = previous / "quality/control"
+            quality_artifacts(directory, items, "control", 180)
+            inputs = {**study.fingerprint(sorted(args.control.glob("*.mp4"))), "duration": 180}
+            receipt = dict(status="complete", inputs=inputs, scores={"LPIPS": .5, "FVD": 700.},
+                           artifacts=study.fingerprint([directory / "metrics.jsonl", directory / "summary.json"]))
+            study.save(previous / "metrics/control/quality.json", receipt)
+            script = study.REPO / "utils/evaluate_context_memory_prefix_curves.py"
+            config = {"manifest_sha256": study.digest(args.manifest), "code": study.fingerprint([script])}
+            study.save(previous / "config.json", config)
+            for root in (previous, args.output):
+                study.save(root / "environment_memcam.json", {"fixture": True})
+            reused = study.reuse_control_quality(args, inputs, items)
+            self.assertEqual(reused["scores"], receipt["scores"])
+            self.assertIsNone(study.reuse_control_quality(args, {**inputs, "duration": 60}, items))
+            config["code"][str(script)] = "changed"
+            study.save(previous / "config.json", config)
+            self.assertIsNone(study.reuse_control_quality(args, inputs, items))
+            config["code"] = study.fingerprint([script])
+            study.save(previous / "config.json", config)
+            study.save(args.output / "environment_memcam.json", {"fixture": False})
+            self.assertIsNone(study.reuse_control_quality(args, inputs, items))
 
     def test_control_failure_prevents_generation(self):
         with tempfile.TemporaryDirectory() as tmp:

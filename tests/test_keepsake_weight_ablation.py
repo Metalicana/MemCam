@@ -57,6 +57,25 @@ class KeepsakeWeightTests(unittest.TestCase):
             self.assertTrue(np.isinf(scores[0]))
             self.assertTrue(all(d["covisibility_threshold"] == .65 for d in details.values()))
 
+    def test_priority_components_and_default_equivalence(self):
+        values = {}
+        for mode in ("full", "degree_only", "closest_only"):
+            scores, details = policies.compute_slam_covisibility_scores(
+                **self.kwargs, priority_mode=mode, return_details=True)
+            values[mode] = scores
+            for index, d in details.items():
+                degree = 1 - min(d["covisible_observers"] / 3, 1) + .5 / (d["covisible_observers"] + 1)
+                closest = .25 * (1 - d["max_covisibility"])
+                expected = degree + closest if mode == "full" else (degree if mode == "degree_only" else closest)
+                self.assertEqual(scores[index], expected)
+                self.assertEqual(d["priority_mode"], mode)
+            pinned = policies.compute_slam_covisibility_scores(**self.kwargs, priority_mode=mode, pinned_frames=[0])
+            self.assertEqual(pinned[0], float("inf"))
+        for index in range(4):
+            self.assertEqual(values["full"][index], values["degree_only"][index] + values["closest_only"][index])
+        with self.assertRaisesRegex(ValueError, "priority mode"):
+            policies.compute_slam_covisibility_scores(**self.kwargs, priority_mode="typo")
+
     def test_task_grid_matched_and_no_gpu_dry_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             manifest = Path(tmp) / "manifest.jsonl"
@@ -96,6 +115,7 @@ class KeepsakeWeightTests(unittest.TestCase):
         keywords = {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
         self.assertEqual(keywords["geometry_weight"], "keepsake_geometry_weight")
         self.assertEqual(keywords["visual_weight"], "1.0 - keepsake_geometry_weight")
+        self.assertEqual(keywords["priority_mode"], "keepsake_priority_mode")
         self.assertNotIn("covisibility_threshold", keywords)
 
 

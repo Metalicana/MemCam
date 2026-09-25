@@ -33,4 +33,5 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 cd "${MEMCAM_ROOT:-$HOME/MemCam}"
 "${MEMCAM_ENV_PATH:-$HOME/.conda/envs/memcam}/bin/python" -u paper/finish_keepsake_pose_appearance.py \
-    --output "${KEEPSAKE_ABLATION_OUTPUT:-$HOME/memcam_results/keepsake_pose_appearance_180s_steps}" "$@"
+    --output "${KEEPSAKE_ABLATION_OUTPUT:-$HOME/memcam_results/keepsake_pose_appearance_180s_batched}" \
+    --reuse-control-metrics "$HOME/memcam_results/keepsake_pose_appearance_180s_steps" "$@"

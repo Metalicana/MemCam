@@ -443,9 +443,12 @@ class WanVideoMemCamPipeline(BasePipeline):
         profile_metadata=None,
         progress_bar_cmd=tqdm,
         keepsake_geometry_weight=0.65,
+        keepsake_priority_mode="full",
     ):
         if not 0.0 <= keepsake_geometry_weight <= 1.0:
             raise ValueError("keepsake_geometry_weight must be in [0, 1]")
+        if keepsake_priority_mode not in ("full", "degree_only", "closest_only"):
+            raise ValueError("Invalid keepsake_priority_mode")
         # Tiler parameters
         tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
         
@@ -706,6 +709,7 @@ class WanVideoMemCamPipeline(BasePipeline):
             access_trace_metadata.update(
                 keepsake_geometry_weight=float(keepsake_geometry_weight),
                 keepsake_appearance_weight=float(1.0 - keepsake_geometry_weight),
+                keepsake_priority_mode=keepsake_priority_mode,
             )
         if access_trace_path is not None:
             os.makedirs(os.path.dirname(access_trace_path) or ".", exist_ok=True)
@@ -1616,6 +1620,7 @@ class WanVideoMemCamPipeline(BasePipeline):
                     rgb_features=memory_rgb_features,
                     geometry_weight=keepsake_geometry_weight,
                     visual_weight=1.0 - keepsake_geometry_weight,
+                    priority_mode=keepsake_priority_mode,
                     return_details=True,
                 )
             elif memory_policy == "slam_ri_blend":

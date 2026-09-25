@@ -174,6 +174,9 @@ def main():
         "--keepsake_geometry_weight", type=float, default=0.65,
         help="Pose affinity weight for slam_covisibility; appearance weight is 1 minus this value. Does not change the edge threshold.",
     )
+    parser.add_argument("--keepsake_priority_mode", default="full",
+                        choices=("full", "degree_only", "closest_only"),
+                        help="Component ablation of slam_covisibility retention priority.")
     parser.add_argument(
         "--rarity_neighbors",
         type=int,
@@ -340,6 +343,8 @@ def main():
         raise ValueError("--keepsake_geometry_weight must be in [0, 1]")
     if args.memory_policy != "slam_covisibility" and args.keepsake_geometry_weight != 0.65:
         raise ValueError("--keepsake_geometry_weight applies only to slam_covisibility")
+    if args.memory_policy != "slam_covisibility" and args.keepsake_priority_mode != "full":
+        raise ValueError("--keepsake_priority_mode applies only to slam_covisibility")
 
     if args.ri_rarity_neighbors < 1:
         raise ValueError("--ri_rarity_neighbors must be at least 1")
@@ -390,6 +395,7 @@ def main():
     policy_metadata = {
         "memory_policy": args.memory_policy,
         "keepsake_geometry_weight": args.keepsake_geometry_weight,
+        "keepsake_priority_mode": args.keepsake_priority_mode,
         "keepsake_appearance_weight": 1.0 - args.keepsake_geometry_weight,
         "memory_budget": args.memory_budget,
         "memory_bank_device": args.memory_bank_device,
@@ -639,6 +645,7 @@ def main():
                 seed=args.seed,
                 memory_policy=args.memory_policy,
                 keepsake_geometry_weight=args.keepsake_geometry_weight,
+                keepsake_priority_mode=args.keepsake_priority_mode,
                 memory_budget=args.memory_budget,
                 memory_bank_device=args.memory_bank_device,
                 density_coverage_alpha=args.density_coverage_alpha,
@@ -694,6 +701,7 @@ def main():
                     "output_prefix": item["output_prefix"],
                     "run_memory_policy": args.memory_policy,
                     "keepsake_geometry_weight": args.keepsake_geometry_weight,
+                    "keepsake_priority_mode": args.keepsake_priority_mode,
                     "keepsake_appearance_weight": 1.0 - args.keepsake_geometry_weight,
                     "run_memory_budget": args.memory_budget,
                     "run_memory_bank_device": args.memory_bank_device,
