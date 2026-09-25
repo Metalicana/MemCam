@@ -91,7 +91,7 @@ class MethodFigureTests(unittest.TestCase):
 
     def test_images_preserve_source_pixels_and_native_aspect(self):
         images = [c for c in self.rendered if c.get("data-frame-index") is not None]
-        self.assertEqual(len(images), 21)
+        self.assertEqual(len(images), 22)
         for c in images:
             payload = re.search(r"image=data:image/png,([^;]+)", c.get("style"))[1]
             frame = int(c.get("data-frame-index"))
@@ -124,8 +124,33 @@ class MethodFigureTests(unittest.TestCase):
         self.assertEqual(edge.get("data-frame-pair"), "227,228")
         self.assertIn("endArrow=none;", edge.get("style"))
         self.assertAlmostEqual(float(edge.get("data-affinity")), example_record()[227]["eviction_max_covisibility"])
-        for i in range(1, 4):
+        for i in (1, 3):
             self.assertEqual(self.cell(f"schematic-link-{i}").get("data-link-origin"), "schematic")
+
+    def test_high_match_connects_and_low_example_is_explicitly_schematic(self):
+        edge = self.cell("logged-closest-link")
+        self.assertIn(f"strokeColor={method.GREEN};", edge.get("style"))
+        self.assertEqual(edge.get("data-frame-pair"), "227,228")
+        self.assertEqual(edge.get("source"), "graph-i")
+        self.assertEqual(edge.get("target"), "graph-j")
+        self.assertEqual(self.cell("connect-decision").get("value"), "Connect")
+        self.assertEqual(self.cell("graph-edge-value").get("value"), "0.9834")
+        self.assertIn("matched-decision-tick", self.cells)
+        self.assertIn("mismatched-decision-cross-a", self.cells)
+        self.assertIn("mismatched-decision-cross-b", self.cells)
+        self.assertEqual(self.cell("graph-k-image").get("data-frame-index"), "41")
+        self.assertEqual(self.cell("graph-k-image").get("data-role"), "illustrative_mismatch")
+        rejected = self.cell("unlinked-node")
+        self.assertEqual(rejected.get("data-link-origin"), "schematic below-threshold example")
+        self.assertIsNone(rejected.get("data-affinity"))
+        self.assertEqual(self.cell("no-link-decision").get("value"), "No link")
+        g = self.cell("no-link-decision").find("mxGeometry")
+        self.assertLess(float(g.get("y")) + float(g.get("height")), 462)
+        self.assertIn("<sub>ik</sub> &lt; &tau;", self.cell("no-edge-rule").get("value"))
+        for c in self.rendered:
+            if c.get("edge"):
+                self.assertNotIn(c.get("source"), ("unlinked-node", "graph-k-image"))
+                self.assertNotIn(c.get("target"), ("unlinked-node", "graph-k-image"))
 
     def test_centered_unnumbered_headers_and_stage_colors(self):
         for n, color in ((83, method.RED), (138, method.BLUE), (263, method.GREEN)):

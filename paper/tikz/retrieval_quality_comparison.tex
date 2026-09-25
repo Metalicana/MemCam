@@ -9,37 +9,45 @@
 % Matched 60-s / 15-trajectory comparison; common baseline pixels.
 \begin{axis}[
   scale only axis, width=\dimexpr\linewidth-17pt\relax, height=36mm,
-  xmin=0.000000, xmax=0.606633, ymin=-0.28, ymax=1.56,
+  xmin=0.000000, xmax=0.618547, ymin=-0.28, ymax=1.56,
   ytick=\empty, xtick distance=0.2, scaled ticks=false,
   tick label style={font=\scriptsize}, label style={font=\small},
   xlabel={Feature distance $\downarrow$}, axis lines=left,
   y axis line style={draw=none}, axis line style={black!60}, tick style={black!60},
   tick align=outside, xmajorgrids=true, grid style={black!12,line width=0.25pt},
   clip=false, enlargelimits=false,
-  legend style={font=\scriptsize,draw=none,fill=none,at={(0,1.05)},anchor=south west,
+  legend style={font=\scriptsize,draw=none,fill=none,at={(0,1.01)},anchor=south west,
                 legend columns=1,inner sep=0pt,row sep=-1pt},
   legend cell align=left,
 ]
 \addlegendimage{only marks,mark=*,diagUnbounded}
 \addlegendentry{Unbounded}
+\addlegendimage{only marks,mark=triangle*,diagFifo}
+\addlegendentry{FIFO}
 \addlegendimage{only marks,mark=square*,diagKeep}
 \addlegendentry{KEEPSAKE (Ours)}
 \node[anchor=west,font=\scriptsize,inner sep=1pt,fill=white]
   at (axis cs:0.000000,1.40) {View mismatch};
 \node[anchor=west,font=\scriptsize,inner sep=1pt,fill=white]
   at (axis cs:0.000000,0.40) {Memory corruption};
-\draw[diagUnbounded,line width=1.1pt] (axis cs:0.104065,1.12) -- (axis cs:0.147862,1.12);
+\draw[diagUnbounded,line width=1.1pt] (axis cs:0.104065,1.18) -- (axis cs:0.147862,1.18);
 \addplot[only marks,diagUnbounded,mark=*,mark size=2.4pt]
-  coordinates {(0.125602,1.12)};
-\draw[diagUnbounded,line width=1.1pt] (axis cs:0.401161,0.12) -- (axis cs:0.571633,0.12);
+  coordinates {(0.125602,1.18)};
+\draw[diagUnbounded,line width=1.1pt] (axis cs:0.401161,0.18) -- (axis cs:0.571633,0.18);
 \addplot[only marks,diagUnbounded,mark=*,mark size=2.4pt]
-  coordinates {(0.487087,0.12)};
-\draw[diagKeep,line width=1.1pt] (axis cs:0.257853,0.88) -- (axis cs:0.396434,0.88);
+  coordinates {(0.487087,0.18)};
+\draw[diagFifo,line width=1.1pt] (axis cs:0.133619,1.00) -- (axis cs:0.177677,1.00);
+\addplot[only marks,diagFifo,mark=triangle*,mark size=2.4pt]
+  coordinates {(0.155742,1.00)};
+\draw[diagFifo,line width=1.1pt] (axis cs:0.419463,0.00) -- (axis cs:0.583547,0.00);
+\addplot[only marks,diagFifo,mark=triangle*,mark size=2.4pt]
+  coordinates {(0.502168,0.00)};
+\draw[diagKeep,line width=1.1pt] (axis cs:0.257853,0.82) -- (axis cs:0.396434,0.82);
 \addplot[only marks,diagKeep,mark=square*,mark size=2.4pt]
-  coordinates {(0.325372,0.88)};
-\draw[diagKeep,line width=1.1pt] (axis cs:0.315901,-0.12) -- (axis cs:0.498888,-0.12);
+  coordinates {(0.325372,0.82)};
+\draw[diagKeep,line width=1.1pt] (axis cs:0.315901,-0.18) -- (axis cs:0.498888,-0.18);
 \addplot[only marks,diagKeep,mark=square*,mark size=2.4pt]
-  coordinates {(0.407863,-0.12)};
+  coordinates {(0.407863,-0.18)};
 \end{axis}
 \end{tikzpicture}
 \endgroup

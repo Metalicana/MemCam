@@ -1,9 +1,17 @@
-statistic,metric,keepsake_minus_unbounded,ci_low,ci_high
-rollout_mean,selected_view_mismatch,0.19976986564587856,0.14827579303604102,0.25375633913105805
-rollout_mean,selected_memory_corruption,-0.07922407570092573,-0.11826149405560633,-0.03850746531417404
-rollout_mean,selected_effective_mismatch,0.009296946897022958,-0.02799661876714749,0.05172240649984365
-rollout_mean,full_oracle_effective_mismatch,0.0,0.0,0.0
-late_minus_early,selected_view_mismatch,0.1079649438460668,0.0382927477856477,0.18123274045685916
-late_minus_early,selected_memory_corruption,-0.07785398801167806,-0.15876102631290753,0.0030162973403930226
-late_minus_early,selected_effective_mismatch,-0.028638912240664165,-0.09199729580680531,0.03663519973556197
-late_minus_early,full_oracle_effective_mismatch,0.0,0.0,0.0
+statistic,policy,reference,metric,difference,ci_low,ci_high
+rollout_mean,FIFO,Unbounded,selected_view_mismatch,0.030140137845191397,0.018229177879250564,0.04331658058732316
+rollout_mean,FIFO,Unbounded,selected_memory_corruption,0.015081102562987302,0.005966074756090204,0.024335272887694683
+rollout_mean,FIFO,Unbounded,selected_effective_mismatch,0.0112265815337499,0.004649586744498512,0.018049816006551627
+rollout_mean,FIFO,Unbounded,full_oracle_effective_mismatch,0.0,0.0,0.0
+rollout_mean,KEEPSAKE (Ours),Unbounded,selected_view_mismatch,0.19976986564587856,0.14827579303604102,0.25375633913105805
+rollout_mean,KEEPSAKE (Ours),Unbounded,selected_memory_corruption,-0.07922407570092573,-0.11826149405560633,-0.03850746531417404
+rollout_mean,KEEPSAKE (Ours),Unbounded,selected_effective_mismatch,0.009296946897022958,-0.02799661876714749,0.05172240649984365
+rollout_mean,KEEPSAKE (Ours),Unbounded,full_oracle_effective_mismatch,0.0,0.0,0.0
+late_minus_early,FIFO,Unbounded,selected_view_mismatch,0.03608174165089925,0.01670039408902327,0.05775961260000864
+late_minus_early,FIFO,Unbounded,selected_memory_corruption,-0.007087271014849374,-0.035252579619487176,0.018005436718463875
+late_minus_early,FIFO,Unbounded,selected_effective_mismatch,-0.003228924671808899,-0.017706699565052986,0.011817067086696576
+late_minus_early,FIFO,Unbounded,full_oracle_effective_mismatch,0.0,0.0,0.0
+late_minus_early,KEEPSAKE (Ours),Unbounded,selected_view_mismatch,0.1079649438460668,0.0382927477856477,0.18123274045685916
+late_minus_early,KEEPSAKE (Ours),Unbounded,selected_memory_corruption,-0.07785398801167806,-0.15876102631290753,0.0030162973403930226
+late_minus_early,KEEPSAKE (Ours),Unbounded,selected_effective_mismatch,-0.028638912240664165,-0.09199729580680531,0.03663519973556197
+late_minus_early,KEEPSAKE (Ours),Unbounded,full_oracle_effective_mismatch,0.0,0.0,0.0

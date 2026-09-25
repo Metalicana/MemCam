@@ -91,6 +91,18 @@ def draw_update(root, assets, example):
         c.set("data-source-video", VIDEO)
         c.set("data-role", role)
 
+    def decision(name, x, y, accepted):
+        color = GREEN if accepted else RED
+        vertex(name, "", x, y, 30, 30, graph, fill="#FFFFFF", stroke=color, shape="ellipse")
+        nodes[name].set("data-role", "link-decision")
+        if accepted:
+            line(name + "-tick", [(x + 7, y + 15), (x + 13, y + 21), (x + 23, y + 8)],
+                 graph, color=color, width=3, arrow=False)
+        else:
+            for suffix, points in (("a", [(x + 9, y + 9), (x + 21, y + 21)]),
+                                   ("b", [(x + 9, y + 21), (x + 21, y + 9)])):
+                line(name + "-cross-" + suffix, points, graph, color=color, width=3, arrow=False)
+
     def panel(n, title, fill, stroke):
         x, w = PANELS[n]
         name = PREFIX + str(n)
@@ -139,29 +151,42 @@ def draw_update(root, assets, example):
 
     # Anonymous nodes show thresholded links schematically, without inventing frame IDs.
     for name, points in (("schematic-link-1", [(467, 309), (445, 245)]),
-                         ("schematic-link-2", [(499, 355), (566, 385)]),
                          ("schematic-link-3", [(461, 381), (464, 409)])):
         c = line(name, points, graph, arrow=False, color="#8FA6AD", width=2.3)
         c.set("data-link-origin", "schematic")
-    c = line("logged-closest-link", [(496, 318), (668, 269)], graph, arrow=False, color=BLUE, width=3.5)
+    c = line("logged-closest-link", [(496, 318), (668, 269)], graph, arrow=False, color=GREEN, width=3.5)
     c.set("data-link-origin", "logged nearest affinity")
     c.set("data-frame-pair", "227,228")
     c.set("data-affinity", str(example["max_affinity"]))
-    for name, x, y in (("neighbor-1", 419, 206), ("neighbor-2", 563, 366), ("neighbor-3", 440, 406)):
+    c.set("source", "graph-i")
+    c.set("target", "graph-j")
+    set_style(c, exitX="0.85", exitY="0.2", entryX="0", entryY="0.6",
+              exitPerimeter="1", entryPerimeter="1")
+    for name, x, y in (("neighbor-1", 419, 206), ("neighbor-3", 440, 406)):
         vertex(name, "<i>j</i>", x, y, 44, 44, graph, fill="#F6F9FA", stroke="#8FA6AD", shape="ellipse", size=24)
-    vertex("omitted-neighbors", "&ctdot;", 538, 198, 77, 43, graph, size=34)
     vertex("graph-i", "", 416, 298, 92, 92, graph, fill="#EDF5FC", stroke=BLUE, shape="ellipse")
     photo("graph-i-image", 227, 422, 321, 80, graph, "scored_node", BLUE)
     vertex("graph-i-label", "<i>i</i> = 227", 346, 266, 92, 28, graph, size=24)
-    vertex("graph-j", "", 666, 214, 92, 92, graph, fill="#EDF5FC", stroke=BLUE, shape="ellipse")
-    photo("graph-j-image", 228, 672, 237, 80, graph, "closest_node", BLUE)
+    vertex("graph-j", "", 666, 214, 92, 92, graph, fill="#EDF7F2", stroke=GREEN, shape="ellipse")
+    photo("graph-j-image", 228, 672, 237, 80, graph, "closest_node", GREEN)
     vertex("graph-j-label", "<i>j</i>* = 228", 647, 184, 134, 30, graph, size=25)
+    vertex("high-affinity-label", "High score", 526, 224, 137, 30, graph, color=GREEN, size=23)
     vertex("graph-edge-value", f"{example['max_affinity']:.4f}", 542, 263, 117, 31, graph,
-           fill="#FFFFFF", color=BLUE, size=25)
-    vertex("unlinked-node", "<i>j</i>", 710, 368, 48, 48, graph,
-           fill="#FAFAFA", stroke="#B8C2C7", shape="ellipse", color="#78858E", size=24)
-    vertex("no-edge-rule", "<i>K</i><sub>ij</sub> &lt; &tau;", 675, 414, 118, 32, graph,
-           color="#65717A", size=24)
+           fill="#FFFFFF", color=GREEN, size=25)
+    vertex("connect-decision", "Connect", 542, 312, 117, 26, graph, color=GREEN, size=23, bold=True)
+    decision("matched-decision", 744, 213, True)
+
+    # A real candidate thumbnail illustrates the rejection rule, not a measured low affinity.
+    vertex("unlinked-node", "", 666, 356, 92, 92, graph,
+           fill="#FBEFF0", stroke=RED, shape="ellipse")
+    nodes["unlinked-node"].set("data-link-origin", "schematic below-threshold example")
+    photo("graph-k-image", 41, 672, 379, 80, graph, "illustrative_mismatch", RED)
+    vertex("graph-k-label", "<i>k</i>", 687, 324, 52, 30, graph, size=25)
+    vertex("low-affinity-label", "Low score", 526, 348, 137, 28, graph, color=RED, size=23)
+    vertex("no-edge-rule", "<i>K</i><sub>ik</sub> &lt; &tau;", 528, 378, 128, 30, graph,
+           color=RED, size=24)
+    vertex("no-link-decision", "No link", 528, 416, 128, 28, graph, color=RED, size=23, bold=True)
+    decision("mismatched-decision", 744, 354, False)
 
     vertex("statistics-title", "Node statistics", 844, 104, 392, 38, graph, bold=True, size=27)
     vertex("neighbor-count", "<b>Neighbor count</b><br><i>c</i><sub>i</sub> = |{j &ne; i : K<sub>ij</sub> &ge; &tau;}|",
@@ -385,7 +410,13 @@ def build(args):
                 "panel with integrated budgeted eviction, green retained archive. Centered titles "
                 "without step numbers. Symbolic alpha and one-minus-alpha affinity weights; "
                 "pose/appearance labels and no numeric covisibility threshold. "
-                "Protection annotations omitted from the visual explanation.",
+                "Protection annotations omitted from the visual explanation. "
+                "Green tick and connect label on the logged high-affinity pair; a real frame-41 "
+                "thumbnail with a red cross illustrates the below-threshold no-link case.",
+        rejected_link_example=dict(source_frame=227, illustrated_candidate_frame=41,
+            origin="schematic decision with a real candidate thumbnail",
+            affinity=None, threshold_relation="K_ik < tau (illustrative, not measured)",
+            limitation="The trace does not log this pair's affinity; no numeric low score is asserted."),
         scoring_sources=["diffsynth/pipelines/memory_policies.py:_slam_covisibility_affinity",
                          "diffsynth/pipelines/memory_policies.py:compute_slam_covisibility_scores",
                          "diffsynth/pipelines/memory_policies.py:FrameMemoryBuffer.evict_to_budget"],
@@ -393,7 +424,8 @@ def build(args):
                               "diffsynth/pipelines/wan_video_memcam.py:WanVideoMemCamPipeline.__call__"],
         limitations="Anonymous graph nodes/links illustrate the threshold rule, not measured IDs. "
                     "The highlighted 227--228 pair and the count/maximum/utility are logged. "
-                    "Neighbor count covers all 108 candidates, not only the drawn subset.",
+                    "Neighbor count covers all 108 candidates, not only the drawn subset. "
+                    "The frame-41 red-cross example illustrates the rejection rule, not a measured nonedge.",
         extraction="Exact decoded zero-based frame indices; full frames, no image enhancement.")
     args.output.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     caption = r"""\caption{\textbf{KEEPSAKE maintains a bounded archive inside the generation loop.}
@@ -404,7 +436,9 @@ nonnegative cosine similarity of normalized DINO descriptors, where
 $K_{ij}=\alpha P_{ij}+(1-\alpha)A_{ij}$ and $[s]_+=\max(s,0)$.
 Pose distance combines median-normalized translation
 and rotation angle with weight two.
-Add an undirected link when the combined affinity meets the linking criterion. Count these
+Add an undirected link when the combined affinity meets the linking criterion:
+the green check marks a connected pair; the red cross illustrates a below-threshold
+pair with no link. These decisions use pairwise similarity, not retention priority. Count these
 neighbors and find the strongest affinity over all other candidates to compute
 the displayed retention priority. Within the same update, evict the lowest-scored
 eligible items using fixed scores, then keep the bounded archive.
@@ -413,7 +447,9 @@ eligible items using fixed scores, then keep the bounded archive.
                 f"Frame {example['frame']} has {example['neighbors']} thresholded neighbors; "
                 f"its strongest match is frame {example['closest_frame']} with affinity "
                 f"{example['max_affinity']:.4f}, yielding priority {example['utility']:.4f}. "
-                "This pair, its statistics, and archive membership are logged. Anonymous nodes "
+                "This pair, its statistics, and archive membership are logged. The red-cross example "
+                "uses the real frame-41 thumbnail to illustrate the rejection rule; its low pairwise "
+                "score is symbolic, not measured. Anonymous nodes "
                 "and links illustrate the rule schematically; the count is over the full "
                 "candidate bank, not just the displayed subset.}\n")
     (args.output.parent / "ICLR27_Method_caption.tex").write_text(caption)

@@ -1,15 +1,30 @@
 {
-  "source": "/Users/metalicana/projects_summer_2026/MemCam/paper/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
+  "source": "/Users/metalicana/projects_summer_2026/MemCam/paper/results/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
   "source_sha256": "a10134cfc5a249faac738217d368027d7532e0db8c8c8d4c6a350f0779668db6",
   "parameters": {
     "duration": 60,
     "expected_videos": 15,
-    "fps": 30,
-    "bins": 8,
     "bootstrap": 10000,
     "seed": 0,
     "content_run": "baseline"
   },
+  "selectors": [
+    {
+      "run": "baseline",
+      "policy": "Unbounded",
+      "budget": null
+    },
+    {
+      "run": "fifo_b32",
+      "policy": "FIFO",
+      "budget": 32
+    },
+    {
+      "run": "slam_b32_covisibility",
+      "policy": "KEEPSAKE (Ours)",
+      "budget": 32
+    }
+  ],
   "trajectories": [
     {
       "row": "13",
@@ -128,44 +143,6 @@
     23
   ],
   "queries_per_policy": 1380,
-  "summaries": [
-    {
-      "metric": "selected_view_mismatch",
-      "unbounded": 0.12560180758220563,
-      "keepsake": 0.3253716732280842,
-      "paired_difference": 0.19976986564587856,
-      "paired_ci_low": 0.14827579303604102,
-      "paired_ci_high": 0.25375633913105805
-    },
-    {
-      "metric": "selected_memory_corruption",
-      "unbounded": 0.4870873564395352,
-      "keepsake": 0.4078632807386094,
-      "paired_difference": -0.07922407570092573,
-      "paired_ci_low": -0.11826149405560633,
-      "paired_ci_high": -0.03850746531417404
-    },
-    {
-      "metric": "selected_effective_mismatch",
-      "unbounded": 0.4995600328065348,
-      "keepsake": 0.5088569797035577,
-      "paired_difference": 0.009296946897022958,
-      "paired_ci_low": -0.02799661876714749,
-      "paired_ci_high": 0.05172240649984365
-    },
-    {
-      "metric": "full_oracle_effective_mismatch",
-      "unbounded": 0.29996480017468546,
-      "keepsake": 0.29996480017468546,
-      "paired_difference": 0.0,
-      "paired_ci_low": 0.0,
-      "paired_ci_high": 0.0
-    }
-  ],
-  "displayed_metric": "selected_memory_corruption",
-  "definition": "1 - cosine(DINO(baseline image at selected historical index), DINO(GT at that same historical index)); lower is better.",
-  "method": "Actual policy-selected IDs; fixed baseline historical pixels. Query means within sections, equal section weights within each ordered-section bin, equal trajectory weights. Shared trajectory-bootstrap draws, pointwise 95% percentile intervals.",
-  "limitations": "Not each policy's own generated memory pixels, not target-view matching, and not a causal replay. Banks and choices come from each policy's own trace. All initial-frame selections are included. View and effective mismatch are exported too. CSV checks do not independently validate upstream features, video hashes or GT mapping.",
   "early_sections": [
     1,
     2,
@@ -208,6 +185,38 @@
     {
       "statistic": "rollout_mean",
       "policy": "Unbounded",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.29996480017468546,
+      "ci_low": 0.24252022623475913,
+      "ci_high": 0.3604936147923919
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "metric": "selected_view_mismatch",
+      "mean": 0.15574194542739705,
+      "ci_low": 0.13361914328043012,
+      "ci_high": 0.17767660818886064
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "metric": "selected_memory_corruption",
+      "mean": 0.5021684590025225,
+      "ci_low": 0.41946339072632627,
+      "ci_high": 0.5835467496136392
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.5107866143402846,
+      "ci_low": 0.42825638827530366,
+      "ci_high": 0.5914987963761974
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
       "metric": "full_oracle_effective_mismatch",
       "mean": 0.29996480017468546,
       "ci_low": 0.24252022623475913,
@@ -279,6 +288,38 @@
     },
     {
       "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "metric": "selected_view_mismatch",
+      "mean": -0.0016448160012563144,
+      "ci_low": -0.04573763979474705,
+      "ci_high": 0.04277492232620711
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "metric": "selected_memory_corruption",
+      "mean": 0.14047783176104228,
+      "ci_low": 0.0673178162574768,
+      "ci_high": 0.21173454372088113
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.12237450003623959,
+      "ci_low": 0.03894515994687874,
+      "ci_high": 0.19549319535493848
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.007697200775146485,
+      "ci_low": -0.053299068555235876,
+      "ci_high": 0.061595354969302796
+    },
+    {
+      "statistic": "late_minus_early",
       "policy": "KEEPSAKE (Ours)",
       "metric": "selected_view_mismatch",
       "mean": 0.07023838619391123,
@@ -313,61 +354,151 @@
   "paired_contrasts": [
     {
       "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "reference": "Unbounded",
       "metric": "selected_view_mismatch",
-      "keepsake_minus_unbounded": 0.19976986564587856,
+      "difference": 0.030140137845191397,
+      "ci_low": 0.018229177879250564,
+      "ci_high": 0.04331658058732316
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "selected_memory_corruption",
+      "difference": 0.015081102562987302,
+      "ci_low": 0.005966074756090204,
+      "ci_high": 0.024335272887694683
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "selected_effective_mismatch",
+      "difference": 0.0112265815337499,
+      "ci_low": 0.004649586744498512,
+      "ci_high": 0.018049816006551627
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "full_oracle_effective_mismatch",
+      "difference": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
+      "metric": "selected_view_mismatch",
+      "difference": 0.19976986564587856,
       "ci_low": 0.14827579303604102,
       "ci_high": 0.25375633913105805
     },
     {
       "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "selected_memory_corruption",
-      "keepsake_minus_unbounded": -0.07922407570092573,
+      "difference": -0.07922407570092573,
       "ci_low": -0.11826149405560633,
       "ci_high": -0.03850746531417404
     },
     {
       "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "selected_effective_mismatch",
-      "keepsake_minus_unbounded": 0.009296946897022958,
+      "difference": 0.009296946897022958,
       "ci_low": -0.02799661876714749,
       "ci_high": 0.05172240649984365
     },
     {
       "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "full_oracle_effective_mismatch",
-      "keepsake_minus_unbounded": 0.0,
+      "difference": 0.0,
       "ci_low": 0.0,
       "ci_high": 0.0
     },
     {
       "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "reference": "Unbounded",
       "metric": "selected_view_mismatch",
-      "keepsake_minus_unbounded": 0.1079649438460668,
+      "difference": 0.03608174165089925,
+      "ci_low": 0.01670039408902327,
+      "ci_high": 0.05775961260000864
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "selected_memory_corruption",
+      "difference": -0.007087271014849374,
+      "ci_low": -0.035252579619487176,
+      "ci_high": 0.018005436718463875
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "selected_effective_mismatch",
+      "difference": -0.003228924671808899,
+      "ci_low": -0.017706699565052986,
+      "ci_high": 0.011817067086696576
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "FIFO",
+      "reference": "Unbounded",
+      "metric": "full_oracle_effective_mismatch",
+      "difference": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
+      "metric": "selected_view_mismatch",
+      "difference": 0.1079649438460668,
       "ci_low": 0.0382927477856477,
       "ci_high": 0.18123274045685916
     },
     {
       "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "selected_memory_corruption",
-      "keepsake_minus_unbounded": -0.07785398801167806,
+      "difference": -0.07785398801167806,
       "ci_low": -0.15876102631290753,
       "ci_high": 0.0030162973403930226
     },
     {
       "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "selected_effective_mismatch",
-      "keepsake_minus_unbounded": -0.028638912240664165,
+      "difference": -0.028638912240664165,
       "ci_low": -0.09199729580680531,
       "ci_high": 0.03663519973556197
     },
     {
       "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "reference": "Unbounded",
       "metric": "full_oracle_effective_mismatch",
-      "keepsake_minus_unbounded": 0.0,
+      "difference": 0.0,
       "ci_low": 0.0,
       "ci_high": 0.0
     }
   ],
+  "method": "Same queries and baseline source pixels for all three selectors. Query means within sections, equal section weights within trajectories, equal trajectory weights. Shared whole-trajectory bootstrap draws across policies, metrics and statistics.",
+  "limitations": "Not each policy's own generated memory pixels and not a causal replay. Banks and selected IDs come from each policy's own trace. All initial-frame selections are included. CSV checks do not independently validate features, video hashes or GT mapping.",
   "landscape": {
     "duration_sec": 180,
     "trajectories": 13,

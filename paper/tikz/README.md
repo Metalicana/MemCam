@@ -21,15 +21,15 @@ Compile the manuscript from `paper`, or adjust the input paths.
   13-trajectory analysis; none are replaced with 60-second values. These are
   rounded legacy estimates, with no newly inferred uncertainty.
 - `retrieval_quality_comparison.tex`: absolute mean view mismatch and selected
-  memory corruption for Unbounded versus KEEPSAKE B32, on 15 matched 60-second
+  memory corruption for Unbounded, FIFO B32, and KEEPSAKE B32, on 15 matched 60-second
   trajectories and 1,380 identical sampled reads per method. Smaller is better.
-- `retrieval_deterioration_comparison.tex`: alternative version showing both
+- `retrieval_deterioration_comparison.tex`: alternative version showing all three
   methods' late-minus-early changes, comparing sections 1--5 with 19--23.
   Positive values mean deterioration. Smaller changes do not establish smaller
   absolute errors.
 
 Both comparison panels score selected historical IDs using the *same baseline
-generated pixels*. They do not measure the two methods' own generated archives.
+generated pixels*. They do not measure the three methods' own generated archives.
 Queries are averaged within sections, sections within trajectories, and
 trajectories equally. Whiskers use 10,000 whole-trajectory bootstrap samples,
 seed 0. All metrics and policies use the same resampling indices. Paired
@@ -46,6 +46,10 @@ improvement in both quantities or causal error prevention.
 and statistical definitions. Use natural TikZ sizing, not `resizebox`, to
 preserve the readable label sizes. Increase the subfigure width for a larger
 plot; the panel width follows `\linewidth`.
+
+`paired_contrasts.csv` names the `policy` and `reference` explicitly; `difference`
+is policy minus Unbounded. It contains FIFO and KEEPSAKE contrasts, each computed
+from paired trajectories, using the same draws as the marginal intervals.
 
 The two retrieval versions are not the same statistic: `mean` shows error
 levels averaged over the rollout, while `change` shows late minus early.

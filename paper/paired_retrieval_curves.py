@@ -11,10 +11,13 @@ from paper.plot_retrieval_deterioration import FIELDS, IDENTITY, load_sections, 
 RUNS = (("baseline", "Unbounded"), ("slam_b32_covisibility", "KEEPSAKE (B32)"))
 
 
-def compare(path, duration=60, expected_videos=15, fps=30, bins=8, bootstrap=10000, seed=0):
-    if not np.isfinite(fps) or fps <= 0 or duration <= 0 or expected_videos < 2:
-        raise ValueError("Need positive duration/FPS and at least two trajectories")
-    queries = {run: set() for run, _ in RUNS}
+def load_matched_sections(path, runs=RUNS, duration=60, expected_videos=15):
+    """Validate common-source, query-matched Unbounded and B32 selectors."""
+    if duration <= 0 or expected_videos < 2:
+        raise ValueError("Need positive duration and at least two trajectories")
+    if len(runs) < 2 or runs[0][0] != "baseline" or len({r[0] for r in runs}) != len(runs):
+        raise ValueError("Need distinct selectors starting with baseline")
+    queries = {run: set() for run, _ in runs}
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle)
         required = {*IDENTITY, *FIELDS, "run_name", "content_run", "budget", "section_idx",
@@ -26,7 +29,7 @@ def compare(path, duration=60, expected_videos=15, fps=30, bins=8, bootstrap=100
             if run not in queries or int(row["duration_sec"]) != duration:
                 continue
             if row["content_run"] != "baseline":
-                raise ValueError("Both selectors must use the same baseline source pixels")
+                raise ValueError("All selectors must use the same baseline source pixels")
             if row["budget"] != ("" if run == "baseline" else "32"):
                 raise ValueError("Expected Unbounded and B32 selectors")
             values = np.asarray([float(row[m]) for m in FIELDS])
@@ -41,16 +44,27 @@ def compare(path, duration=60, expected_videos=15, fps=30, bins=8, bootstrap=100
             if key in queries[run]:
                 raise ValueError("Duplicate retrieval query")
             queries[run].add(key)
-    if queries[RUNS[0][0]] != queries[RUNS[1][0]]:
+    if any(q != queries["baseline"] for q in queries.values()):
         raise ValueError("Selectors must cover exactly the same trajectories and queries")
 
-    curves, arrays = [], []
+    loaded = {}
     cohort = None
-    for run, policy in RUNS:
-        identities, sections, values, targets, count = load_sections(path, run, duration, expected_videos)
+    for run, _ in runs:
+        loaded[run] = load_sections(path, run, duration, expected_videos)
+        identities, sections, _, _, _ = loaded[run]
         if cohort is not None and cohort != (identities, sections):
             raise ValueError("Mismatched trajectory/section coverage")
         cohort = identities, sections
+    return loaded
+
+
+def compare(path, duration=60, expected_videos=15, fps=30, bins=8, bootstrap=10000, seed=0):
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError("Need positive FPS")
+    loaded = load_matched_sections(path, RUNS, duration, expected_videos)
+    curves, arrays = [], []
+    for run, policy in RUNS:
+        identities, sections, values, targets, count = loaded[run]
         result = summarize(values, targets, fps, bins, bootstrap, seed)
         arrays.append(values)
         for b, time in enumerate(result["time_sec"]):
@@ -74,7 +88,7 @@ def compare(path, duration=60, expected_videos=15, fps=30, bins=8, bootstrap=100
                     parameters=dict(duration=duration, expected_videos=expected_videos, fps=fps,
                                     bins=bins, bootstrap=bootstrap, seed=seed, content_run="baseline"),
                     trajectories=[dict(zip(IDENTITY, i)) for i in identities], section_indices=sections,
-                    queries_per_policy=len(queries[RUNS[0][0]]), summaries=summaries,
+                    queries_per_policy=count, summaries=summaries,
                     displayed_metric="selected_memory_corruption",
                     definition="1 - cosine(DINO(baseline image at selected historical index), "
                     "DINO(GT at that same historical index)); lower is better.",

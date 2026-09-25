@@ -12,11 +12,16 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from paper.paired_retrieval_curves import RUNS, compare
-from paper.plot_retrieval_deterioration import FIELDS, load_sections
+from paper.paired_retrieval_curves import load_matched_sections
+from paper.plot_retrieval_deterioration import FIELDS, IDENTITY
 
 MARKS = {16: "*", 32: "square*", 64: "triangle*", 128: "diamond*"}
 COLORS = {"FIFO": "D55E00", "KEEPSAKE (Ours)": "4C8C4A", "Unbounded": "4D4D4D"}
+COMPARISON_RUNS = (("baseline", "Unbounded"), ("fifo_b32", "FIFO"),
+                   ("slam_b32_covisibility", "KEEPSAKE (Ours)"))
+COMPARISON_STYLES = {"Unbounded": ("diagUnbounded", "*", .18),
+                     "FIFO": ("diagFifo", "triangle*", 0.),
+                     "KEEPSAKE (Ours)": ("diagKeep", "square*", -.18)}
 
 
 def original_points(path):
@@ -51,12 +56,12 @@ def original_points(path):
 
 
 def statistics(path, duration=60, videos=15, bootstrap=10000, seed=0):
-    # Reuse the matched-query and common-pixel-source validation, not just CSV counts.
-    _, metadata = compare(path, duration=duration, expected_videos=videos,
-                          bootstrap=bootstrap, seed=seed)
+    if bootstrap < 100:
+        raise ValueError("Need at least 100 bootstrap draws")
+    loaded = load_matched_sections(path, COMPARISON_RUNS, duration, videos)
     values = []
-    for run, _ in RUNS:
-        identities, sections, array, _, _ = load_sections(path, run, duration, videos)
+    for run, _ in COMPARISON_RUNS:
+        identities, sections, array, _, count = loaded[run]
         values.append(array)
     values = np.stack(values)
     k = len(sections) // 4
@@ -65,21 +70,34 @@ def statistics(path, duration=60, videos=15, bootstrap=10000, seed=0):
     draws = np.random.default_rng(seed).integers(0, videos, (bootstrap, videos))
     rows, contrasts = [], []
     for statistic, array in (("rollout_mean", means), ("late_minus_early", changes)):
-        for policy_index, policy in enumerate(("Unbounded", "KEEPSAKE (Ours)")):
+        for policy_index, (_, policy) in enumerate(COMPARISON_RUNS):
             per_trajectory = array[policy_index]
             ci = np.quantile(per_trajectory[draws].mean(axis=1), [.025, .975], axis=0)
             for i, metric in enumerate(FIELDS):
                 rows.append(dict(statistic=statistic, policy=policy, metric=metric,
                                  mean=float(per_trajectory[:, i].mean()),
                                  ci_low=float(ci[0, i]), ci_high=float(ci[1, i])))
-        difference = array[1] - array[0]
-        ci = np.quantile(difference[draws].mean(axis=1), [.025, .975], axis=0)
-        for i, metric in enumerate(FIELDS):
-            contrasts.append(dict(statistic=statistic, metric=metric,
-                                  keepsake_minus_unbounded=float(difference[:, i].mean()),
-                                  ci_low=float(ci[0, i]), ci_high=float(ci[1, i])))
-    metadata.update(early_sections=sections[:k], late_sections=sections[-k:],
-                    exported_statistics=rows, paired_contrasts=contrasts)
+        for policy_index, (_, policy) in enumerate(COMPARISON_RUNS[1:], 1):
+            difference = array[policy_index] - array[0]
+            ci = np.quantile(difference[draws].mean(axis=1), [.025, .975], axis=0)
+            for i, metric in enumerate(FIELDS):
+                contrasts.append(dict(statistic=statistic, policy=policy, reference="Unbounded",
+                                      metric=metric, difference=float(difference[:, i].mean()),
+                                      ci_low=float(ci[0, i]), ci_high=float(ci[1, i])))
+    metadata = dict(source=str(path.resolve()), source_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                    parameters=dict(duration=duration, expected_videos=videos, bootstrap=bootstrap,
+                                    seed=seed, content_run="baseline"),
+                    selectors=[dict(run=run, policy=policy, budget=None if run == "baseline" else 32)
+                               for run, policy in COMPARISON_RUNS],
+                    trajectories=[dict(zip(IDENTITY, i)) for i in identities], section_indices=sections,
+                    queries_per_policy=count, early_sections=sections[:k], late_sections=sections[-k:],
+                    exported_statistics=rows, paired_contrasts=contrasts,
+                    method="Same queries and baseline source pixels for all three selectors. Query means "
+                    "within sections, equal section weights within trajectories, equal trajectory weights. "
+                    "Shared whole-trajectory bootstrap draws across policies, metrics and statistics.",
+                    limitations="Not each policy's own generated memory pixels and not a causal replay. "
+                    "Banks and selected IDs come from each policy's own trace. All initial-frame selections "
+                    "are included. CSV checks do not independently validate features, video hashes or GT mapping.")
     return rows, metadata
 
 
@@ -142,8 +160,9 @@ def comparison_tex(rows, changes=False):
     statistic = "late_minus_early" if changes else "rollout_mean"
     metrics = ("selected_view_mismatch", "selected_memory_corruption")
     selected = [r for r in rows if r["statistic"] == statistic and r["metric"] in metrics]
-    if len(selected) != 4:
-        raise ValueError("Need two policies and two metrics")
+    expected = {(policy, metric) for policy in COMPARISON_STYLES for metric in metrics}
+    if len(selected) != len(expected) or {(r["policy"], r["metric"]) for r in selected} != expected:
+        raise ValueError("Need all three policies and both metrics exactly once")
     if changes:
         xmin = min(0, min(r["ci_low"] for r in selected)) - .025
         xmax = max(0, max(r["ci_high"] for r in selected)) + .025
@@ -161,12 +180,14 @@ def comparison_tex(rows, changes=False):
   y axis line style={{draw=none}}, axis line style={{black!60}}, tick style={{black!60}},
   tick align=outside, xmajorgrids=true, grid style={{black!12,line width=0.25pt}},
   clip=false, enlargelimits=false,
-  legend style={{font=\scriptsize,draw=none,fill=none,at={{(0,1.05)}},anchor=south west,
+  legend style={{font=\scriptsize,draw=none,fill=none,at={{(0,1.01)}},anchor=south west,
                 legend columns=1,inner sep=0pt,row sep=-1pt}},
   legend cell align=left,
 ]
 \addlegendimage{{only marks,mark=*,diagUnbounded}}
 \addlegendentry{{Unbounded}}
+\addlegendimage{{only marks,mark=triangle*,diagFifo}}
+\addlegendentry{{FIFO}}
 \addlegendimage{{only marks,mark=square*,diagKeep}}
 \addlegendentry{{KEEPSAKE (Ours)}}
 \node[anchor=west,font=\scriptsize,inner sep=1pt,fill=white]
@@ -177,8 +198,8 @@ def comparison_tex(rows, changes=False):
     if changes:
         text += r"\draw[black!55,dashed,line width=0.5pt] (axis cs:0,-0.23) -- (axis cs:0,1.3);" + "\n"
     for row in selected:
-        y = 1 - metrics.index(row["metric"]) + (.12 if row["policy"] == "Unbounded" else -.12)
-        color, marker = ("diagUnbounded", "*") if row["policy"] == "Unbounded" else ("diagKeep", "square*")
+        color, marker, offset = COMPARISON_STYLES[row["policy"]]
+        y = 1 - metrics.index(row["metric"]) + offset
         x, lo, hi = (row[k] for k in ("mean", "ci_low", "ci_high"))
         text += (f"\\draw[{color},line width=1.1pt] (axis cs:{lo:.6f},{y:.2f}) -- (axis cs:{hi:.6f},{y:.2f});\n"
                  f"\\addplot[only marks,{color},mark={marker},mark size=2.4pt]\n"
@@ -261,7 +282,7 @@ def three_panel_tex(points, rows, changes=False):
 (a) Fifteen matched 180-second MemCam rollouts; bounded methods use $B=32$.
 """ + "(b) " + description + r""" on fifteen matched
 60-second rollouts, using common baseline pixels and DINOv2 cosine distance;
-KEEPSAKE uses $B=32$ and whiskers show 95\% trajectory-bootstrap intervals.
+FIFO and KEEPSAKE use $B=32$; whiskers show 95\% trajectory-bootstrap intervals.
 (c) Original thirteen-trajectory, 180-second retention--selection analysis;
 labels denote memory budgets. Lower is better on both axes.
 }
@@ -273,7 +294,7 @@ labels denote memory budgets. Lower is better on both axes.
 
 def write_csv(path, rows):
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -301,7 +322,7 @@ def export(legacy, queries, output, middle_panel="mean"):
     print(f"Wrote complete three-panel figure, individual panels and statistics to {output}")
     for row in metadata["paired_contrasts"]:
         if row["statistic"] == "rollout_mean" and row["metric"] in FIELDS[:2]:
-            print(f"{row['metric']}: Keepsake - Unbounded = {row['keepsake_minus_unbounded']:+.6f} "
+            print(f"{row['metric']}: {row['policy']} - Unbounded = {row['difference']:+.6f} "
                   f"[{row['ci_low']:+.6f}, {row['ci_high']:+.6f}]")
 
 
