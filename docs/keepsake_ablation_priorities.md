@@ -3,7 +3,8 @@
 Scope: assessment of the manuscript and critique supplied on September 25, 2026.
 Compute constraint: approximately 15 elapsed hours on one H100.
 The component pilot is implemented below; no new results or submitted job are
-claimed. The sensitivity and update-rule replays remain proposed work.
+claimed by that implementation. The sensitivity and update-rule replays are now
+implemented separately; see [Existing-Data Evidence Jobs](paper_evidence_overnight.md).
 
 ## What Exists
 
