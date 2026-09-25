@@ -186,7 +186,7 @@ def main():
     parser.add_argument("--duration", type=int, default=180)
     parser.add_argument("--fps", type=float, default=30)
     parser.add_argument("--expected-videos", type=int, default=15)
-    parser.add_argument("--worldmem-summary", type=Path, default=Path(__file__).with_name("worldmem_lookup_reported.json"))
+    parser.add_argument("--worldmem-summary", type=Path, default=Path(__file__).resolve().parent / "configs/worldmem_lookup_reported.json")
     parser.add_argument("--latency-summary", type=Path, help="Completed MemCam replay latency_summary.csv with sibling provenance.json")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

@@ -115,7 +115,7 @@ def plot_summary(source, output, title):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results", type=Path, default=Path(__file__).resolve().parent / "retention_selection_60s_full_grid")
+    parser.add_argument("--results", type=Path, default=Path(__file__).resolve().parent / "results/retention_selection_60s_full_grid")
     args = parser.parse_args()
     for period, title in (("all", "Retention and selection across memory budgets"),
                           ("late", "Retention and selection across memory budgets: late rollout")):

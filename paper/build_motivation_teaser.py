@@ -783,7 +783,7 @@ def build(config_path, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=ROOT / "paper/motivation_teaser_inputs.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "paper/configs/motivation_teaser_inputs.json")
     parser.add_argument("--output", type=Path,
                         default=ROOT / "paper/figures/ICLR27_Motivation_two_row.drawio")
     args = parser.parse_args()

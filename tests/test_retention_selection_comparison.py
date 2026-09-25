@@ -12,7 +12,7 @@ SPEC = importlib.util.spec_from_file_location(
     "gap_comparison", ROOT / "paper/plot_retention_selection_comparison.py")
 plotter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(plotter)
-LEGACY = ROOT / "paper/retention_selection_180s_reported.json"
+LEGACY = ROOT / "paper/configs/retention_selection_180s_reported.json"
 
 
 def write_csv(path, rows):

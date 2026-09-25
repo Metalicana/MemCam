@@ -7,6 +7,14 @@
   <a href='https://huggingface.co/newhorizon2005/MemCam'><img src='https://img.shields.io/badge/Model-HuggingFace-FFD21E.svg'></a> &nbsp;&nbsp;
 </div>
 
+## Keepsake Workspace
+
+This checkout also contains the Keepsake experiments and manuscript work.
+Start with the [paper guide](paper/README.md) for figures, editable TikZ,
+result snapshots, and plotting commands, or the [experiment guide](docs/README.md)
+for cluster jobs and handoffs. Existing Python and Slurm entry points have
+kept their original locations. The upstream MemCam documentation follows.
+
 ## 📄 Paper
 
 > **MemCam: Memory-Augmented Camera Control for Consistent Video Generation**  

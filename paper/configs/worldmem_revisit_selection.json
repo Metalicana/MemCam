@@ -1,0 +1,17 @@
+{
+  "stem": "worldmem_60s_revisit",
+  "trajectory_id": 8,
+  "candidate_rank": 7,
+  "display_scene": "Savanna",
+  "frames": [91, 116, 142],
+  "caption": "WorldMem revisit comparison on a 60-second savanna rollout. Rows show Unbounded, FIFO B32 and KEEPSAKE B32 at identical trajectory times: 9.1, 11.6 and 14.2 seconds. Green boxes highlight the persistent trunk/canopy in KEEPSAKE; red boxes highlight the altered tree region in Unbounded. FIFO already lacks the corresponding tree in the first view. The requested trajectory returns within 0.43 blocks and 15 degrees after an intervening turn of 66.45 degrees. This is a selected qualitative near-view return, not an exact-view reconstruction or an aggregate consistency measurement.",
+  "selection_reason": "Reviewed all 112 exported geometry-qualified candidates across 15 trajectories. Chosen for a recognizable trunk/canopy across the KEEPSAKE endpoints and visible Unbounded distortion, rather than a featureless sky or ground example. The 15-degree endpoint difference explains some image displacement. Other candidates include stable Unbounded returns and degraded KEEPSAKE returns; this example is not representative evidence by itself.",
+  "gt_visual_review": "Reviewed all three exported GT frames for this candidate. They depict a savanna with a foreground tree and the intervening turn. KEEPSAKE has recognizable corresponding scene structure but is not an exact GT reconstruction. This visual check does not establish the unlogged post-retry dataset identity.",
+  "highlight_description": "Boxes identify visually corresponding tree regions, not detector outputs or geometrically projected object IDs. No FIFO box: its first endpoint already lacks the corresponding tree.",
+  "highlights": [
+    {"method": "Unbounded", "frame": 91, "landmark": "tree region", "xywh": [142, 2, 330, 173]},
+    {"method": "Unbounded", "frame": 142, "landmark": "tree region", "xywh": [111, 3, 381, 224]},
+    {"method": "KEEPSAKE", "frame": 91, "landmark": "trunk and canopy", "xywh": [300, 43, 173, 177]},
+    {"method": "KEEPSAKE", "frame": 142, "landmark": "trunk and canopy", "xywh": [300, 108, 179, 177]}
+  ]
+}

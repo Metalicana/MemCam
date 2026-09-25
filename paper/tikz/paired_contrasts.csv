@@ -1,0 +1,9 @@
+statistic,metric,keepsake_minus_unbounded,ci_low,ci_high
+rollout_mean,selected_view_mismatch,0.19976986564587856,0.14827579303604102,0.25375633913105805
+rollout_mean,selected_memory_corruption,-0.07922407570092573,-0.11826149405560633,-0.03850746531417404
+rollout_mean,selected_effective_mismatch,0.009296946897022958,-0.02799661876714749,0.05172240649984365
+rollout_mean,full_oracle_effective_mismatch,0.0,0.0,0.0
+late_minus_early,selected_view_mismatch,0.1079649438460668,0.0382927477856477,0.18123274045685916
+late_minus_early,selected_memory_corruption,-0.07785398801167806,-0.15876102631290753,0.0030162973403930226
+late_minus_early,selected_effective_mismatch,-0.028638912240664165,-0.09199729580680531,0.03663519973556197
+late_minus_early,full_oracle_effective_mismatch,0.0,0.0,0.0

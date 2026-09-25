@@ -192,8 +192,8 @@ def build(args):
     old, new, kept, evicted = update_bank(events, SECTION)
     validate_roles(old, new, kept, evicted)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    backup = args.output.parent / "method_previous" / args.template.name
-    backup.parent.mkdir(exist_ok=True)
+    backup = args.output.parent / "archive/method_previous" / args.template.name
+    backup.parent.mkdir(parents=True, exist_ok=True)
     if not backup.exists():
         shutil.copy2(args.template, backup)
     template = backup if args.template.resolve() == args.output.resolve() else args.template

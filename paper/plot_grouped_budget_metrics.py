@@ -153,8 +153,8 @@ def export(scores, coverage, output):
 def main():
     root = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scores", type=Path, default=root / "metric_results_60s/scores.csv")
-    parser.add_argument("--coverage", type=Path, default=root / "metric_results_60s/coverage.csv")
+    parser.add_argument("--scores", type=Path, default=root / "results/metric_results_60s/scores.csv")
+    parser.add_argument("--coverage", type=Path, default=root / "results/metric_results_60s/coverage.csv")
     parser.add_argument("--output", type=Path, default=root / "figures/metric_bars")
     args = parser.parse_args()
     export(args.scores, args.coverage, args.output)

@@ -1,2 +1,20 @@
-*.pyc
+# Local OS and Python build/cache files.
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# LaTeX intermediates, not the editable sources or exported PDFs.
+/paper/**/*.aux
+/paper/**/*.bbl
+/paper/**/*.blg
+/paper/**/*.fdb_latexmk
+/paper/**/*.fls
+/paper/**/*.log
+/paper/**/*.out
+/paper/**/*.synctex.gz
+/paper/**/*.toc
+
+# Generated figure assets stay local unless deliberately versioned.
 /paper/figures/*
+!/paper/figures/README.md

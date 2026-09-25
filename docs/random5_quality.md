@@ -18,7 +18,7 @@ cd "$HOME/MemCam"
 ```
 
 This reads the per-video `psnr_db` already computed alongside LPIPS, using
-the source paths in `paper/metric_results_60s/scores.csv`. It checks method,
+the source paths in `paper/results/metric_results_60s/scores.csv`. It checks method,
 scene, start frame, duration, video filename, complete frame count, stride and
 sample count. It does not establish historical video hashes. Missing, short,
 duplicate or conflicting records are not averaged away.

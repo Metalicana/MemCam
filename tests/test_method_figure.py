@@ -2,7 +2,9 @@ import base64
 from pathlib import Path
 import re
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 from PIL import Image
@@ -53,6 +55,21 @@ class MethodFigureTests(unittest.TestCase):
 
     def cell(self, n):
         return self.cells[method.PREFIX + str(n) if isinstance(n, int) else n]
+
+    def test_backup_creates_archive_parents_and_keeps_first_version(self):
+        root = Path(self.tmp.name)
+        output = root / "after.drawio"
+        original = output.read_bytes()
+        args = SimpleNamespace(traces=root, videos=root, output=output, template=root / "before.drawio")
+        backup = root / "archive/method_previous/rejected_three_stage.drawio.xml"
+        with patch.object(method, "prepare", return_value=(set(), set(), set(), example_record())), \
+             patch.object(method, "extract_frames", return_value=self.frames), \
+             patch.object(method, "rewrite", side_effect=RuntimeError("stop after backup")):
+            for contents in (original, b"later figure"):
+                output.write_bytes(contents)
+                with self.assertRaisesRegex(RuntimeError, "stop after backup"):
+                    method.build(args)
+                self.assertEqual(backup.read_bytes(), original)
 
     def test_narrow_banks_dominant_graph_and_integrated_eviction(self):
         graph_width = float(self.cell(138).find("mxGeometry").get("width"))

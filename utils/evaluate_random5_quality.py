@@ -219,7 +219,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=repo / "testbeds/context_memory/manifest.jsonl")
     parser.add_argument("--root", type=Path, default=Path.home() / "memcam_results/context_memory_60s")
-    parser.add_argument("--scores", type=Path, default=repo / "paper/metric_results_60s/scores.csv")
+    parser.add_argument("--scores", type=Path, default=repo / "paper/results/metric_results_60s/scores.csv")
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--output", type=Path,
                         default=Path.home() / "memcam_results/random5_quality_60s_seed0")

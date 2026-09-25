@@ -64,7 +64,7 @@ class MotivationTeaserTests(unittest.TestCase):
         self.assertIsNotNone(shape.find("foreground/fill"))
 
     def test_resource_bars_are_linear_and_scope_is_checked(self):
-        data = json.loads((ROOT / "paper/motivation_teaser_inputs.json").read_text())["efficiency"]
+        data = json.loads((ROOT / "paper/configs/motivation_teaser_inputs.json").read_text())["efficiency"]
         diagram = teaser.Diagram()
         teaser.efficiency_panel(diagram, data)
         bars = [c for c in diagram.root if c.attrib.get("style", "").startswith("rounded=0;")]
@@ -79,7 +79,7 @@ class MotivationTeaserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_curves(root)
-            config = json.loads((ROOT / "paper/motivation_teaser_inputs.json").read_text())
+            config = json.loads((ROOT / "paper/configs/motivation_teaser_inputs.json").read_text())
             config.pop("layout", None)
             config.pop("sample_comparison", None)
             config.pop("revisit_triplet", None)
@@ -227,7 +227,7 @@ class MotivationTeaserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_curves(root)
-            config = json.loads((ROOT / "paper/motivation_teaser_inputs.json").read_text())
+            config = json.loads((ROOT / "paper/configs/motivation_teaser_inputs.json").read_text())
             config.update(retrieval_directory=".", sample_directory=".")
             write_input(root / "queries.csv", fixture_rows())
             config["retrieval_comparison"] = dict(source="queries.csv", y_limits=[.1, .6], parameters=dict(
@@ -408,7 +408,7 @@ class MotivationTeaserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_input(root / "queries.csv", fixture_rows())
-            config = json.loads((ROOT / "paper/motivation_teaser_inputs.json").read_text())
+            config = json.loads((ROOT / "paper/configs/motivation_teaser_inputs.json").read_text())
             config.pop("layout", None)
             config.pop("revisit_triplet")
             config["retrieval_comparison"] = dict(source="queries.csv", parameters=dict(

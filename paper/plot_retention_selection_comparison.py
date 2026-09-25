@@ -209,11 +209,11 @@ def export(summary, queries, legacy, output):
 
 
 def main():
-    tables = ROOT / "retention_selection_60s_full_grid/tables"
+    tables = ROOT / "results/retention_selection_60s_full_grid/tables"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, default=tables / "run_summary_all.csv")
     parser.add_argument("--queries", type=Path, default=tables / "query_decomposition_common_source.csv")
-    parser.add_argument("--legacy", type=Path, default=ROOT / "retention_selection_180s_reported.json")
+    parser.add_argument("--legacy", type=Path, default=ROOT / "configs/retention_selection_180s_reported.json")
     parser.add_argument("--output", type=Path,
                         default=ROOT / "figures/retention_selection_policy_landscape")
     args = parser.parse_args()

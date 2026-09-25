@@ -1,0 +1,17 @@
+statistic,policy,metric,mean,ci_low,ci_high
+rollout_mean,Unbounded,selected_view_mismatch,0.12560180758220563,0.10406461540879548,0.1478623417516549
+rollout_mean,Unbounded,selected_memory_corruption,0.4870873564395352,0.4011608301135509,0.571632534129464
+rollout_mean,Unbounded,selected_effective_mismatch,0.4995600328065348,0.4155062577873469,0.5817954060478487
+rollout_mean,Unbounded,full_oracle_effective_mismatch,0.29996480017468546,0.24252022623475913,0.3604936147923919
+rollout_mean,KEEPSAKE (Ours),selected_view_mismatch,0.3253716732280842,0.2578531370527934,0.3964341125799262
+rollout_mean,KEEPSAKE (Ours),selected_memory_corruption,0.4078632807386094,0.315901444332971,0.49888832129861993
+rollout_mean,KEEPSAKE (Ours),selected_effective_mismatch,0.5088569797035577,0.4167296551005996,0.5977053608410601
+rollout_mean,KEEPSAKE (Ours),full_oracle_effective_mismatch,0.29996480017468546,0.24252022623475913,0.3604936147923919
+late_minus_early,Unbounded,selected_view_mismatch,-0.03772655765215555,-0.07301568674047788,-0.0027971688409646517
+late_minus_early,Unbounded,selected_memory_corruption,0.14756510277589163,0.06936240140100323,0.21990126992265377
+late_minus_early,Unbounded,selected_effective_mismatch,0.12560342470804853,0.03958629455665748,0.20085468988120558
+late_minus_early,Unbounded,full_oracle_effective_mismatch,0.007697200775146485,-0.053299068555235876,0.061595354969302796
+late_minus_early,KEEPSAKE (Ours),selected_view_mismatch,0.07023838619391123,-0.004652939135829626,0.1424877598583698
+late_minus_early,KEEPSAKE (Ours),selected_memory_corruption,0.06971111476421357,-0.05030102708935735,0.17495512431363264
+late_minus_early,KEEPSAKE (Ours),selected_effective_mismatch,0.09696451246738436,0.012663115963339805,0.1742117630243301
+late_minus_early,KEEPSAKE (Ours),full_oracle_effective_mismatch,0.007697200775146485,-0.053299068555235876,0.061595354969302796

@@ -18,7 +18,7 @@
   },
   "retrieval_directory": "paper/figures/retrieval_deterioration_20260917_124310",
   "retrieval_comparison": {
-    "source": "paper/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
+    "source": "paper/results/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
     "y_limits": [0.2, 0.7],
     "parameters": {"duration": 60, "expected_videos": 15, "fps": 30, "bins": 8, "bootstrap": 10000, "seed": 0}
   },

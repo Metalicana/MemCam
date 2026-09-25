@@ -1,0 +1,442 @@
+{
+  "source": "/Users/metalicana/projects_summer_2026/MemCam/paper/retention_selection_60s_full_grid/tables/query_decomposition_common_source.csv",
+  "source_sha256": "a10134cfc5a249faac738217d368027d7532e0db8c8c8d4c6a350f0779668db6",
+  "parameters": {
+    "duration": 60,
+    "expected_videos": 15,
+    "fps": 30,
+    "bins": 8,
+    "bootstrap": 10000,
+    "seed": 0,
+    "content_run": "baseline"
+  },
+  "trajectories": [
+    {
+      "row": "13",
+      "scene": "ChemicalPlantEnv_5",
+      "dataset_start_frame": "3648",
+      "duration_sec": "60"
+    },
+    {
+      "row": "18",
+      "scene": "ClothingStore_1",
+      "dataset_start_frame": "456",
+      "duration_sec": "60"
+    },
+    {
+      "row": "23",
+      "scene": "ClothingStore_6",
+      "dataset_start_frame": "2964",
+      "duration_sec": "60"
+    },
+    {
+      "row": "28",
+      "scene": "ContainerYard_3",
+      "dataset_start_frame": "3876",
+      "duration_sec": "60"
+    },
+    {
+      "row": "3",
+      "scene": "AncientTempleEnv_5",
+      "dataset_start_frame": "1368",
+      "duration_sec": "60"
+    },
+    {
+      "row": "33",
+      "scene": "ContainerYard_7",
+      "dataset_start_frame": "1216",
+      "duration_sec": "60"
+    },
+    {
+      "row": "38",
+      "scene": "ContainerYard_9",
+      "dataset_start_frame": "2584",
+      "duration_sec": "60"
+    },
+    {
+      "row": "43",
+      "scene": "DragonRise_1",
+      "dataset_start_frame": "3420",
+      "duration_sec": "60"
+    },
+    {
+      "row": "48",
+      "scene": "DragonRise_9",
+      "dataset_start_frame": "3876",
+      "duration_sec": "60"
+    },
+    {
+      "row": "53",
+      "scene": "FeudalJapan_0",
+      "dataset_start_frame": "2888",
+      "duration_sec": "60"
+    },
+    {
+      "row": "58",
+      "scene": "FeudalJapan_2",
+      "dataset_start_frame": "684",
+      "duration_sec": "60"
+    },
+    {
+      "row": "63",
+      "scene": "FeudalJapan_3",
+      "dataset_start_frame": "1444",
+      "duration_sec": "60"
+    },
+    {
+      "row": "68",
+      "scene": "IslandMap_2",
+      "dataset_start_frame": "456",
+      "duration_sec": "60"
+    },
+    {
+      "row": "73",
+      "scene": "Warehouse_0",
+      "dataset_start_frame": "3496",
+      "duration_sec": "60"
+    },
+    {
+      "row": "8",
+      "scene": "AnimeCitySuburbs_5",
+      "dataset_start_frame": "608",
+      "duration_sec": "60"
+    }
+  ],
+  "section_indices": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "queries_per_policy": 1380,
+  "summaries": [
+    {
+      "metric": "selected_view_mismatch",
+      "unbounded": 0.12560180758220563,
+      "keepsake": 0.3253716732280842,
+      "paired_difference": 0.19976986564587856,
+      "paired_ci_low": 0.14827579303604102,
+      "paired_ci_high": 0.25375633913105805
+    },
+    {
+      "metric": "selected_memory_corruption",
+      "unbounded": 0.4870873564395352,
+      "keepsake": 0.4078632807386094,
+      "paired_difference": -0.07922407570092573,
+      "paired_ci_low": -0.11826149405560633,
+      "paired_ci_high": -0.03850746531417404
+    },
+    {
+      "metric": "selected_effective_mismatch",
+      "unbounded": 0.4995600328065348,
+      "keepsake": 0.5088569797035577,
+      "paired_difference": 0.009296946897022958,
+      "paired_ci_low": -0.02799661876714749,
+      "paired_ci_high": 0.05172240649984365
+    },
+    {
+      "metric": "full_oracle_effective_mismatch",
+      "unbounded": 0.29996480017468546,
+      "keepsake": 0.29996480017468546,
+      "paired_difference": 0.0,
+      "paired_ci_low": 0.0,
+      "paired_ci_high": 0.0
+    }
+  ],
+  "displayed_metric": "selected_memory_corruption",
+  "definition": "1 - cosine(DINO(baseline image at selected historical index), DINO(GT at that same historical index)); lower is better.",
+  "method": "Actual policy-selected IDs; fixed baseline historical pixels. Query means within sections, equal section weights within each ordered-section bin, equal trajectory weights. Shared trajectory-bootstrap draws, pointwise 95% percentile intervals.",
+  "limitations": "Not each policy's own generated memory pixels, not target-view matching, and not a causal replay. Banks and choices come from each policy's own trace. All initial-frame selections are included. View and effective mismatch are exported too. CSV checks do not independently validate upstream features, video hashes or GT mapping.",
+  "early_sections": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "late_sections": [
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "exported_statistics": [
+    {
+      "statistic": "rollout_mean",
+      "policy": "Unbounded",
+      "metric": "selected_view_mismatch",
+      "mean": 0.12560180758220563,
+      "ci_low": 0.10406461540879548,
+      "ci_high": 0.1478623417516549
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "Unbounded",
+      "metric": "selected_memory_corruption",
+      "mean": 0.4870873564395352,
+      "ci_low": 0.4011608301135509,
+      "ci_high": 0.571632534129464
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "Unbounded",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.4995600328065348,
+      "ci_low": 0.4155062577873469,
+      "ci_high": 0.5817954060478487
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "Unbounded",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.29996480017468546,
+      "ci_low": 0.24252022623475913,
+      "ci_high": 0.3604936147923919
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_view_mismatch",
+      "mean": 0.3253716732280842,
+      "ci_low": 0.2578531370527934,
+      "ci_high": 0.3964341125799262
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_memory_corruption",
+      "mean": 0.4078632807386094,
+      "ci_low": 0.315901444332971,
+      "ci_high": 0.49888832129861993
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.5088569797035577,
+      "ci_low": 0.4167296551005996,
+      "ci_high": 0.5977053608410601
+    },
+    {
+      "statistic": "rollout_mean",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.29996480017468546,
+      "ci_low": 0.24252022623475913,
+      "ci_high": 0.3604936147923919
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "Unbounded",
+      "metric": "selected_view_mismatch",
+      "mean": -0.03772655765215555,
+      "ci_low": -0.07301568674047788,
+      "ci_high": -0.0027971688409646517
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "Unbounded",
+      "metric": "selected_memory_corruption",
+      "mean": 0.14756510277589163,
+      "ci_low": 0.06936240140100323,
+      "ci_high": 0.21990126992265377
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "Unbounded",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.12560342470804853,
+      "ci_low": 0.03958629455665748,
+      "ci_high": 0.20085468988120558
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "Unbounded",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.007697200775146485,
+      "ci_low": -0.053299068555235876,
+      "ci_high": 0.061595354969302796
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_view_mismatch",
+      "mean": 0.07023838619391123,
+      "ci_low": -0.004652939135829626,
+      "ci_high": 0.1424877598583698
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_memory_corruption",
+      "mean": 0.06971111476421357,
+      "ci_low": -0.05030102708935735,
+      "ci_high": 0.17495512431363264
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "selected_effective_mismatch",
+      "mean": 0.09696451246738436,
+      "ci_low": 0.012663115963339805,
+      "ci_high": 0.1742117630243301
+    },
+    {
+      "statistic": "late_minus_early",
+      "policy": "KEEPSAKE (Ours)",
+      "metric": "full_oracle_effective_mismatch",
+      "mean": 0.007697200775146485,
+      "ci_low": -0.053299068555235876,
+      "ci_high": 0.061595354969302796
+    }
+  ],
+  "paired_contrasts": [
+    {
+      "statistic": "rollout_mean",
+      "metric": "selected_view_mismatch",
+      "keepsake_minus_unbounded": 0.19976986564587856,
+      "ci_low": 0.14827579303604102,
+      "ci_high": 0.25375633913105805
+    },
+    {
+      "statistic": "rollout_mean",
+      "metric": "selected_memory_corruption",
+      "keepsake_minus_unbounded": -0.07922407570092573,
+      "ci_low": -0.11826149405560633,
+      "ci_high": -0.03850746531417404
+    },
+    {
+      "statistic": "rollout_mean",
+      "metric": "selected_effective_mismatch",
+      "keepsake_minus_unbounded": 0.009296946897022958,
+      "ci_low": -0.02799661876714749,
+      "ci_high": 0.05172240649984365
+    },
+    {
+      "statistic": "rollout_mean",
+      "metric": "full_oracle_effective_mismatch",
+      "keepsake_minus_unbounded": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0
+    },
+    {
+      "statistic": "late_minus_early",
+      "metric": "selected_view_mismatch",
+      "keepsake_minus_unbounded": 0.1079649438460668,
+      "ci_low": 0.0382927477856477,
+      "ci_high": 0.18123274045685916
+    },
+    {
+      "statistic": "late_minus_early",
+      "metric": "selected_memory_corruption",
+      "keepsake_minus_unbounded": -0.07785398801167806,
+      "ci_low": -0.15876102631290753,
+      "ci_high": 0.0030162973403930226
+    },
+    {
+      "statistic": "late_minus_early",
+      "metric": "selected_effective_mismatch",
+      "keepsake_minus_unbounded": -0.028638912240664165,
+      "ci_low": -0.09199729580680531,
+      "ci_high": 0.03663519973556197
+    },
+    {
+      "statistic": "late_minus_early",
+      "metric": "full_oracle_effective_mismatch",
+      "keepsake_minus_unbounded": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0
+    }
+  ],
+  "landscape": {
+    "duration_sec": 180,
+    "trajectories": 13,
+    "source": "/Users/metalicana/projects_summer_2026/MemCam/paper/make_figures.py",
+    "source_kind": "original_rounded_figure_coordinates",
+    "sha256": "7346ea214dc6568687d119e6c686d974882c02e97605979545adb00d6448c140",
+    "points": [
+      {
+        "policy": "FIFO",
+        "budget": 16,
+        "retention_gap": 0.1872,
+        "selection_gap": 0.0448
+      },
+      {
+        "policy": "FIFO",
+        "budget": 32,
+        "retention_gap": 0.1668,
+        "selection_gap": 0.0646
+      },
+      {
+        "policy": "FIFO",
+        "budget": 64,
+        "retention_gap": 0.1429,
+        "selection_gap": 0.0867
+      },
+      {
+        "policy": "FIFO",
+        "budget": 128,
+        "retention_gap": 0.1203,
+        "selection_gap": 0.1084
+      },
+      {
+        "policy": "KEEPSAKE (Ours)",
+        "budget": 16,
+        "retention_gap": 0.0669,
+        "selection_gap": 0.1037
+      },
+      {
+        "policy": "KEEPSAKE (Ours)",
+        "budget": 32,
+        "retention_gap": 0.0426,
+        "selection_gap": 0.147
+      },
+      {
+        "policy": "KEEPSAKE (Ours)",
+        "budget": 64,
+        "retention_gap": 0.0366,
+        "selection_gap": 0.1596
+      },
+      {
+        "policy": "KEEPSAKE (Ours)",
+        "budget": 128,
+        "retention_gap": 0.0298,
+        "selection_gap": 0.1783
+      },
+      {
+        "policy": "Unbounded",
+        "budget": null,
+        "retention_gap": 0.0,
+        "selection_gap": 0.2188
+      }
+    ],
+    "limits": "Original coordinates, not recomputed raw results; no inferred error bars. RI omitted from this presentation only."
+  },
+  "note": "Landscape (180 s, n=13) and retrieval comparison (60 s, n=15) are different diagnostics/cohorts.",
+  "combined_figure": {
+    "middle_panel": "mean",
+    "quality_points_source": "User-supplied LaTeX, preserved without recomputing FVD/LPIPS",
+    "canvas_height_mm": 52,
+    "axis_height_mm": 32
+  }
+}

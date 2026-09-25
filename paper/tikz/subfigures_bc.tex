@@ -1,0 +1,38 @@
+% Preamble: \usepackage{pgfplots,subcaption}
+%           \pgfplotsset{compat=1.18}
+% Place after your existing panel (a), inside the same figure.
+% Paths assume the manuscript is compiled from the paper directory.
+% Use a 60mm-high inner minipage for (a) too, to align all three captions.
+\begin{subfigure}[t]{0.32\linewidth}
+  \centering
+  \vspace{0pt}
+  \begin{minipage}[c][60mm][c]{\linewidth}
+    \centering
+    \input{tikz/retrieval_quality_comparison.tex}
+  \end{minipage}
+  \caption{Retrieved-memory quality.}
+  \label{fig:retrieval-quality-paired}
+\end{subfigure}\hfill%
+\begin{subfigure}[t]{0.32\linewidth}
+  \centering
+  \vspace{0pt}
+  \begin{minipage}[c][60mm][c]{\linewidth}
+    \centering
+    \input{tikz/retention_selection_tradeoff.tex}
+  \end{minipage}
+  \caption{Retention--selection tradeoff.}
+  \label{fig:retention-selection-tikz}
+\end{subfigure}
+
+% Suggested additions to the parent caption:
+% (b) Matched 60-second reads (15 trajectories): mean clean-view mismatch
+% and stored-content corruption (DINOv2 cosine distances), evaluated on
+% common baseline pixels.
+% Whiskers are 95% trajectory-bootstrap intervals; KEEPSAKE uses B32.
+% (c) Original 180-second, 13-trajectory gap analysis, with budgets labeled.
+% Lower is better on both axes; lines connect increasing budgets.
+%
+% For the temporal-change diagnostic, replace panel (b)'s input with
+% tikz/retrieval_deterioration_comparison.tex and use this caption instead:
+% Late-minus-early changes over sections 1--5 versus 19--23 of the matched
+% 60-second suite; positive values indicate deterioration.

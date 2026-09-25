@@ -362,8 +362,9 @@ def build(args):
     old, new, kept, evicted = prepare(trace)
     assets = extract_frames(video, FRAMES.values(), args.output.parent / "method_daylight_frames")
     # Keep the rejected redesign available, without making it the source of this edit.
-    rejected = args.output.parent / "method_previous/rejected_three_stage.drawio.xml"
+    rejected = args.output.parent / "archive/method_previous/rejected_three_stage.drawio.xml"
     if args.output.exists() and not rejected.exists():
+        rejected.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(args.output, rejected)
     rewrite(args.template, args.output, assets, evicted)
     example = scoring_example(evicted)
@@ -422,7 +423,7 @@ eligible items using fixed scores, then keep the bounded archive.
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template", type=Path,
-                        default=ROOT / "paper/figures/method_previous/warehouse_real_frames.drawio.xml")
+                        default=ROOT / "paper/figures/archive/method_previous/warehouse_real_frames.drawio.xml")
     parser.add_argument("--output", type=Path,
                         default=ROOT / "paper/figures/ICLR27 Method Figure.drawio.xml")
     parser.add_argument("--videos", type=Path,

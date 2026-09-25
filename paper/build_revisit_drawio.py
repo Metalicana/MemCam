@@ -160,7 +160,7 @@ def build(config, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=ROOT / "paper/revisit_drawio_selection.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "paper/configs/revisit_drawio_selection.json")
     parser.add_argument("--output", type=Path, default=ROOT / "paper/figures/revisit_editable")
     args = parser.parse_args()
     build(args.config, args.output)

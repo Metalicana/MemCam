@@ -23,7 +23,7 @@ STYLES = {"unbounded": ("--", "o"), "fifo": (":", "s"), "geo": ("-", "D")}
 
 
 def main():
-    data = json.loads(Path(__file__).with_name("vbench_radar_scores.json").read_text())
+    data = json.loads((Path(__file__).resolve().parent / "configs/vbench_radar_scores.json").read_text())
     dimensions = data["dimensions"]
     assert len(dimensions) == len(LABELS)
     assert data["cohort"] == {"videos": 15, "duration_seconds": 60, "bounded_budget": 32}

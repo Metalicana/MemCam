@@ -1,10 +1,13 @@
 import base64
 import io
+import json
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 from PIL import Image
@@ -13,6 +16,26 @@ from paper import replace_method_frame_assets as method
 
 
 class MethodFrameTests(unittest.TestCase):
+    def test_backup_creates_archive_parents_and_preserves_original(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "template.drawio"
+            template.write_text("original template")
+            trace = root / Path(method.VIDEO).with_suffix(".jsonl")
+            trace.write_text(json.dumps(dict(scene="Warehouse_0", dataset_start_frame=3496,
+                duration_sec=60, run_memory_policy="slam_covisibility", run_memory_budget=32)))
+            args = SimpleNamespace(videos=root, traces=root, template=template,
+                                   output=root / "new-output/figure.drawio")
+            backup = args.output.parent / "archive/method_previous" / template.name
+            with patch.object(method, "update_bank", return_value=(set(), set(), set(), {})), \
+                 patch.object(method, "validate_roles"), \
+                 patch.object(method, "extract_frames", side_effect=RuntimeError("stop after backup")):
+                for text in ("original template", "later template"):
+                    template.write_text(text)
+                    with self.assertRaisesRegex(RuntimeError, "stop after backup"):
+                        method.build(args)
+                    self.assertEqual(backup.read_text(), "original template")
+
     def test_bank_reconstruction_uses_real_evictions(self):
         events = [dict(event="memory_eviction", section_idx=s, evicted_memory_frame=f,
                        stored_memory_size=32)
