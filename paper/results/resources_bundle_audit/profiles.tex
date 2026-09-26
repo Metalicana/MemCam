@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Profile & Horizon & $n$ & RGB (MiB) & RSS (GiB) & Alloc. (GiB) & Res. (GiB) \\
+\midrule
+$k$-center B32 & 60 s & 15 & 41.250 & 4.865 & 16.309 & 18.514 \\
+MCE B32 & 60 s & 15 & 41.250 & 4.956 & 16.309 & 18.514 \\
+KEEPSAKE-B128 & 60 s & 12 & 165.000 & 4.692 & 16.309 & 18.514 \\
+Unbounded (attention audit) & 30 s & 10 & 1176.914 & 4.330 & 15.987 & 18.320 \\
+\bottomrule
+\end{tabular}
+\caption{Separate historical profiles, all with CPU archives. Each memory entry is the maximum across completed runs: recorded logical RGB payload, sampled host RSS, and PyTorch rollout allocated/reserved peaks. These rows are not matched resource comparisons: horizons, budgets, cohorts and instrumentation differ, and hardware equivalence is unverified. Descriptor payload and container overhead are not included in RGB bytes.}
+\label{tab:historical-profiles}
+\end{table}

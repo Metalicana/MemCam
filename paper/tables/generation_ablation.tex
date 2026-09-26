@@ -1,0 +1,38 @@
+% Requires booktabs. All contrasts below are variant minus full.
+\begin{table}[!ht]
+\centering\small
+\caption{Closed-loop component ablation on 15 matched 60-second MemCam
+trajectories, $B=32$. All settings use the same generation seed and reader.}
+\label{tab:components-generation-preview}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lrrrr@{}}
+\toprule
+Setting & FVD $\downarrow$ & LPIPS $\downarrow$ & PSNR $\uparrow$ & SSIM $\uparrow$ \\
+\midrule
+\textbf{Full (KEEPSAKE)} & 703.28 & 0.59708 & 11.739 & 0.30441 \\
+Without appearance & 687.98 & 0.59689 & 11.726 & 0.30129 \\
+Without pose & 716.11 & 0.59902 & 11.684 & 0.29905 \\
+Without closest-substitute term & 697.32 & 0.59705 & 11.764 & 0.30308 \\
+Without degree term & 720.57 & 0.59912 & 11.684 & 0.30048 \\
+\bottomrule
+\end{tabular*}
+\par\medskip
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lrr@{}}
+\toprule
+Removal & $\Delta$LPIPS [paired 95\% CI] & $\Delta$FVD [paired 95\% CI] \\
+\midrule
+Appearance & $-0.00019\;[-0.00505,\,+0.00417]$ & $-15.30\;[-69.77,\,+69.42]$ \\
+Pose & $+0.00194\;[-0.00201,\,+0.00571]$ & $+12.83\;[-62.24,\,+79.04]$ \\
+Closest-substitute term & $-0.00004\;[-0.00603,\,+0.00631]$ & $-5.96\;[-98.04,\,+46.29]$ \\
+Degree term & $+0.00204\;[-0.00312,\,+0.00701]$ & $+17.29\;[-54.08,\,+84.91]$ \\
+\bottomrule
+\end{tabular*}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+$\Delta=$ variant minus full; positive indicates worse LPIPS/FVD.
+Intervals resample whole trajectories: 5,000 draws for LPIPS, 2,000 for cohort
+FVD. All four primary LPIPS contrasts have Holm-adjusted $p=1.000$.
+FVD intervals are descriptive. FVD is computed on pooled clips, not averaged
+per video. Scalar fidelity excludes the initial conditioning image.
+\end{minipage}
+\end{table}

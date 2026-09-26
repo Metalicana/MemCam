@@ -1,0 +1,4 @@
+duration_sec,cohort_prefix,trajectories,frames,steps,unbounded_mean_elapsed_min,keepsake_b32_mean_elapsed_min,hardware_matching
+60,seed0_,15,1825,50,106.46206666666667,65.46185555555556,unverified
+60,seed1_extra60s_,15,1825,50,109.3331,66.7928111111111,unverified
+180,seed0_,15,5397,50,587.9947111111111,193.13845555555557,unverified

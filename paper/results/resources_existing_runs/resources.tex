@@ -1,0 +1,20 @@
+% Requires booktabs. Existing KEEPSAKE-only round-trip profiles, not a baseline comparison.
+\begin{table*}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\caption{Recorded resources for KEEPSAKE-B32 with a CPU archive on NVIDIA H100 PCIe (PyTorch 2.5.1, CUDA build 12.4; 640$\times$352, 50 denoising steps). Five starting views per round-trip protocol. Memory columns are maxima across the five runs; latencies are means of per-run averages. These are short-rollout diagnostics, not a matched comparison to unbounded retention or measurements of the 60/180-second cohort.}
+\label{tab:memcam-recorded-resources}
+\begin{tabular}{lrrrrrr}
+\toprule
+Protocol & RGB bank & Host RSS & GPU alloc. & GPU res. & Retrieval & Desc. + update \\
+ & (MiB) & (GiB)$^\dagger$ & (GiB) & (GiB) & (ms/query) & (ms/section) \\
+\midrule
+90$^\circ$, 153 frames & 41.25 & 2.53 & 16.31 & 18.53 & 49.01 & 1684.58 \\
+360$^\circ$, 609 frames & 41.25 & 3.13 & 16.31 & 18.55 & 50.77 & 1523.65 \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+$^\dagger$Maximum observed RSS at profiler checkpoints, not a continuously measured host peak. GPU columns use PyTorch rollout peak counters, not device-wide \texttt{nvidia-smi} usage. Descriptor extraction and policy update share one timer; they cannot be separated retrospectively. The RGB column excludes descriptors, metadata, output frames and model state. The maximum recorded retained-feature logical payload is 1.594 MiB; this does not account for Python containers or backing batches retained through array views. Retrieval excludes the initial section's no-read fallback and includes no context encoding.
+\end{minipage}
+\end{table*}

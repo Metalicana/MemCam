@@ -1,0 +1,30 @@
+% Requires booktabs. CPU fixed-history replay, not generated-video quality.
+\begin{table}[!ht]
+\centering\small
+\caption{One-at-a-time parameter sensitivity on 15 fixed 60-second histories,
+$B=32$. The evaluated quantity is the retained-bank oracle DINO-distance gap.}
+\label{tab:parameters-replay-preview}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lrrrrrr@{}}
+\toprule
+Setting & $\tau$ & $\beta$ & $\lambda$ & Gap $\downarrow$ & $\Delta$ [paired 95\% CI] & Jaccard \\
+\midrule
+\textbf{Default} & 3 & 0.5 & 0.25 & 0.03767 & Reference & 1.000 \\
+$\tau=1$ & 1 & 0.5 & 0.25 & 0.03767 & $0.00000\;[0.00000,\,0.00000]$ & 1.000 \\
+$\tau=5$ & 5 & 0.5 & 0.25 & 0.03767 & $0.00000\;[0.00000,\,0.00000]$ & 1.000 \\
+\addlinespace[2pt]
+$\beta=0$ & 3 & 0 & 0.25 & 0.03679 & $-0.00089\;[-0.00703,\,+0.00641]$ & 0.223 \\
+$\beta=1$ & 3 & 1 & 0.25 & 0.03545 & $-0.00222\;[-0.01108,\,+0.00499]$ & 0.591 \\
+\addlinespace[2pt]
+$\lambda=0$ & 3 & 0.5 & 0 & 0.03970 & $+0.00202\;[-0.00991,\,+0.01216]$ & 0.371 \\
+$\lambda=0.5$ & 3 & 0.5 & 0.5 & 0.03865 & $+0.00097\;[-0.00146,\,+0.00348]$ & 0.562 \\
+\bottomrule
+\end{tabular*}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+$\Delta=$ variant minus default; 5,000 paired trajectory-bootstrap draws.
+Jaccard measures retained-bank overlap with the default, not visual quality.
+All settings receive the same cached history. This CPU replay does not measure
+generated-video LPIPS/FVD or establish equivalence between settings.
+\end{minipage}
+\end{table}

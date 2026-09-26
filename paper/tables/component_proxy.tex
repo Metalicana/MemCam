@@ -1,0 +1,27 @@
+% Requires booktabs. Optional post-hoc diagnostic; not a replacement ablation.
+\begin{table}[!ht]
+\centering\small
+\caption{Post-hoc component diagnostic on the same 15 fixed histories,
+$B=32$. No videos are generated in this CPU replay.}
+\label{tab:components-proxy-preview}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lrrr@{}}
+\toprule
+Setting & Gap $\downarrow$ & $\Delta$ [paired 95\% CI] & Jaccard \\
+\midrule
+\textbf{Full (KEEPSAKE)} & 0.03767 & Reference & 1.000 \\
+Without appearance & 0.03385 & $-0.00382\;[-0.01425,\,+0.00743]$ & 0.298 \\
+Without pose & 0.04248 & $+0.00481\;[-0.00968,\,+0.01629]$ & 0.236 \\
+Without closest-substitute term & 0.03970 & $+0.00202\;[-0.00991,\,+0.01216]$ & 0.371 \\
+Without degree term & 0.03964 & $+0.00197\;[-0.00440,\,+0.00914]$ & 0.226 \\
+\bottomrule
+\end{tabular*}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Gap is retained-bank minus full-history oracle DINO distance; lower is better.
+$\Delta=$ variant minus full; 5,000 paired trajectory-bootstrap draws.
+Jaccard measures retained-bank overlap with the full method. This post-hoc
+diagnostic uses a shared history and a common DINO evaluation metric; it does
+not rerun the reader or generator.
+\end{minipage}
+\end{table}

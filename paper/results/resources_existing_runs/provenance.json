@@ -1,0 +1,73 @@
+{
+  "roundtrip": {
+    "sources": {
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/plan.json": "9c115c45bb5a8df0f5adc9048e5135deedfc4454eeb629f2d1aad9a65558437a",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/device_diagnostics.json": "ca401a2d7df183157b2073c2bce7e461350b08d296ccd10c0e7accc2c0178cd0",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_90deg/attempt_1790201179967722539/profile.jsonl": "450ef7bc247ab59c9f6b577a01328fd9cd27f2220d68605e0c649456a98366ed",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_90deg/attempt_1790201179967722539/access.jsonl": "6e8cee9b0b193ea12c5ba73ac5089c142d2748985eddd75e6403e6d0ce2d160f",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_90deg/generation.json": "ef4234885aa04e0a3fceb33aed4e48eab3643d9173ecc44c13e9df7387278423",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_360deg/attempt_1790201570301783178/profile.jsonl": "7fddb8c9e80b3809dcd123230ac300a45e3b014dd2da4f9dfffe8377b0e6324d",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_360deg/attempt_1790201570301783178/access.jsonl": "8538e5f8d7f9b0efce4a6ec953f8d4caa355c3b65ba613fd9e99ce4267666d89",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/AncientTempleEnv_5_1368_360deg/generation.json": "48fba426245b624d00a19667a332bf8741892d7c0cda11f273215f78a50bf2b4",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_90deg/attempt_1790202946781874732/profile.jsonl": "b2ca62ecb0a6e103d58266922166c143835bd9b33f221696c06d0650255eccf0",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_90deg/attempt_1790202946781874732/access.jsonl": "c23c430ec7b442b64b44cf0c37e6c66a1a83b7e4c8661eff77f72dbb97bf37cc",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_90deg/generation.json": "60e20e6f92ceefb9d8a4b78d1dc0523a904115c7ccc5aec7eecf0c97491097d9",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_360deg/attempt_1790203288575804529/profile.jsonl": "49dbbca3a5e63db441cf5790124eccf420b4418c23321a4269f91eff4bc86551",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_360deg/attempt_1790203288575804529/access.jsonl": "2fbf7e0162b9463b2f376243006cbcbdbb1013a1416879fb350e3d17a8ddc710",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/ContainerYard_7_1216_360deg/generation.json": "b769c7992f69a66a2e2a381401336946c8d3e9c8ac26de2369bc329a7374f690",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_90deg/attempt_1790204686594012888/profile.jsonl": "957809446af4b3ba279803460256c16f5d8afed255566e6d142c86f2b2cdc33c",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_90deg/attempt_1790204686594012888/access.jsonl": "869b30d31ad540a3beb9d33a5493111269e884c87c2619cd6be08bdd8fda5c25",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_90deg/generation.json": "4680da853927616e28d4717b4509e227b2727910f4ac9877e1c2bfa40d4cd96e",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_360deg/attempt_1790205029990782076/profile.jsonl": "61bf4e4b9f97127eaa5efe45bae1297d445bf00787cf599aa70f550cf47531be",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_360deg/attempt_1790205029990782076/access.jsonl": "415e307343e0a05249fa5849deadff6cd6c14fecd2c7d1adcd54b7b9bd800135",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/FeudalJapan_3_1444_360deg/generation.json": "b67e29aebd228a6878c897dee456529cf0f8dfab88a93d163094478183046fee",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_90deg/attempt_1790206402383781943/profile.jsonl": "8945b833771693fecc0123a746e3702c141cdda6bbfa2342ced79c8fa2efdccf",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_90deg/attempt_1790206402383781943/access.jsonl": "4ca1904f23e3622749c20dc64432badb6663cf5604c52f28ad85ca3f08cf9e2f",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_90deg/generation.json": "59f72252bb310ed61fab3e767ca7e86b14bcf68da0eaa8e09e0b8e2a57620612",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_360deg/attempt_1790206745289135370/profile.jsonl": "d408127da67c0fd693b34688fcc1dd630fd28bc0298dbb28469c6bc60fa532d2",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_360deg/attempt_1790206745289135370/access.jsonl": "13acfb4290ee2d9ff4d6c5663a3c82eeda8c293f57bad9edfb0a0a8964344cdb",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/IslandMap_2_0456_360deg/generation.json": "af9330706c243b072447bdb973bd6ebb8d84c18838992cbff3f3a8e16bed0e8f",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_90deg/attempt_1790208137614021381/profile.jsonl": "18aadcc88592838e525a6262971e55e4e55025cfdf6b1810a90014895dde1f96",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_90deg/attempt_1790208137614021381/access.jsonl": "9eb8de8f155af0767fbf56b4a0177d91ef93f624686e8ec2174928a76c0d9426",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_90deg/generation.json": "06f03de1bd189689d5cef173f1e9dea221d7a25ee0f865a078f6cf61bb355d7f",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_360deg/attempt_1790208481754459425/profile.jsonl": "d9e4c7bd35ed558fa73201070c95a66313a5ee51252f7fd9f1ad1fcc791c53e5",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_360deg/attempt_1790208481754459425/access.jsonl": "509691476463be413dfc8a44e00e3971ba17149d82cc0ac00d47d27a7624b41e",
+      "/Users/metalicana/Downloads/keepsake_native_roundtrip_b32/cases/Warehouse_0_3496_360deg/generation.json": "d6d9c31c2aacd3d8471194f6a17c6aafb386ce131daf8538caa72cfdd762e4ee"
+    },
+    "generation": {
+      "policy": "slam_covisibility",
+      "budget": 32,
+      "geometry_weight": 0.65,
+      "seed": 42,
+      "steps": 50,
+      "cfg_scale": 5.0,
+      "height": 352,
+      "width": 640,
+      "fps": 30,
+      "bank_device": "cpu",
+      "pose_scale": 100.0,
+      "reset_rng_each_video": true
+    },
+    "device": {
+      "python": "/home/ab575577/.conda/envs/memcam/bin/python",
+      "torch": "2.5.1",
+      "torch_path": "/home/ab575577/.conda/envs/memcam/lib/python3.10/site-packages/torch/__init__.py",
+      "torch_cuda_build": "12.4",
+      "requested_device": "cuda",
+      "environment": {
+        "SLURM_JOB_ID": "844143",
+        "SLURM_JOB_NODELIST": "evc41",
+        "SLURM_JOB_GPUS": "1",
+        "SLURM_STEP_GPUS": null,
+        "CUDA_VISIBLE_DEVICES": "0",
+        "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+        "CONDA_PREFIX": null,
+        "LD_LIBRARY_PATH": "/lustre/fs1/home/ab575577/.conda/envs/memcam/lib/python3.10/site-packages/cv2/../../lib64:/apps/ffmpeg/ffmpeg-7.0.2-with-cuda/lib:/apps/cuda/cuda-12.1.0/nccl/lib:/apps/cuda/cuda-12.1.0/cudnn/lib:/apps/cuda/cuda-12.1.0/lib64:/apps/cuda/cuda-12.1.0/extras/CUPTI/lib64",
+        "PYTORCH_NVML_BASED_CUDA_CHECK": null
+      },
+      "status": "passed",
+      "device_count": 1,
+      "gpu_name": "NVIDIA H100 PCIe"
+    }
+  }
+}
